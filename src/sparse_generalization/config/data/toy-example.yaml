@@ -1,0 +1,4 @@
+data_dir: data/toy_example
+data_file: simple_func_dataset.pt
+
+batch_size: 64

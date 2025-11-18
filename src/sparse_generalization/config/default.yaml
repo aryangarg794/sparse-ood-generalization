@@ -1,0 +1,10 @@
+defaults:
+- data: toy-example
+- model: basic-mlp
+- wandb: default
+- trainer: default
+- _self_
+
+run_name: mlp_run_simple
+seeds: [0, 1, 2]
+job_type: train
