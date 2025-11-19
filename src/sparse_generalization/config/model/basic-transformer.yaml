@@ -1,0 +1,7 @@
+_target_: sparse_generalization.models.transformer.TransformerLit
+
+embed_size: 1
+input_dim: 3
+out_dim: 1 
+hidden_dims: [64, 128, 64]
+num_heads: 1

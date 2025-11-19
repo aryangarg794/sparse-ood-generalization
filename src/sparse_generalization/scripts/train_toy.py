@@ -15,6 +15,11 @@ from torch.utils.data import Dataset, DataLoader
 from torch import Tensor
 from typing import Self
 
+warnings.filterwarnings("ignore", ".*does not have many workers.*")
+warnings.filterwarnings(
+    "ignore", ".*can be accelerated via the 'torch-scatter' package*"
+)
+
 print(f"CUDA available: {torch.cuda.is_available()}")
 
 class BasicDataset(Dataset):
@@ -50,7 +55,7 @@ def main(cfg: DictConfig):
         config_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
         wandb_dict = OmegaConf.to_container(cfg.wandb, resolve=True, throw_on_missing=True)
         name = cfg.run_name + f'_seed_{seed}_{timestamp}'
-        logger = WandbLogger(**wandb_dict, name=name, config=config_dict, group=group_name, job_type=cfg.job_type) 
+        logger = WandbLogger(**wandb_dict, name=name, config=config_dict, group=group_name) 
         
         random.seed(seed)
         np.random.seed(seed)
@@ -70,13 +75,16 @@ def main(cfg: DictConfig):
         trainer = Trainer(**cfg.trainer, default_root_dir='../../checkpoints/', logger=logger)
         trainer.fit(model, train_dataloaders=train_loader)
         
+        model.test_name = 'Expl. 1'
         test_metrics_1 = trainer.test(model, test_loader_1, verbose=False)
+        model.test_name = 'Expl. 2'
         test_metrics_2 = trainer.test(model, test_loader_2, verbose=False)
         
         table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
         table.add_data('Test set Expl. 1', test_metrics_1[0]['test_loss'], test_metrics_1[0]['test_acc'])
         table.add_data('Test set Expl. 2', test_metrics_2[0]['test_loss'], test_metrics_2[0]['test_acc'])
         logger.experiment.log({'Test Sets Table': table})
+        logger.experiment.finish()
 
 if __name__ == '__main__':
     main()
