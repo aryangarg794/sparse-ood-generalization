@@ -10,6 +10,7 @@ from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
 
 from sparse_generalization.models.mlp import BasicMLP
+from sparse_generalization.losses.sparse_loss import L1Sparsity
 
 class MHABlock(nn.Module):
     """Basic transformer block for the toy example 
@@ -57,13 +58,16 @@ class TransformerLit(pl.LightningModule):
         act: nn.Module = nn.ReLU,
         dropout: int = 0.0, 
         lr: float = 1e-3,
-        sparse_loss: bool = False, 
+        sparse_loss: bool = False,
+        l1_weight: float = 0.1,  
         loss: nn.Module = nn.BCEWithLogitsLoss
     ):
         super().__init__()
         self.loss = loss()
         if sparse_loss:
             self.sparse = sparse_loss
+            self.l1_loss = L1Sparsity()
+            self.l1_weight = l1_weight
         self.lr = lr
         
         self.model = MHABlock(
@@ -88,7 +92,8 @@ class TransformerLit(pl.LightningModule):
         return loss, acc, attn
 
     def training_step(self, batch, batch_idx):
-        loss, acc, _ = self._get_loss_acc(batch)
+        loss, acc, attn = self._get_loss_acc(batch)
+        loss = loss + self.l1_weight * self.l1_loss(attn)
         self.log(
             "train_loss", 
             loss, 

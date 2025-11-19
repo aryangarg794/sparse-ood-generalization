@@ -5,3 +5,5 @@ input_dim: 3
 out_dim: 1 
 hidden_dims: [64, 128, 64]
 num_heads: 1
+sparse_loss: false
+l1_weight: 1
