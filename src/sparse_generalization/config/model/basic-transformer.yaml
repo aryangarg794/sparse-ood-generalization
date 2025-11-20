@@ -5,5 +5,11 @@ input_dim: 3
 out_dim: 1 
 hidden_dims: [64, 128, 64]
 num_heads: 1
-sparse_loss: false
-l1_weight: 1
+include_sparsity: true
+l1_weight: 0.01
+mha_layer:
+  _partial_: true
+  _target_: sparse_generalization.layers.bern_mha.MultiHeadAttentionBern
+sparse_loss: 
+  _partial_: true
+  _target_: sparse_generalization.losses.sparse_loss.L1SparsityAdjacency

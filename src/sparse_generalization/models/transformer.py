@@ -10,7 +10,7 @@ from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
 
 from sparse_generalization.models.mlp import BasicMLP
-from sparse_generalization.losses.sparse_loss import L1Sparsity
+from sparse_generalization.losses.sparse_loss import L1Sparsity, L1SparsityAdjacency
 
 class MHABlock(nn.Module):
     """Basic transformer block for the toy example 
@@ -27,19 +27,22 @@ class MHABlock(nn.Module):
         num_heads: int, # for the toy example just keep it one
         hidden_dims: List,
         act: nn.Module,
-        dropout: int, 
+        dropout: int,
+        mha_layer: nn.Module, 
         *args, 
         **kwargs
     ):
         super(MHABlock, self).__init__(*args, **kwargs)
         
-        self.mha = nn.MultiheadAttention(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True)
+        self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True)
+        # self.norm = nn.LayerNorm(embed_size) # layer norm does not work for toy example
         self.mlp = BasicMLP(input_dim=input_dim, out_dim=out_dim, hidden_dims=hidden_dims, act=act)
     
     def forward(self: Self, x: Tensor):
         x = x.unsqueeze(dim=-1) # so we treat each input as a node in the graph with dim 1
         attn_out, attn_scores = self.mha(x, x, x)
-        out = self.mlp(attn_out.squeeze())
+        # out = self.norm(attn_out)
+        out = self.mlp(attn_out.squeeze() + x.squeeze()) # note: this is right now set for toy example
         return out, attn_scores
     
 class TransformerLit(pl.LightningModule):
@@ -55,18 +58,20 @@ class TransformerLit(pl.LightningModule):
         out_dim: int,
         num_heads: int, # for the toy example just keep it one
         hidden_dims: List,
+        mha_layer: nn.Module = nn.MultiheadAttention, 
         act: nn.Module = nn.ReLU,
         dropout: int = 0.0, 
         lr: float = 1e-3,
-        sparse_loss: bool = False,
+        include_sparsity: bool = False,
+        sparse_loss: nn.Module = L1Sparsity, 
         l1_weight: float = 0.1,  
         loss: nn.Module = nn.BCEWithLogitsLoss
     ):
         super().__init__()
         self.loss = loss()
-        if sparse_loss:
-            self.sparse = sparse_loss
-            self.l1_loss = L1Sparsity()
+        self.sparse = include_sparsity
+        if include_sparsity:
+            self.l1_loss = sparse_loss()
             self.l1_weight = l1_weight
         self.lr = lr
         
@@ -77,7 +82,8 @@ class TransformerLit(pl.LightningModule):
             num_heads=num_heads, 
             hidden_dims=hidden_dims,
             act=act,
-            dropout=dropout, 
+            dropout=dropout,
+            mha_layer=mha_layer
         )
         
         self.accuracy = BinaryAccuracy()
@@ -93,7 +99,8 @@ class TransformerLit(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         loss, acc, attn = self._get_loss_acc(batch)
-        loss = loss + self.l1_weight * self.l1_loss(attn)
+        if self.sparse:
+            loss = loss + self.l1_weight * self.l1_loss(attn)
         self.log(
             "train_loss", 
             loss, 
@@ -158,12 +165,13 @@ class TransformerLit(pl.LightningModule):
         self.logger.experiment.log({"avg_attention_table": table})
         
         fig, ax = plt.subplots(1, 1, figsize=(5, 4))
-        sns.heatmap(avg_attn.detach().cpu().numpy(), annot=True, cmap="viridis", xticklabels=[0,1,2], yticklabels=[0,1,2], ax=ax)
+        sns.heatmap(all_attn[0].detach().cpu().numpy(), annot=True, cmap="viridis", xticklabels=[0,1,2], yticklabels=[0,1,2], ax=ax)
         plt.title(f'Average Attention Matrix {self.test_name}')
         plt.xlabel("Key")
         plt.ylabel("Query")
         self.logger.experiment.log({f'Heatmap Attn {self.test_name}': wandb.Image(fig)})
         plt.close()
+        
 
         self.test_attn_matrices.clear()
     

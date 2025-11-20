@@ -27,3 +27,23 @@ class L1Sparsity(nn.Module):
         low_vals = low_vals[:, :self.k]
         l1_loss = low_vals.sum(dim=-1).sum() / batch_size
         return l1_loss
+    
+    
+class L1SparsityAdjacency(nn.Module):
+    """L1 sparsity loss for attention matrices, forcing attention adjaceny to be low: 
+    https://arxiv.org/pdf/2411.06890
+
+    Args:
+        
+    """
+    
+    def __init__(
+        self: Self, 
+        *args, 
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        
+    def forward(self: Self, A: Tensor):
+        batch_size, _, _ = A.size()
+        return A.sum(dim=(1, 2)).mean() 
