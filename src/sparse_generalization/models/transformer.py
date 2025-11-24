@@ -28,21 +28,26 @@ class MHABlock(nn.Module):
         hidden_dims: List,
         act: nn.Module,
         dropout: int,
+        residual: bool, 
         mha_layer: nn.Module, 
         *args, 
         **kwargs
     ):
         super(MHABlock, self).__init__(*args, **kwargs)
+        self.residual = residual
         
-        self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True)
+        self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1)
         # self.norm = nn.LayerNorm(embed_size) # layer norm does not work for toy example
-        self.mlp = BasicMLP(input_dim=input_dim, out_dim=out_dim, hidden_dims=hidden_dims, act=act)
+        self.mlp = BasicMLP(input_dim=input_dim, out_dim=out_dim, hidden_dims=hidden_dims, act=act) # (b, 3) 
     
     def forward(self: Self, x: Tensor):
         x = x.unsqueeze(dim=-1) # so we treat each input as a node in the graph with dim 1
         attn_out, attn_scores = self.mha(x, x, x)
         # out = self.norm(attn_out)
-        out = self.mlp(attn_out.squeeze() + x.squeeze()) # note: this is right now set for toy example
+        if self.residual:
+            out = self.mlp(attn_out.squeeze() + x.squeeze()) # note: this is right now set for toy example
+        else:
+            out = self.mlp(attn_out.squeeze())
         return out, attn_scores
     
 class TransformerLit(pl.LightningModule):
@@ -62,6 +67,7 @@ class TransformerLit(pl.LightningModule):
         act: nn.Module = nn.ReLU,
         dropout: int = 0.0, 
         lr: float = 1e-3,
+        residual: bool = True,
         include_sparsity: bool = False,
         sparse_loss: nn.Module = L1Sparsity, 
         l1_weight: float = 0.1,  
@@ -79,7 +85,8 @@ class TransformerLit(pl.LightningModule):
             embed_size=embed_size,
             input_dim=input_dim, 
             out_dim=out_dim,
-            num_heads=num_heads, 
+            num_heads=num_heads,
+            residual=residual,  
             hidden_dims=hidden_dims,
             act=act,
             dropout=dropout,
@@ -165,7 +172,7 @@ class TransformerLit(pl.LightningModule):
         self.logger.experiment.log({"avg_attention_table": table})
         
         fig, ax = plt.subplots(1, 1, figsize=(5, 4))
-        sns.heatmap(all_attn[0].detach().cpu().numpy(), annot=True, cmap="viridis", xticklabels=[0,1,2], yticklabels=[0,1,2], ax=ax)
+        sns.heatmap(avg_attn.detach().cpu().numpy(), annot=True, cmap="viridis", xticklabels=[0,1,2], yticklabels=[0,1,2], ax=ax)
         plt.title(f'Average Attention Matrix {self.test_name}')
         plt.xlabel("Key")
         plt.ylabel("Query")
