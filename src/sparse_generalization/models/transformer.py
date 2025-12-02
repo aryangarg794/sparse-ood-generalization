@@ -26,6 +26,7 @@ class MHABlock(nn.Module):
         out_dim: int,
         num_heads: int, # for the toy example just keep it one
         hidden_dims: List,
+        positional_encoding: bool, 
         act: nn.Module,
         dropout: int,
         residual: bool, 
@@ -35,8 +36,9 @@ class MHABlock(nn.Module):
     ):
         super(MHABlock, self).__init__(*args, **kwargs)
         self.residual = residual
-        
-        self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1)
+        embed_size = embed_size + 1 if positional_encoding else embed_size
+         
+        self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1) or (b, 3, 2) with pe
         # self.norm = nn.LayerNorm(embed_size) # layer norm does not work for toy example
         self.mlp = BasicMLP(input_dim=input_dim, out_dim=out_dim, hidden_dims=hidden_dims, act=act) # (b, 3) 
     
