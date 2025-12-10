@@ -1,0 +1,4 @@
+wandb_version: 1
+
+model.l1_weight:
+  value: 0.9389326835887776

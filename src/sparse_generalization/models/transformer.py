@@ -37,19 +37,26 @@ class MHABlock(nn.Module):
         super(MHABlock, self).__init__(*args, **kwargs)
         self.residual = residual
         embed_size = embed_size + 1 if positional_encoding else embed_size
+        self.pe = positional_encoding
          
         self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1) or (b, 3, 2) with pe
         # self.norm = nn.LayerNorm(embed_size) # layer norm does not work for toy example
-        self.mlp = BasicMLP(input_dim=input_dim, out_dim=out_dim, hidden_dims=hidden_dims, act=act) # (b, 3) 
+        self.mlp = BasicMLP(input_dim=embed_size, out_dim=out_dim, hidden_dims=hidden_dims, act=act) # (b, 3) 
     
     def forward(self: Self, x: Tensor):
         x = x.unsqueeze(dim=-1) # so we treat each input as a node in the graph with dim 1
+        if self.pe:
+            batch_size, seq_len, _ = x.size()
+            device = x.device
+            indices = torch.arange(seq_len, device=device).unsqueeze(0).unsqueeze(-1)
+            indices = indices.expand(batch_size, seq_len, 1)
+            x = torch.cat([x, indices], dim=-1)
         attn_out, attn_scores = self.mha(x, x, x)
         # out = self.norm(attn_out)
         if self.residual:
-            out = self.mlp(attn_out.squeeze() + x.squeeze()) # note: this is right now set for toy example
+            out = self.mlp((attn_out + x).max(dim=1)[0])
         else:
-            out = self.mlp(attn_out.squeeze())
+            out = self.mlp(attn_out.max(dim=1)[0])
         return out, attn_scores
     
 class TransformerLit(pl.LightningModule):
@@ -73,7 +80,8 @@ class TransformerLit(pl.LightningModule):
         include_sparsity: bool = False,
         sparse_loss: nn.Module = L1Sparsity, 
         l1_weight: float = 0.1,  
-        loss: nn.Module = nn.BCEWithLogitsLoss
+        positional_encoding: bool = True, 
+        loss: nn.Module = nn.BCEWithLogitsLoss,
     ):
         super().__init__()
         self.loss = loss()
@@ -91,6 +99,7 @@ class TransformerLit(pl.LightningModule):
             residual=residual,  
             hidden_dims=hidden_dims,
             act=act,
+            positional_encoding=positional_encoding,
             dropout=dropout,
             mha_layer=mha_layer
         )
@@ -109,7 +118,15 @@ class TransformerLit(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss, acc, attn = self._get_loss_acc(batch)
         if self.sparse:
-            loss = loss + self.l1_weight * self.l1_loss(attn)
+            sparse_loss = self.l1_weight * self.l1_loss(attn)
+            loss = loss + sparse_loss
+            self.log(
+                "sparse_loss", 
+                sparse_loss, 
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+            )
         self.log(
             "train_loss", 
             loss, 

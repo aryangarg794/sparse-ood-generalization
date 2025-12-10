@@ -92,12 +92,12 @@ class WorldObj:
             v = Ball(color)
         elif obj_type == "key":
             v = Key(color)
-        elif obj_type == "box":
-            v = Box(color)
+        elif obj_type == "keybox":
+            v = KeyBox(color)
+        elif obj_type == "lockbox":
+            v = LockBox(color)
         elif obj_type == "door":
             v = Door(color, is_open, is_locked)
-        elif obj_type == "goal":
-            v = Goal()
         elif obj_type == "lava":
             v = Lava()
         elif obj_type == "tile":
@@ -115,12 +115,22 @@ class WorldObj:
 class Goal(WorldObj):
     def __init__(self, color: str = "green"):
         super().__init__("goal", color)
+        self.unlockable = False
 
     def can_overlap(self):
         return True
+    
+    def is_goal(self):
+        return True
 
     def render(self, img):
-        fill_coords(img, point_in_rect(0, 1, 0, 1), COLORS[self.color])
+        # fill_coords(img, point_in_rect(0, 1, 0, 1), COLORS[self.color])
+        if self.unlockable:
+            fill_coords(img, point_in_rect(0.12, 0.88, 0.12, 0.88), COLORS[self.color])
+            fill_coords(img, point_in_rect(0.18, 0.82, 0.18, 0.82), COLORS[self.color])
+        else:
+            fill_coords(img, point_in_rect(0.12, 0.88, 0.12, 0.88), COLORS[self.color])
+            fill_coords(img, point_in_rect(0.18, 0.82, 0.18, 0.82), (0, 0, 0))
 
 
 class Floor(WorldObj):
@@ -275,12 +285,30 @@ class Ball(WorldObj):
         fill_coords(img, point_in_circle(0.5, 0.5, 0.31), COLORS[self.color])
 
 
-class Box(WorldObj):
-    def __init__(self, color, contains: WorldObj | None = None):
-        super().__init__("box", color)
-        self.contains = contains
+class KeyBox(WorldObj):
+    """Box that contains the key to open other locks"""
+    def __init__(self, color, index = None, first_key = False, path = None):
+        super().__init__("keybox", color)
+        self.interactable = False
+        self.first_key = first_key
+        if first_key:
+            self.interactable = True
+        self.index = index # key of the index in the path
+        self.path = path # on which path is the key
+        
+    def is_key(self): 
+        return True
+    
+    def is_lock(self): 
+        return False
 
     def can_pickup(self):
+        return self.interactable
+    
+    def is_first_key(self):
+        return self.first_key
+    
+    def can_overlap(self):
         return True
 
     def render(self, img):
@@ -292,11 +320,42 @@ class Box(WorldObj):
 
         # Horizontal slit
         # fill_coords(img, point_in_rect(0.16, 0.84, 0.47, 0.53), c)
-
-    def toggle(self, env, pos):
-        # Replace the box by its contents
-        env.grid.set(pos[0], pos[1], self.contains)
+        
+        
+class LockBox(WorldObj):
+    """Box that contains the lock and needs a key to be opened"""
+    def __init__(self, color, index = None, goal_lock = False, path = None):
+        super().__init__("lockbox", color)
+        self.pickable = False
+        self.goal_lock = goal_lock
+        self.unlockable = False
+        self.index = index
+        self.path = path
+    
+    def is_goal_lock(self):
+        return self.goal_lock
+    
+    def is_lock(self):
         return True
+    
+    def is_key(self):
+        return False
+    
+    def can_overlap(self):
+        return True
+    
+    def can_pickup(self):
+        return self.unlockable
+    
+    def render(self, img):
+        c = COLORS[self.color]
+
+        # Outline
+        fill_coords(img, point_in_rect(0.12, 0.88, 0.12, 0.88), c)
+        fill_coords(img, point_in_rect(0.18, 0.82, 0.18, 0.82), (0, 0, 0))
+
+        # Horizontal slit
+        # fill_coords(img, point_in_rect(0.16, 0.84, 0.47, 0.53), c)
     
 class Tile(WorldObj):
     def __init__(self, color):

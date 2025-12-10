@@ -17,6 +17,7 @@ dependencies = [
     "minigrid>=3.0.0",
     "networkx>=3.5",
     "numpy>=2.3.5",
+    "opencv-python>=4.11.0.86",
     "petname>=2.6",
     "plotly>=6.5.0",
     "seaborn>=0.13.2",

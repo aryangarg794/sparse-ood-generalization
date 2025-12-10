@@ -8,6 +8,7 @@ num_heads: 1
 include_sparsity: true
 l1_weight: 0.1
 residual: false
+positional_encoding: true
 
 mha_layer:
   _partial_: true
