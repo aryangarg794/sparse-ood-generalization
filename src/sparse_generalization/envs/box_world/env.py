@@ -15,7 +15,7 @@ from minigrid.core.grid import Grid
 from sparse_generalization.envs.box_world.objects import Wall, Goal, KeyBox, LockBox
 from sparse_generalization.envs.box_world.constants import COLOR_NAMES
 
-# somewhat based on https://github.com/aryangarg794/rnd_dqn_four_room/blob/master/four_room/env.py
+# somewhat inspired from https://github.com/aryangarg794/rnd_dqn_four_room/blob/master/four_room/env.py
 class BoxWorldEnv(MiniGridEnv):
     """Simple crossing based environment. Currently only for visual purposes, movement
     and transition logic still needs to be added.
@@ -41,6 +41,7 @@ class BoxWorldEnv(MiniGridEnv):
         num_distractors=0,
         max_steps=100,
         highlight=False,
+        include_walls=False,
         unsolvable_prob=0.0,
         edge_remove_prob=0.3,
         render_mode='human',
@@ -63,6 +64,7 @@ class BoxWorldEnv(MiniGridEnv):
         self.unsolvable_prob = unsolvable_prob
         self.num_pairs = num_pairs
         self.edge_drop_prob = edge_remove_prob
+        self._include_walls = include_walls
         
         if not self._randomize:
             self._list_size = len(self._agent_pos_list)
@@ -91,9 +93,10 @@ class BoxWorldEnv(MiniGridEnv):
         
         if self._randomize:
             # waalls: for now simple just one wall
-            self.walls = self._simple_wall_gen()
-            for wall in self.walls:
-                self.grid.set(*wall, Wall())
+            if self._include_walls:
+                self.walls = self._simple_wall_gen()
+                for wall in self.walls:
+                    self.grid.set(*wall, Wall())
         
             # agent and goal logic
             self.place_agent()

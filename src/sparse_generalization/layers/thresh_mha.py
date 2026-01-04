@@ -79,7 +79,7 @@ class MultiHeadAttentionThresh(nn.Module):
         attention_probs = softmax(attention_logits, dim=-1)
         attention_probs_mask = (attention_probs > self.threshold).float()
         thresholded_probs = attention_probs_mask * attention_probs 
-        thresholded_probs = thresholded_probs - attention_probs.detach() + attention_probs
+        thresholded_probs = thresholded_probs - attention_probs.detach() + attention_probs # ste 
         
         hidden_repr = torch.bmm(thresholded_probs, value) # (b*h, l, d)    
         
