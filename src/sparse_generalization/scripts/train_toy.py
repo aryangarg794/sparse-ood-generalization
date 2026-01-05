@@ -11,9 +11,9 @@ from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
-from torch.utils.data import Dataset, DataLoader
-from torch import Tensor
-from typing import Self
+from torch.utils.data import DataLoader
+
+from sparse_generalization.utils.datasets import BasicDataset
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 warnings.filterwarnings(
@@ -21,19 +21,6 @@ warnings.filterwarnings(
 )
 
 print(f"CUDA available: {torch.cuda.is_available()}")
-
-class BasicDataset(Dataset):
-    def __init__(self: Self, x: Tensor, y: Tensor):
-        super().__init__()
-        self.x = x
-        self.y = y.float()
-    
-    def __len__(self: Self):
-        return self.x.size(0)
-    
-    def __getitem__(self: Self, index: int):
-        return self.x[index], self.y[index]
-
 
 @hydra.main(version_base=None, config_path='../config', config_name='default')
 def main(cfg: DictConfig):

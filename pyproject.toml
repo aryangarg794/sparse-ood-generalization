@@ -30,6 +30,7 @@ dependencies = [
 [project.scripts]
 sparse-generalization = "sparse_generalization:main"
 train-toy = "sparse_generalization.scripts.train_toy:main"
+box-world = "sparse_generalization.scripts.train_boxworld:main"
 generate-boxworld = "sparse_generalization.scripts.generate_boxworld_dataset:generate_dataset"
 
 [build-system]

@@ -10,7 +10,7 @@ from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
 
 from sparse_generalization.models.mlp import BasicMLP
-from sparse_generalization.losses.sparse_loss import L1Sparsity, L1SparsityAdjacency
+from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency, L1SparsityWeights
 
 class MHABlock(nn.Module):
     """Basic transformer block for the toy example 
@@ -22,7 +22,8 @@ class MHABlock(nn.Module):
     def __init__(
         self: Self, 
         embed_size: int, 
-        input_dim: int, 
+        use_grid: bool,
+        model_dim: int, 
         out_dim: int,
         num_heads: int, # for the toy example just keep it one
         hidden_dims: List,
@@ -36,7 +37,19 @@ class MHABlock(nn.Module):
     ):
         super(MHABlock, self).__init__(*args, **kwargs)
         self.residual = residual
-        embed_size = embed_size + 1 if positional_encoding else embed_size
+        self.use_grid = use_grid
+        self.model_dim = model_dim
+
+        if use_grid:
+            self.feature_map = nn.Conv2d(in_channels=3, out_channels=model_dim, kernel_size=1)            
+            
+        if positional_encoding and not use_grid:
+            embed_size += 1
+        elif positional_encoding and use_grid:
+            model_dim += 2  
+            embed_size = model_dim  
+        
+        self.embed_size = embed_size
         self.pe = positional_encoding
          
         self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1) or (b, 3, 2) with pe
@@ -44,6 +57,13 @@ class MHABlock(nn.Module):
         self.mlp = BasicMLP(input_dim=embed_size, out_dim=out_dim, hidden_dims=hidden_dims, act=act) # (b, 3) 
     
     def forward(self: Self, x: Tensor):
+        if self.use_grid:
+            return self._forward_image(x)
+        else:
+            return self._forward_basic(x)
+        
+        
+    def _forward_basic(self: Self, x: Tensor):
         x = x.unsqueeze(dim=-1) # so we treat each input as a node in the graph with dim 1
         if self.pe:
             batch_size, seq_len, _ = x.size()
@@ -59,6 +79,31 @@ class MHABlock(nn.Module):
             out = self.mlp(attn_out.max(dim=1)[0])
         return out, attn_scores
     
+    def _forward_image(self: Self, x: Tensor):
+        # x is (w, h, 3)
+        assert self.use_grid
+        batch_size, width, height, _ = x.size()
+        x_features = self.feature_map(x.permute(0, 3, 1, 2)) # (b, 3, w, h)
+        x_features = x_features.permute(0, 2, 3, 1)
+        x_attn = x_features.view(-1, width*height, self.model_dim)
+        
+        if self.pe:
+            device = x.device
+            xs = torch.arange(width, device=device)
+            ys = torch.arange(height, device=device)
+            coords = torch.cartesian_prod(xs, ys)
+            coords = coords.expand(batch_size, width*height, 2)
+            x_attn = torch.cat([x_attn, coords], dim=-1)
+        
+        attn_out, attn_scores = self.mha(x_attn, x_attn, x_attn)
+        
+        if self.residual:
+            out = self.mlp((attn_out + x).max(dim=1)[0])
+        else:
+            out = self.mlp(attn_out.max(dim=1)[0])    
+        
+        return out, attn_scores
+    
 class TransformerLit(pl.LightningModule):
     """Lighting Model for the basic MHA block
 
@@ -68,7 +113,8 @@ class TransformerLit(pl.LightningModule):
     def __init__(
         self: Self, 
         embed_size: int, 
-        input_dim: int, 
+        use_grid: bool, 
+        model_dim: int, 
         out_dim: int,
         num_heads: int, # for the toy example just keep it one
         hidden_dims: List,
@@ -78,7 +124,7 @@ class TransformerLit(pl.LightningModule):
         lr: float = 1e-3,
         residual: bool = True,
         include_sparsity: bool = False,
-        sparse_loss: nn.Module = L1Sparsity, 
+        sparse_loss: nn.Module = L1SparsityWeights, 
         l1_weight: float = 0.1,  
         positional_encoding: bool = True, 
         loss: nn.Module = nn.BCEWithLogitsLoss,
@@ -93,8 +139,9 @@ class TransformerLit(pl.LightningModule):
         
         self.model = MHABlock(
             embed_size=embed_size,
-            input_dim=input_dim, 
             out_dim=out_dim,
+            model_dim=model_dim, 
+            use_grid=use_grid,
             num_heads=num_heads,
             residual=residual,  
             hidden_dims=hidden_dims,
@@ -106,6 +153,7 @@ class TransformerLit(pl.LightningModule):
         
         self.accuracy = BinaryAccuracy()
         self.test_attn_matrices = []
+        self.train_attn_matrices = []
         self.test_name = 'placeholder'
         
     def _get_loss_acc(self: Self, batch):
@@ -141,6 +189,7 @@ class TransformerLit(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
         )
+        self.train_attn_matrices.append(attn)
         return loss
     
     def validation_step(self, batch):
@@ -180,15 +229,22 @@ class TransformerLit(pl.LightningModule):
         self.test_attn_matrices.append(attn)
         return loss
     
+    
+    def on_train_epoch_end(self):
+        all_attn = torch.cat(self.train_attn_matrices, dim=0) 
+        sum_attn = all_attn.sum(dim=(1, 2))
+        self.log(
+            "avg_num_edges_train",
+            sum_attn.mean().item(),
+            on_step=False,
+            on_epoch=True,
+        )
+
+        self.train_attn_matrices.clear()  
+    
     def on_test_epoch_end(self):
         all_attn = torch.cat(self.test_attn_matrices, dim=0) 
         avg_attn = all_attn.mean(dim=0)  
-        
-        table = wandb.Table(columns=["From\\To", "Token 0", "Token 1", "Token 2"])
-        for i in range(3):
-            table.add_data(f"Token {i}", float(avg_attn[i,0]), float(avg_attn[i,1]), float(avg_attn[i,2]))
-        
-        self.logger.experiment.log({"avg_attention_table": table})
         
         fig, ax = plt.subplots(1, 1, figsize=(5, 4))
         sns.heatmap(avg_attn.detach().cpu().numpy(), annot=True, cmap="viridis", xticklabels=[0,1,2], yticklabels=[0,1,2], ax=ax)
@@ -198,6 +254,13 @@ class TransformerLit(pl.LightningModule):
         self.logger.experiment.log({f'Heatmap Attn {self.test_name}': wandb.Image(fig)})
         plt.close()
         
+        sum_attn = all_attn.sum(dim=(1, 2))
+        self.log(
+            "avg_num_edges_test",
+            sum_attn.mean().item(),
+            on_step=False,
+            on_epoch=True,
+        )
 
         self.test_attn_matrices.clear()
     

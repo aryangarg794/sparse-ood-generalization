@@ -1,6 +1,6 @@
 defaults:
-- data: toy-example
-- model: basic-mlp
+- data: box-world
+- model: transformer
 - wandb: default
 - trainer: default
 - _self_

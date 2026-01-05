@@ -1,0 +1,6 @@
+data_dir: data/box_world
+data_file: balanced_10000.pl
+
+
+test_size: 0.15
+batch_size: 64
