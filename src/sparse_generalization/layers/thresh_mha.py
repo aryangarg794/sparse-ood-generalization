@@ -7,7 +7,7 @@ from torch.nn.functional import gumbel_softmax, softmax
 from typing import Self
 
 class MultiHeadAttentionThresh(nn.Module):
-    """Implements MHA with thresholding, all attention values lower than 
+    """Implements MHA with thresholding, all attention values lower than threshold are removed 
 
     Args:
         nn (_type_): _description_

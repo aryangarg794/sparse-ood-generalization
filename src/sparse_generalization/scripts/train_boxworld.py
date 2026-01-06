@@ -46,10 +46,12 @@ def main(cfg: DictConfig):
         
         training_set, test_set = random_split(dataset, [1-cfg.data.test_size, cfg.data.test_size])
         
-        train_loader = DataLoader(training_set, cfg.data.batch_size)
-        test_loader = DataLoader(test_set, cfg.data.batch_size)
+        train_loader = DataLoader(training_set, cfg.data.batch_size, shuffle=True)
+        test_loader = DataLoader(test_set, cfg.data.batch_size, shuffle=True)
         
         model = instantiate(cfg.model)
+        print(f"{'='*60}")
+        print(model)
         trainer = Trainer(**cfg.trainer, default_root_dir='../../checkpoints/', logger=logger)
         trainer.fit(model, train_dataloaders=train_loader)
         
@@ -79,8 +81,8 @@ def main(cfg: DictConfig):
             generator = torch.Generator().manual_seed(seed)
             training_set, test_set = random_split(dataset, [1-cfg.data.test_size, cfg.data.test_size], generator=generator)
         
-            train_loader = DataLoader(training_set, cfg.data.batch_size)
-            test_loader = DataLoader(test_set, cfg.data.batch_size)
+            train_loader = DataLoader(training_set, cfg.data.batch_size, shuffle=True, generator=generator)
+            test_loader = DataLoader(test_set, cfg.data.batch_size, shuffle=True, generator=generator)
             
             model = instantiate(cfg.model)
             trainer = Trainer(**cfg.trainer, default_root_dir='../../checkpoints/', logger=logger)

@@ -4,10 +4,11 @@ embed_size: 3
 out_dim: 1 
 hidden_dims: [64, 128, 64]
 use_grid: true
-model_dim: 16
+model_dim: 64
+num_feature_layers: 3
 num_heads: 1
 include_sparsity: true
-l1_weight: 0.01
+l1_weight: 0.1
 residual: false
 positional_encoding: true
 

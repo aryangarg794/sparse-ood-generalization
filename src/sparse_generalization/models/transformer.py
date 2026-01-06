@@ -24,6 +24,7 @@ class MHABlock(nn.Module):
         embed_size: int, 
         use_grid: bool,
         model_dim: int, 
+        num_feature_layers: int, 
         out_dim: int,
         num_heads: int, # for the toy example just keep it one
         hidden_dims: List,
@@ -41,7 +42,15 @@ class MHABlock(nn.Module):
         self.model_dim = model_dim
 
         if use_grid:
-            self.feature_map = nn.Conv2d(in_channels=3, out_channels=model_dim, kernel_size=1)            
+            self.feature_map = nn.Sequential(
+                nn.Conv2d(in_channels=3, out_channels=model_dim, kernel_size=1),
+                act()
+            )
+            for _ in range(num_feature_layers):
+                self.feature_map.extend([
+                    nn.Conv2d(in_channels=model_dim, out_channels=model_dim, kernel_size=1),
+                    act()
+                ])                        
             
         if positional_encoding and not use_grid:
             embed_size += 1
@@ -118,6 +127,7 @@ class TransformerLit(pl.LightningModule):
         out_dim: int,
         num_heads: int, # for the toy example just keep it one
         hidden_dims: List,
+        num_feature_layers: int = 3, 
         mha_layer: nn.Module = nn.MultiheadAttention, 
         act: nn.Module = nn.ReLU,
         dropout: int = 0.0, 
@@ -135,6 +145,10 @@ class TransformerLit(pl.LightningModule):
         if include_sparsity:
             self.l1_loss = sparse_loss()
             self.l1_weight = l1_weight
+        else:
+            self.l1_loss = None
+            self.l1_weight = None
+            
         self.lr = lr
         
         self.model = MHABlock(
@@ -146,6 +160,7 @@ class TransformerLit(pl.LightningModule):
             residual=residual,  
             hidden_dims=hidden_dims,
             act=act,
+            num_feature_layers=num_feature_layers, 
             positional_encoding=positional_encoding,
             dropout=dropout,
             mha_layer=mha_layer
@@ -232,10 +247,11 @@ class TransformerLit(pl.LightningModule):
     
     def on_train_epoch_end(self):
         all_attn = torch.cat(self.train_attn_matrices, dim=0) 
-        sum_attn = all_attn.sum(dim=(1, 2))
+        num_attn = self._compute_attn_mean(all_attn)
+        
         self.log(
             "avg_num_edges_train",
-            sum_attn.mean().item(),
+            num_attn,
             on_step=False,
             on_epoch=True,
         )
@@ -254,16 +270,23 @@ class TransformerLit(pl.LightningModule):
         self.logger.experiment.log({f'Heatmap Attn {self.test_name}': wandb.Image(fig)})
         plt.close()
         
-        sum_attn = all_attn.sum(dim=(1, 2))
+        num_attn = self._compute_attn_mean(all_attn)
         self.log(
             "avg_num_edges_test",
-            sum_attn.mean().item(),
+            num_attn,
             on_step=False,
             on_epoch=True,
         )
 
         self.test_attn_matrices.clear()
     
-    def configure_optimizers(self):
+    def _compute_attn_mean(self: Self, all_attn: Tensor):
+        if self.l1_loss is None or isinstance(self.l1_loss, L1SparsityWeights):
+            return (all_attn > 0.01).float().sum(dim=(1, 2)).mean().item()
+        else:
+            return all_attn.sum(dim=(1, 2)).mean().item()
+            
+    
+    def configure_optimizers(self: Self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         return optimizer
