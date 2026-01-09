@@ -1,5 +1,0 @@
-_target_: sparse_generalization.models.cnn.BasicCNNLit
-
-input_dim: 3
-out_dim: 1 
-hidden_channels: [16, 32, 64]

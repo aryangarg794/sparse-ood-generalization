@@ -1,6 +1,6 @@
 defaults:
 - data: box-world
-- model: transformer
+- model: transformer-light
 - wandb: default
 - trainer: default
 - _self_

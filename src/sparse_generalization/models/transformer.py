@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import lightning as pl
 import seaborn as sns
 import torch 
@@ -105,9 +106,8 @@ class MHABlock(nn.Module):
             x_attn = torch.cat([x_attn, coords], dim=-1)
         
         attn_out, attn_scores = self.mha(x_attn, x_attn, x_attn)
-        
         if self.residual:
-            out = self.mlp((attn_out + x).max(dim=1)[0])
+            out = self.mlp((attn_out + x_attn).max(dim=1)[0])
         else:
             out = self.mlp(attn_out.max(dim=1)[0])    
         
@@ -136,14 +136,24 @@ class TransformerLit(pl.LightningModule):
         include_sparsity: bool = False,
         sparse_loss: nn.Module = L1SparsityWeights, 
         l1_weight: float = 0.1,  
-        positional_encoding: bool = True, 
+        positional_encoding: bool = True,
+        k: int = 5,  
         loss: nn.Module = nn.BCEWithLogitsLoss,
+        lagrangian: bool = False, 
+        target_loss: float = 0.05, 
+        start_lambda: float = 1e7,
+        step_size: float = 1e-1, 
+        cma: float = 0.9, 
     ):
         super().__init__()
         self.loss = loss()
         self.sparse = include_sparsity
         if include_sparsity:
-            self.l1_loss = sparse_loss()
+            if isinstance(sparse_loss, L1SparsityWeights):
+                self.l1_loss = sparse_loss(k=k)
+            else:
+                self.l1_loss = sparse_loss()    
+            
             self.l1_weight = l1_weight
         else:
             self.l1_loss = None
@@ -170,6 +180,13 @@ class TransformerLit(pl.LightningModule):
         self.test_attn_matrices = []
         self.train_attn_matrices = []
         self.test_name = 'placeholder'
+        self.automatic_optimization = False
+        self.lagrangian = lagrangian
+        if lagrangian:
+            self.lambd = start_lambda
+            self.target_loss = target_loss
+            self.step_size = step_size
+            self.ema_step = cma
         
     def _get_loss_acc(self: Self, batch):
         x, y = batch
@@ -179,10 +196,21 @@ class TransformerLit(pl.LightningModule):
         return loss, acc, attn
 
     def training_step(self, batch, batch_idx):
-        loss, acc, attn = self._get_loss_acc(batch)
+        rec_loss, acc, attn = self._get_loss_acc(batch)
+        opt = self.optimizers()
         if self.sparse:
-            sparse_loss = self.l1_weight * self.l1_loss(attn)
-            loss = loss + sparse_loss
+            if self.lagrangian:
+                sparse_loss = self.l1_loss(attn)
+                loss = rec_loss + sparse_loss/self.lambd
+                if self.global_step == 0:
+                    self.ema_loss = (rec_loss - self.target_loss).detach()
+                else:
+                    self.ema_loss = self.ema_step * self.ema_loss + (1- self.ema_step) \
+                        * (rec_loss-self.target_loss).detach()
+            else:
+                sparse_loss = self.l1_weight * self.l1_loss(attn)
+                loss = rec_loss + sparse_loss
+                
             self.log(
                 "sparse_loss", 
                 sparse_loss, 
@@ -190,10 +218,19 @@ class TransformerLit(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True,
             )
+            
+        opt.zero_grad()
+        self.manual_backward(loss)
+        opt.step()
+        
+        if self.lagrangian:
+            self.lambd = torch.exp(self.step_size*self.ema_loss) * self.lambd
+            self.lambd = torch.clamp(self.lambd, min=1e-20, max=1e30)
+            
         self.log(
             "train_loss", 
             loss, 
-            on_step=True,
+            on_step=False,
             on_epoch=True,
             prog_bar=True,
         )
@@ -204,6 +241,17 @@ class TransformerLit(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
         )
+        
+        if self.lagrangian:
+            self.log(
+                "log_lambda", 
+                self.lambd.log().item(), 
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True
+            )
+        
+        
         self.train_attn_matrices.append(attn)
         return loss
     

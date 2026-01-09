@@ -1,0 +1,9 @@
+_target_: sparse_generalization.models.mlp.BasicMLPLit
+
+input_dim: 3
+out_dim: 1 
+hidden_dims: [16, 32, 64]
+
+module:
+  _partial_: true
+  _target_: sparse_generalization.models.cnn.BasicCNN

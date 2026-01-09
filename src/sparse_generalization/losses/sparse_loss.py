@@ -38,11 +38,14 @@ class L1SparsityAdjacency(nn.Module):
     
     def __init__(
         self: Self, 
+        thresholded: bool = False,
+        threshold: float = 0.1,
         *args, 
         **kwargs
     ):
         super().__init__(*args, **kwargs)
+        self.thresholded = thresholded
+        self.threshold = threshold
         
     def forward(self: Self, A: Tensor):
-        batch_size, _, _ = A.size()
         return A.sum(dim=(1, 2)).mean() 

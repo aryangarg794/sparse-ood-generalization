@@ -6,6 +6,8 @@ from torch import Tensor
 from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
 
+from sparse_generalization.models.cnn import BasicCNN
+
 class BasicMLP(nn.Module):
     """Basic MLP class
 
@@ -55,17 +57,18 @@ class BasicMLPLit(pl.LightningModule):
         hidden_dims: List = list([64, 128, 64]),
         act: nn.Module = nn.ReLU,
         lr: float = 1e-3,
-        loss: nn.Module = nn.BCEWithLogitsLoss
+        loss: nn.Module = nn.BCEWithLogitsLoss,
+        module: nn.Module = BasicMLP
     ):
         super().__init__()
         self.loss = loss()
         self.lr = lr
         
-        self.model = BasicMLP(
-            input_dim=input_dim,
-            out_dim=out_dim,
-            hidden_dims=hidden_dims,
-            act=act
+        self.model = module(
+            input_dim,
+            out_dim,
+            hidden_dims,
+            act
         )
         
         self.accuracy = BinaryAccuracy()

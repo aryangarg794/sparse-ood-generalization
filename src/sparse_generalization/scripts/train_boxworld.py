@@ -36,6 +36,8 @@ def main(cfg: DictConfig):
         dataset = dill.load(file)
     group_name = cfg.run_name + "_" + timestamp
     dataset = BasicDataset(dataset['X'], dataset['Y'])
+    
+    print(OmegaConf.to_yaml(cfg, resolve=True))
 
     if cfg.seeds is None:
         print(f'\n{'='*60}')

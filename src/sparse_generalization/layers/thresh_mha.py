@@ -20,7 +20,7 @@ class MultiHeadAttentionThresh(nn.Module):
         bias: int = True, 
         dropout: float = 0.0, 
         batch_first: bool = True, 
-        threshold: float = 0.1,
+        threshold: float = 0.01,
         *args, 
         **kwargs
     ):
