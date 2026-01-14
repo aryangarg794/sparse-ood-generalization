@@ -1,10 +1,11 @@
+import math
 import numpy as np
 import torch 
 import torch.nn as nn
 
 from torch import Tensor
 from torch.nn.functional import gumbel_softmax, softmax
-from typing import Self
+from typing import Self, Callable
 
 class MultiHeadAttentionBern(nn.Module):
     """Implements  
@@ -22,6 +23,8 @@ class MultiHeadAttentionBern(nn.Module):
         batch_first: bool = True, 
         temp: float = 0.5,
         hard: bool = True, 
+        noisy: bool = False,
+        alpha: float = 3.0, 
         *args, 
         **kwargs
     ):
@@ -36,6 +39,8 @@ class MultiHeadAttentionBern(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.temp = temp
         self.hard = hard
+        self.noisy = noisy
+        self.alpha = alpha
         
         self.queries = nn.Linear(embed_size, embed_size, bias=bias)
         self.keys = nn.Linear(embed_size, embed_size, bias=bias)
@@ -84,11 +89,19 @@ class MultiHeadAttentionBern(nn.Module):
         A = A[:, :, -1] # get the mask value for class 1 (if there is edge)
         
         attention_probs = softmax(attention_logits, dim=-1)
-        masked_attention_probs = A.view(batch_heads, seq_len, seq_len) * attention_probs # (b*h, l, l)
+        if self.noisy and self.training:
+            bern = torch.distributions.Bernoulli(probs=self.var)
+            noise = bern.sample(sample_shape=A.shape).to('cuda')
+            A_noisy = A + noise.detach()
+            masked_attention_probs = A_noisy.view(batch_heads, seq_len, seq_len) * attention_probs # (b*h, l, l)
+        else:
+            masked_attention_probs = A.view(batch_heads, seq_len, seq_len) * attention_probs # (b*h, l, l)
         
         hidden_repr = torch.bmm(masked_attention_probs, value) # (b*h, l, d)        
         
         return hidden_repr.view(-1, self.heads, seq_len, self.dk), A.view(-1, self.heads, seq_len, seq_len)
         
-        
+    def noise_scheduler(self: Self, step: int, k: float = 1e-3):
+        self.var = 1 / (1 + step * k)**self.alpha
+        return self.var      
           

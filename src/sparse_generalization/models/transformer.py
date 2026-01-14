@@ -11,7 +11,9 @@ from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
 
 from sparse_generalization.models.mlp import BasicMLP
+from sparse_generalization.layers.bern_mha import MultiHeadAttentionBern
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency, L1SparsityWeights
+from sparse_generalization.utils.util_funcs import noise_scheduler
 
 class MHABlock(nn.Module):
     """Basic transformer block for the toy example 
@@ -34,6 +36,7 @@ class MHABlock(nn.Module):
         dropout: int,
         residual: bool, 
         mha_layer: nn.Module, 
+        noisy_bern: bool, 
         *args, 
         **kwargs
     ):
@@ -61,8 +64,12 @@ class MHABlock(nn.Module):
         
         self.embed_size = embed_size
         self.pe = positional_encoding
+        
          
-        self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1) or (b, 3, 2) with pe
+        if noisy_bern:
+            self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, noisy=True)
+        else:
+            self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1) or (b, 3, 2) with pe
         # self.norm = nn.LayerNorm(embed_size) # layer norm does not work for toy example
         self.mlp = BasicMLP(input_dim=embed_size, out_dim=out_dim, hidden_dims=hidden_dims, act=act) # (b, 3) 
     
@@ -144,10 +151,19 @@ class TransformerLit(pl.LightningModule):
         start_lambda: float = 1e7,
         step_size: float = 1e-1, 
         cma: float = 0.9, 
+        noisy_grads: bool = False,
+        eta: float = 1.0, 
+        gamma: float = 0.55,
+        noisy_bern: bool = False
     ):
         super().__init__()
         self.loss = loss()
         self.sparse = include_sparsity
+        self.noisy_grads = noisy_grads
+        self.eta = eta
+        self.gamma = gamma
+        self.noisy_bern = noisy_bern
+        
         if include_sparsity:
             if isinstance(sparse_loss, L1SparsityWeights):
                 self.l1_loss = sparse_loss(k=k)
@@ -173,7 +189,8 @@ class TransformerLit(pl.LightningModule):
             num_feature_layers=num_feature_layers, 
             positional_encoding=positional_encoding,
             dropout=dropout,
-            mha_layer=mha_layer
+            mha_layer=mha_layer,
+            noisy_bern=noisy_bern
         )
         
         self.accuracy = BinaryAccuracy()
@@ -196,6 +213,15 @@ class TransformerLit(pl.LightningModule):
         return loss, acc, attn
 
     def training_step(self, batch, batch_idx):
+        if self.noisy_bern:
+            bern_var = self.model.mha.noise_scheduler(self.global_step)
+            self.log(
+                "bern_noise", 
+                bern_var, 
+                on_step=False,
+                on_epoch=True,
+            )
+            
         rec_loss, acc, attn = self._get_loss_acc(batch)
         opt = self.optimizers()
         if self.sparse:
@@ -218,14 +244,31 @@ class TransformerLit(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True,
             )
+        else:
+            loss = rec_loss  
             
         opt.zero_grad()
         self.manual_backward(loss)
-        opt.step()
         
+        if self.noisy_grads:
+            with torch.no_grad():
+                var = noise_scheduler(self.eta, self.global_step, self.gamma)
+                for param in self.parameters():
+                    noise = torch.randn_like(param) * var
+                    param.grad.data.add_(noise)
+            
+            self.log(
+                "noise", 
+                var, 
+                on_step=False,
+                on_epoch=True,
+            )
+        
+        opt.step()
+
         if self.lagrangian:
             self.lambd = torch.exp(self.step_size*self.ema_loss) * self.lambd
-            self.lambd = torch.clamp(self.lambd, min=1e-20, max=1e30)
+            self.lambd = torch.clamp(self.lambd, min=1e-15, max=1e15)
             
         self.log(
             "train_loss", 
