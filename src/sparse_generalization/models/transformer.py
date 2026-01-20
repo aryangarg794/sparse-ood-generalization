@@ -4,6 +4,7 @@ import lightning as pl
 import seaborn as sns
 import torch 
 import torch.nn as nn
+import torch.nn.utils as utils
 import wandb
 
 from torch import Tensor
@@ -71,7 +72,7 @@ class MHABlock(nn.Module):
         else:
             self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1) or (b, 3, 2) with pe
         # self.norm = nn.LayerNorm(embed_size) # layer norm does not work for toy example
-        self.mlp = BasicMLP(input_dim=embed_size, out_dim=out_dim, hidden_dims=hidden_dims, act=act) # (b, 3) 
+        self.mlp = BasicMLP(input_dim=embed_size, out_dim=out_dim, hidden_dims=hidden_dims, act=act, dropout=dropout) # (b, 3) 
     
     def forward(self: Self, x: Tensor):
         if self.use_grid:
@@ -120,6 +121,10 @@ class MHABlock(nn.Module):
         
         return out, attn_scores
     
+    def mha_parameters(self: Self):
+        return list(self.feature_map.parameters()) + list(self.mha.parameters()) if self.use_grid \
+            else list(self.mha.parameters())
+    
 class TransformerLit(pl.LightningModule):
     """Lighting Model for the basic MHA block
 
@@ -154,8 +159,13 @@ class TransformerLit(pl.LightningModule):
         noisy_grads: bool = False,
         eta: float = 1.0, 
         gamma: float = 0.55,
-        noisy_bern: bool = False
+        noisy_bern: bool = False,
+        beta1: float = 0.99, 
+        beta2: float = 0.999,
+        foopt: bool = False,
+        eps: float = 1e-3
     ):
+        self.betas = (beta1, beta2)
         super().__init__()
         self.loss = loss()
         self.sparse = include_sparsity
@@ -163,6 +173,8 @@ class TransformerLit(pl.LightningModule):
         self.eta = eta
         self.gamma = gamma
         self.noisy_bern = noisy_bern
+        self.foopt = foopt
+        self.eps = eps
         
         if include_sparsity:
             if isinstance(sparse_loss, L1SparsityWeights):
@@ -249,6 +261,11 @@ class TransformerLit(pl.LightningModule):
             
         opt.zero_grad()
         self.manual_backward(loss)
+    
+        if self.foopt:
+            total_norm = utils.clip_grad_norm_(self.model.mha_parameters(), max_norm=float('inf'))
+            if total_norm <= self.eps and rec_loss >= self.target_loss:
+                pass
         
         if self.noisy_grads:
             with torch.no_grad():
@@ -263,8 +280,10 @@ class TransformerLit(pl.LightningModule):
                 on_step=False,
                 on_epoch=True,
             )
-        
+
         opt.step()
+        
+        
 
         if self.lagrangian:
             self.lambd = torch.exp(self.step_size*self.ema_loss) * self.lambd
@@ -379,5 +398,5 @@ class TransformerLit(pl.LightningModule):
             
     
     def configure_optimizers(self: Self):
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, betas=self.betas)
         return optimizer

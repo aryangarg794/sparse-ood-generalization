@@ -1,5 +1,5 @@
 program: train-toy
-project: sparse_generalization
+project: sparse-generalization
 method: bayes
 metric: 
   name: train_loss

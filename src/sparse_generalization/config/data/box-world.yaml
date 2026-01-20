@@ -1,5 +1,5 @@
 data_dir: data/box_world
-data_file: balanced_10000.pl
+data_file: balanced_1000.pl
 
 
 test_size: 0.15

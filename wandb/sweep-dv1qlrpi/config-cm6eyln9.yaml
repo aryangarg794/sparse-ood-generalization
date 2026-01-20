@@ -1,0 +1,6 @@
+wandb_version: 1
+
+model.beta1:
+  value: 0.5878163454516652
+model.beta2:
+  value: 0.9848321082144248

@@ -1,0 +1,27 @@
+program: box-world
+project: sparse-generalization
+method: bayes
+metric: 
+  name: train_loss
+  goal: minimize
+
+
+parameters:
+  model.beta1:
+    distribution: uniform
+    min: 0.5
+    max: 0.99999
+
+  model.beta2:
+    distribution: uniform
+    min: 0.5
+    max: 0.99999
+
+command:
+  - ${env}
+  - uv
+  - run
+  - ${program}
+  - model=transformer-light
+  - model.noisy_grads=true
+  - seeds=[3]

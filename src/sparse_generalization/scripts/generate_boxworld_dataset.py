@@ -10,10 +10,10 @@ from sparse_generalization.envs.box_world.wrappers import make_env
 gym.register('BoxWorldEnv-v1', BoxWorldEnv)
 
 def generate_dataset(
-    num_samples: int = 50000, 
+    num_samples: int = 1000, 
     ratio_labels: float = 0.5, 
     seed: int | None = None,
-    file_path: str = 'data/box_world/balanced_test' 
+    file_path: str = 'data/box_world/balanced' 
 ):
     if seed:
         np.random.seed(seed)

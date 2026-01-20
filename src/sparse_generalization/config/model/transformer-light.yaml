@@ -8,7 +8,7 @@ model_dim: 64
 num_feature_layers: 3
 num_heads: 1
 include_sparsity: true
-l1_weight: 0.0001
+l1_weight: 0.01
 residual: false
 positional_encoding: true
 lr: 1e-3
@@ -22,6 +22,9 @@ noisy_grads: false
 eta: 1.0
 gamma: 0.55
 noisy_bern: false
+beta1: 0.99
+beta2: 0.999
+foopt: false
 
 mha_layer:
   _partial_: true

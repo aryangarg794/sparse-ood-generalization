@@ -49,3 +49,4 @@ class L1SparsityAdjacency(nn.Module):
         
     def forward(self: Self, A: Tensor):
         return A.sum(dim=(1, 2)).mean() 
+    

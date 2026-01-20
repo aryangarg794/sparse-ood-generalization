@@ -24,6 +24,7 @@ class BasicMLP(nn.Module):
         out_dim: int,
         hidden_dims: List,
         act: nn.Module,
+        dropout: float, 
         *args, 
         **kwargs
     ):
@@ -33,7 +34,7 @@ class BasicMLP(nn.Module):
         self.layers.extend([nn.Linear(input_dim, hidden_dims[-1]), act()])
         
         for dim1, dim2 in zip(hidden_dims[:-1], hidden_dims[1:]):
-            self.layers.extend([nn.Linear(dim1, dim2), act()])
+            self.layers.extend([nn.Linear(dim1, dim2), act(), nn.Dropout(dropout)])
         self.layers.append(nn.Linear(hidden_dims[-1], out_dim))
         
     def forward(self: Self, x: Tensor):
@@ -57,6 +58,7 @@ class BasicMLPLit(pl.LightningModule):
         hidden_dims: List = list([64, 128, 64]),
         act: nn.Module = nn.ReLU,
         lr: float = 1e-3,
+        dropout: float = 0.1, 
         loss: nn.Module = nn.BCEWithLogitsLoss,
         module: nn.Module = BasicMLP
     ):
@@ -68,7 +70,8 @@ class BasicMLPLit(pl.LightningModule):
             input_dim,
             out_dim,
             hidden_dims,
-            act
+            act,
+            dropout
         )
         
         self.accuracy = BinaryAccuracy()
