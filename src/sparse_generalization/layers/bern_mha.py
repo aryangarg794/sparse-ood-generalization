@@ -102,6 +102,6 @@ class MultiHeadAttentionBern(nn.Module):
         return hidden_repr.view(-1, self.heads, seq_len, self.dk), A.view(-1, self.heads, seq_len, seq_len)
         
     def noise_scheduler(self: Self, step: int, k: float = 1e-3):
-        self.var = 3 - 3 / (1 + step * k)**self.alpha
+        self.var = 1 - 0.9 / (1 + step * k)**self.alpha
         return self.var      
           

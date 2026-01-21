@@ -11,6 +11,7 @@ from datetime import datetime
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 from lightning.pytorch import Trainer
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader, random_split
 
@@ -39,6 +40,7 @@ def main(cfg: DictConfig):
     
     print(OmegaConf.to_yaml(cfg, resolve=True))
 
+
     if cfg.seeds is None:
         print(f'\n{'='*60}')
         config_dict = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
@@ -54,9 +56,10 @@ def main(cfg: DictConfig):
         model = instantiate(cfg.model)
         print(f"{'='*60}")
         print(model)
-        trainer = Trainer(**cfg.trainer, default_root_dir='../../checkpoints/', logger=logger)
+        trainer = Trainer(**cfg.trainer, logger=logger)
         trainer.fit(model, train_dataloaders=train_loader)
         
+        torch.save(model.model.state_dict(), f'checkpoints/{cfg.run_name}_{timestamp}.pt')
         test_metrics = trainer.test(model, test_loader, verbose=False)
         
         table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
@@ -87,8 +90,9 @@ def main(cfg: DictConfig):
             test_loader = DataLoader(test_set, cfg.data.batch_size, shuffle=True, generator=generator)
             
             model = instantiate(cfg.model)
-            trainer = Trainer(**cfg.trainer, default_root_dir='../../checkpoints/', logger=logger)
+            trainer = Trainer(**cfg.trainer, logger=logger)
             trainer.fit(model, train_dataloaders=train_loader)
+            torch.save(model.model.state_dict(), f'checkpoints/{cfg.run_name}_seed{seed}.pt')
             
             test_metrics = trainer.test(model, test_loader, verbose=False)
             

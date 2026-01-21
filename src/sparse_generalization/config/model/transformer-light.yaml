@@ -8,14 +8,14 @@ model_dim: 64
 num_feature_layers: 3
 num_heads: 1
 include_sparsity: true
-l1_weight: 0.01
+l1_weight: 0.0001
 residual: false
 positional_encoding: true
 lr: 1e-3
 k: 4032
 lagrangian: false
-start_lambda: 1e7
-target_loss: 0.05 
+start_lambda: 5e6
+target_loss: 0.15
 cma: 0.9
 step_size: 1e-1
 noisy_grads: false

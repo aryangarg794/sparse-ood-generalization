@@ -142,7 +142,7 @@ class TransformerLit(pl.LightningModule):
         num_feature_layers: int = 3, 
         mha_layer: nn.Module = nn.MultiheadAttention, 
         act: nn.Module = nn.ReLU,
-        dropout: int = 0.0, 
+        dropout: int = 0.1, 
         lr: float = 1e-3,
         residual: bool = True,
         include_sparsity: bool = False,
@@ -163,7 +163,8 @@ class TransformerLit(pl.LightningModule):
         beta1: float = 0.99, 
         beta2: float = 0.999,
         foopt: bool = False,
-        eps: float = 1e-3
+        eps: float = 1e-3,
+        var: float = 1.0
     ):
         self.betas = (beta1, beta2)
         super().__init__()
@@ -175,6 +176,7 @@ class TransformerLit(pl.LightningModule):
         self.noisy_bern = noisy_bern
         self.foopt = foopt
         self.eps = eps
+        self.var = var
         
         if include_sparsity:
             if isinstance(sparse_loss, L1SparsityWeights):
@@ -211,11 +213,11 @@ class TransformerLit(pl.LightningModule):
         self.test_name = 'placeholder'
         self.automatic_optimization = False
         self.lagrangian = lagrangian
-        if lagrangian:
-            self.lambd = start_lambda
-            self.target_loss = target_loss
-            self.step_size = step_size
-            self.ema_step = cma
+
+        self.lambd = start_lambda
+        self.target_loss = target_loss
+        self.step_size = step_size
+        self.ema_step = cma
         
     def _get_loss_acc(self: Self, batch):
         x, y = batch
@@ -237,14 +239,17 @@ class TransformerLit(pl.LightningModule):
         rec_loss, acc, attn = self._get_loss_acc(batch)
         opt = self.optimizers()
         if self.sparse:
-            if self.lagrangian:
-                sparse_loss = self.l1_loss(attn)
-                loss = rec_loss + sparse_loss/self.lambd
+            if self.lagrangian or self.foopt:
                 if self.global_step == 0:
                     self.ema_loss = (rec_loss - self.target_loss).detach()
                 else:
                     self.ema_loss = self.ema_step * self.ema_loss + (1- self.ema_step) \
                         * (rec_loss-self.target_loss).detach()
+                        
+            
+            if self.lagrangian:
+                sparse_loss = self.l1_loss(attn)
+                loss = rec_loss + sparse_loss/self.lambd
             else:
                 sparse_loss = self.l1_weight * self.l1_loss(attn)
                 loss = rec_loss + sparse_loss
@@ -265,7 +270,13 @@ class TransformerLit(pl.LightningModule):
         if self.foopt:
             total_norm = utils.clip_grad_norm_(self.model.mha_parameters(), max_norm=float('inf'))
             if total_norm <= self.eps and rec_loss >= self.target_loss:
-                pass
+                with torch.no_grad():
+                    for param in self.parameters():
+                        noise = torch.randn_like(param) * self.var
+                        param.grad.data.add_(noise)
+                        
+            self.var = torch.exp(self.step_size*self.ema_loss) * self.var
+            self.var = torch.clamp(self.var, min=1e-3, max=1e3)
         
         if self.noisy_grads:
             with torch.no_grad():
@@ -282,8 +293,6 @@ class TransformerLit(pl.LightningModule):
             )
 
         opt.step()
-        
-        
 
         if self.lagrangian:
             self.lambd = torch.exp(self.step_size*self.ema_loss) * self.lambd
