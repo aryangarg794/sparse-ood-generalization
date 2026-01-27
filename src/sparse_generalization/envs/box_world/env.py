@@ -6,6 +6,7 @@ import networkx as nx
 import random
 
 from copy import deepcopy
+from collections import defaultdict
 from itertools import product
 from PIL import Image
 from minigrid.minigrid_env import MiniGridEnv 
@@ -40,10 +41,12 @@ class BoxWorldEnv(MiniGridEnv):
         num_pairs=4, 
         num_distractors=0,
         max_steps=100,
+        num_paths=2, 
         highlight=False,
         include_walls=False,
         unsolvable_prob=0.0,
         edge_remove_prob=0.3,
+        max_tries=50, 
         render_mode='human',
     ):
         self._agent_pos_list = agent_pos
@@ -65,6 +68,7 @@ class BoxWorldEnv(MiniGridEnv):
         self.num_pairs = num_pairs
         self.edge_drop_prob = edge_remove_prob
         self._include_walls = include_walls
+        self.goal_pos = None
         
         if not self._randomize:
             self._list_size = len(self._agent_pos_list)
@@ -84,6 +88,11 @@ class BoxWorldEnv(MiniGridEnv):
         )  
         
         self.size = size
+        self.num_paths = num_paths
+        self.paths = {}
+        self.path_colors = {}
+        self.edges = {}
+        self.max_tries = max_tries
     
     def _gen_grid(self, width, height):
         self._current_context = self._list_idx if not self._randomize else None
@@ -109,82 +118,38 @@ class BoxWorldEnv(MiniGridEnv):
                 
             self.grid.set(*self.goal_pos, Goal())
             
-            # key-lock logic
-            samples = self.num_pairs
-            colors = deepcopy(COLOR_NAMES)
-            for color in ['green', 'grey', 'red']: # base objs
-                colors.remove(color)
-            self.edges_one = []
-            self.edges_two = []
-            pairs_one, colors_one = self._sample_key_pairs(samples, colors)
-            for color in colors_one: # no clash with colors
-                colors.remove(color)
-                
-            self.grid.set(*pairs_one[0], KeyBox(colors_one[0], index=0, first_key=True, path=0))
-            for i, key_lock in enumerate(pairs_one[1:]):
-                idx = i+1
-                lock, key = key_lock
-                self.grid.set(*key, KeyBox(colors_one[idx], index=idx, path=0))
-                self.grid.set(*lock, LockBox(colors_one[idx-1], index=idx, path=0))
-                self.edges_one.append((i, idx))
-                
-            
-            pairs_two, colors_two = self._sample_key_pairs(samples, colors)
-            colors_two[-1] = colors_one[-1]
-            
-            self.grid.set(*pairs_two[0], KeyBox(colors_two[0], index=0, path=1, first_key=True))
-            for i, key_lock in enumerate(pairs_two[1:]):
-                idx = i+1
-                lock, key = key_lock
-                self.grid.set(*key, KeyBox(colors_two[idx], index=idx, path=1))
-                self.grid.set(*lock, LockBox(colors_two[idx-1], index=idx, path=1))
-                self.edges_two.append((i+samples, idx+samples))
+            for _ in range(self.max_tries):
+                try:
+                    colors, last_color = self._gen_grid_once()
+                    break
+                except IndexError:
+                    continue                         
                     
             if np.random.rand() < self.unsolvable_prob:
-                idx_one = random.choice(list(range(1, self.num_pairs)))
-                idx_two = random.choice(list(range(1, self.num_pairs)))
-                lowest_idx_one = 10000
-                lowest_idx_two = 10000
+                lowest_idx = 10000
                 
-                for i in range(1, self.num_pairs):
-                    if i == idx_one:
-                        key_lock = pairs_one[i]
-                        key, lock = key_lock
-                        self.grid.set(*key, None)
-                        self.grid.set(*lock, None)
-                        self.edges_one.remove((i-1, i))
-                        lowest_idx_one = min(lowest_idx_one, i)
-        
-                    elif np.random.rand() < self.edge_drop_prob:
-                        key_lock = pairs_one[i]
-                        key, lock = key_lock
-                        self.grid.set(*key, None)
-                        self.grid.set(*lock, None)
-                        self.edges_one.remove((i-1, i))
-                        lowest_idx_one = min(lowest_idx_one, i)
-                    
-                    if i == idx_two:
-                        key_lock = pairs_two[i]
-                        key, lock = key_lock
-                        self.grid.set(*key, None)
-                        self.grid.set(*lock, None)
-                        self.edges_two.remove((i-1+samples, i+samples))
-                        lowest_idx_two = min(lowest_idx_two, i)
-        
-                    elif np.random.rand() < self.edge_drop_prob:
-                        key_lock = pairs_two[i]
-                        key, lock = key_lock
-                        self.grid.set(*key, None)
-                        self.grid.set(*lock, None)
-                        self.edges_two.remove((i-1+samples, i+samples))
-                        lowest_idx_two = min(lowest_idx_two, i)
-                        
-                pairs_one = pairs_one[0:lowest_idx_one]
-                pairs_two = pairs_two[0:lowest_idx_two]
+                for path in range(self.num_paths):
+                    idx = random.choice(list(range(1, self.num_pairs)))
+                    multiplier = path * (self.num_pairs) 
+                    for i in range(1, self.num_pairs):
+                        rand_color = random.choice(colors)
+                        if i == idx:
+                            key_lock = self.paths[path][i]
+                            key, lock = key_lock
+                            self.grid.set(*key, KeyBox(rand_color, index=idx, path=0))
+                            self.edges[path].remove((i-1+multiplier, i+multiplier))
+                            lowest_idx = min(lowest_idx, i)
             
-            pairs_one.append(((self.goal_pos[0]+1, self.goal_pos[1]), self.goal_pos))
-            pairs_two.append(((self.goal_pos[0]+1, self.goal_pos[1]), self.goal_pos))
-            self.grid.set(self.goal_pos[0]+1, self.goal_pos[1], LockBox(colors_one[-1], goal_lock=True, index=self.num_pairs))
+                        elif np.random.rand() < self.edge_drop_prob:
+                            key_lock = self.paths[path][i]
+                            key, lock = key_lock
+                            self.grid.set(*key, KeyBox(rand_color, index=idx, path=0))
+                            self.edges[path].remove((i-1+multiplier, i+multiplier))
+                            lowest_idx = min(lowest_idx, i)
+                            
+                    self.paths[path] = self.paths[path][0:lowest_idx]
+        
+            self.grid.set(self.goal_pos[0]+1, self.goal_pos[1], LockBox(last_color, goal_lock=True, index=self.num_pairs))
                 
             
         else: #TODO: from given contexts
@@ -194,14 +159,48 @@ class BoxWorldEnv(MiniGridEnv):
             self.keys = self._key_topology_list[self._list_idx]
             self.goal_pos = self._goal_pos_list[self._list_idx]
             
-        self.pairs = [pairs_one, pairs_two]
-        self.colors_one = colors_one
-        self.colors_two = colors_two
         self.unlocked_edges = []
         
         # step logic
         self._current_key = None
         self._current_path = None
+        
+        
+    def _gen_grid_once(self):
+        last_color = None
+        for path in range(self.num_paths):
+            samples = self.num_pairs
+            colors = deepcopy(COLOR_NAMES)
+            for color in ['green', 'grey', 'red']: # base objs
+                colors.remove(color)
+            pairs, colors_path = self._sample_key_pairs(samples, colors)
+                
+            for color in colors_path: # no clash with colors
+                colors.remove(color)
+                
+            # all end colors should be the same
+            if path > 0:
+                colors_path[-1] = last_color
+            else:
+                last_color = colors_path[-1]
+            
+            multiplier = path * (self.num_pairs)
+            edges = []
+            self.grid.set(*pairs[0], KeyBox(colors_path[0], index=0, first_key=True, path=path))
+            for i, key_lock in enumerate(pairs[1:]):
+                idx = i+1
+                lock, key = key_lock
+                self.grid.set(*key, KeyBox(colors_path[idx], index=idx, path=0))
+                self.grid.set(*lock, LockBox(colors_path[idx-1], index=idx, path=0))
+                edges.append((i+multiplier, idx+multiplier))
+                
+            pairs.append(((self.goal_pos[0]+1, self.goal_pos[1]), self.goal_pos))
+            
+            self.paths[path] = pairs
+            self.path_colors[path] = colors_path
+            self.edges[path] = edges
+            
+        return colors, last_color
     
     def reset(self, *, seed=None, options=None):
         if seed and not self._randomize:
@@ -241,7 +240,7 @@ class BoxWorldEnv(MiniGridEnv):
             if fwd_cell is not None and fwd_cell.type == "lava":
                 terminated = True
 
-        # Pick up an object (this action is like interact for this env)
+        # pick up an object (this action is like interact for this env)
         elif action == self.actions.pickup:
             if cur_cell is not None and cur_cell.can_pickup():
                 if self._current_key is None and cur_cell.is_first_key(): # first key
@@ -265,12 +264,12 @@ class BoxWorldEnv(MiniGridEnv):
                     goal_cell = self.grid.get(self.goal_pos[0]+1, self.goal_pos[1])
                     goal_cell.path = cur_cell.path
                         
-                    
-                elif self._current_key is not None and cur_cell.path == self._current_path and cur_cell.is_lock(): # opening a lock for which we have the key
+                # opening a lock for which we have the key    
+                elif self._current_key is not None and cur_cell.path == self._current_path and cur_cell.is_lock(): 
                     # first do the logic for if the lock is next to goal                    
                     self._current_key = cur_cell.index
-                    self.unlocked_edges.append((cur_cell.index-1, cur_cell.index) if cur_cell.path == 0 else (cur_cell.index-1+self.num_pairs, 
-                                                                                                              cur_cell.index+self.num_pairs))
+                    self.unlocked_edges.append((cur_cell.index-1, cur_cell.index) \
+                        if cur_cell.path == 0 else (cur_cell.index-1+self.num_pairs, cur_cell.index+self.num_pairs))
                     if cur_cell.is_goal_lock():
                         self.grid.set(*self.agent_pos, None)
                     else:
@@ -329,10 +328,11 @@ class BoxWorldEnv(MiniGridEnv):
             first_key = random.choice(valid_pos)
             right_state = self._sanitize((first_key[0]+1, first_key[1]))
             left_state = self._sanitize((first_key[0]-1, first_key[1]))
-            if self.grid.get(*right_state) is None and self.grid.get(*left_state):
+            if self.grid.get(*right_state) is None and self.grid.get(*left_state) is None:
                 free = True
         pairs.append(first_key)
         valid_pos.remove(first_key)
+        # remove states on left and right of first key
         state_right = self._sanitize((first_key[0]+1, first_key[1]))
         state_left = self._sanitize((first_key[0]-1, first_key[1]))
         if state_right in valid_pos: valid_pos.remove(state_right)
@@ -341,7 +341,8 @@ class BoxWorldEnv(MiniGridEnv):
         while len(pairs) < num_pairs:
             lock = random.choice(valid_pos)
             valid_pos.remove(self._sanitize(lock))
-            if lock[0] == 1 or np.array_equal((lock[0]-1, lock[1]), self.agent_pos) or self.grid.get(lock[0]-1, lock[1]) is not None: 
+            if lock[0] == 1 or np.array_equal((lock[0]-1, lock[1]), self.agent_pos) \
+                or self.grid.get(lock[0]-1, lock[1]) is not None: 
                 continue
             key = (lock[0]-1, lock[1])
             key_sanitized = self._sanitize(key)
@@ -353,51 +354,84 @@ class BoxWorldEnv(MiniGridEnv):
             
         return pairs, colors
     
-    def valid_pos_gen(self, margin=0):
+    def valid_pos_gen(self, margin=1):
         valid_pos_gen = []
         for x in range(self.width):
             for y in range(self.height):
                 obj = self.grid.get(x, y)
                 if obj is None:  
-                    if (margin < x < self.width - margin-1 and 
-                        margin < y < self.height - margin-1) :
+                    if (margin <= x <= self.width - margin-1 and 
+                        margin <= y <= self.height - margin-1) :
                         valid_pos_gen.append((x, y))
 
         sanitized_pos = self._sanitize(self.agent_pos)
         if sanitized_pos in valid_pos_gen:
             valid_pos_gen.remove(sanitized_pos)
         
+        # check other path key-locks
+        for _, path in self.paths.items():
+            first = path[0]
+            first_left = self._sanitize((first[0]-1, first[1]))
+            first_right = self._sanitize((first[0]+1, first[1]))
+            if first_left in valid_pos_gen: valid_pos_gen.remove(first_left)
+            if first_right in valid_pos_gen: valid_pos_gen.remove(first_right)
+            
+            for pair in range(1, self.num_pairs):
+                key_lock = path[pair]
+                left = self._sanitize((key_lock[1][0]-1, key_lock[1][1]))
+                right = self._sanitize((key_lock[0][0]+1, key_lock[0][1]))
+                if left in valid_pos_gen: valid_pos_gen.remove(left)
+                if right in valid_pos_gen: valid_pos_gen.remove(right)
+                
+        # goal state stuff
+        if self.goal_pos:
+            for i in range(1, 4):
+                state = self._sanitize((self.goal_pos[0]+i, self.goal_pos[1]))
+                if state in valid_pos_gen: valid_pos_gen.remove(state)
+        
         return valid_pos_gen
     
+    def set_agent(self, pos, dir=0):
+        self.agent_pos = pos
+        self.agent_dir = dir
     
     def render_graph(self, figsize=(10, 6)):
         fig, ax = plt.subplots(1, 2, figsize=figsize)
         img = self.render()
         ax[0].imshow(img)
         
-        def custom_layout(G, num_pairs, y1=0.0, y2=-0.5, y_goal=1.0, spacing=0.5):
+        def custom_layout(G, num_pairs, n_paths,
+                  y_top=0.0, y_spacing=0.5, x_spacing=0.5):
             pos = {}
-            for i in range(num_pairs):
-                pos[i] = (i * spacing, y1)
-            for i in range(num_pairs):
-                pos[num_pairs + i] = (i * spacing, y2)
-            center_x = ((num_pairs) * spacing)
-            y_mid = (y1 + y2) / 2
-            pos[num_pairs * 2] = (center_x, y_mid)
+            y_values = [y_top - i * y_spacing for i in range(n_paths)]
+            for path_idx, y in enumerate(y_values):
+                for i in range(num_pairs):
+                    node_id = path_idx * num_pairs + i
+                    pos[node_id] = (i * x_spacing, y)
+            center_x = num_pairs * x_spacing
+            y_mid = sum(y_values) / len(y_values)
+            pos[n_paths * num_pairs] = (center_x, y_mid)
+
             return pos
         
         # draw graph 
-        edges = self.edges_one + self.edges_two
-        colors = self.colors_one + self.colors_two + ['springgreen']
+        edges = []
+        for path in range(self.num_paths):
+            edges += self.edges[path]
+            
+        colors = []
+        for path in range(self.num_paths):
+            colors += self.path_colors[path]
+        colors = colors + ['springgreen']
         nodes = [i for i in range(len(colors))] 
-        nodes = nodes + [self.num_pairs*2]
-        edges = edges + [(self.num_pairs-1, self.num_pairs*2), (self.num_pairs*2-1, self.num_pairs*2)]
+        nodes = nodes + [self.num_pairs*self.num_paths]
+        edges = edges + [(self.num_pairs*(path+1)-1, self.num_pairs*self.num_paths) for path in range(self.num_paths)]
         
         G = nx.Graph()
         G.add_nodes_from(nodes)
         G.add_edges_from(edges)
         
-        pos = custom_layout(G, self.num_pairs)
+        pos = custom_layout(G, self.num_pairs, self.num_paths)
         edge_colors = ['red' if e in self.unlocked_edges else 'black' for e in G.edges()]
         nx.draw_networkx_nodes(G, pos, node_color=colors, ax=ax[1], node_size=1000, linewidths=1, edgecolors='black')
         nx.draw_networkx_edges(G, pos, edge_color=edge_colors, ax=ax[1])

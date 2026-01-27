@@ -7,7 +7,8 @@ gym.register('BoxWorldEnv-v1', BoxWorldEnv)
 def make_env(
     num_pairs: int = 4, 
     unsolvable_prob: float = 0.0, 
-    size:int = 15, 
+    size: int = 15, 
+    num_paths: int = 2, 
     include_walls: bool = False, 
     render_mode: str = 'rgb_array'
 ):
@@ -16,6 +17,7 @@ def make_env(
                    unsolvable_prob=unsolvable_prob, 
                    size=size, 
                    num_pairs=num_pairs,
-                   include_walls=include_walls
+                   include_walls=include_walls,
+                   num_paths=num_paths
                    )
     return ImgObsWrapper(FullyObsWrapper(env))
