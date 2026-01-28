@@ -363,3 +363,27 @@ class Tile(WorldObj):
         
     def render(self, img):
         fill_coords(img, point_in_rect(0, 1, 0, 1), COLORS[self.color])
+        
+        
+class Box(WorldObj):
+    def __init__(self, color, contains: WorldObj | None = None):
+        super().__init__("box", color)
+        self.contains = contains
+
+    def can_pickup(self):
+        return True
+
+    def render(self, img):
+        c = COLORS[self.color]
+
+        # Outline
+        fill_coords(img, point_in_rect(0.12, 0.88, 0.12, 0.88), c)
+        fill_coords(img, point_in_rect(0.18, 0.82, 0.18, 0.82), (0, 0, 0))
+
+        # Horizontal slit
+        fill_coords(img, point_in_rect(0.16, 0.84, 0.47, 0.53), c)
+
+    def toggle(self, env, pos):
+        # Replace the box by its contents
+        env.grid.set(pos[0], pos[1], self.contains)
+        return True

@@ -1,6 +1,4 @@
 data_dir: data/box_world
-data_file: balanced_1000.pl
+data_file: balanced_dist_2000.pl
 
-
-test_size: 0.15
-batch_size: 64
+batch_size: 256

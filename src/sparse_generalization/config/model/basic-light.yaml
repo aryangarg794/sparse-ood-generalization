@@ -2,7 +2,10 @@ _target_: sparse_generalization.models.mlp.BasicMLPLit
 
 input_dim: 3
 out_dim: 1 
-hidden_dims: [16, 32, 64]
+hidden_dims: [16, 32]
+
+lr: 1e-3
+wd: 1e-3
 
 module:
   _partial_: true

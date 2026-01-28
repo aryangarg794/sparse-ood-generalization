@@ -8,3 +8,4 @@ defaults:
 run_name: mlp_run_simple
 seeds: [0, 1, 2]
 job_type: train
+save: false

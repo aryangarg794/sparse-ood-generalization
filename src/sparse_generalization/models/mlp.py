@@ -58,6 +58,7 @@ class BasicMLPLit(pl.LightningModule):
         hidden_dims: List = list([64, 128, 64]),
         act: nn.Module = nn.ReLU,
         lr: float = 1e-3,
+        wd: float = 1e-3, 
         dropout: float = 0.1, 
         loss: nn.Module = nn.BCEWithLogitsLoss,
         module: nn.Module = BasicMLP
@@ -65,6 +66,7 @@ class BasicMLPLit(pl.LightningModule):
         super().__init__()
         self.loss = loss()
         self.lr = lr
+        self.wd = wd
         
         self.model = module(
             input_dim,
@@ -122,14 +124,14 @@ class BasicMLPLit(pl.LightningModule):
     def test_step(self, batch):
         loss, acc = self._get_loss_acc(batch)
         self.log(
-            "test_loss",
+            f"test_loss_{self.test_name}",
             loss,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
         )
         self.log(
-            "test_acc", 
+            f"test_acc_{self.test_name}", 
             acc, 
             on_step=False,
             on_epoch=True,
@@ -138,5 +140,5 @@ class BasicMLPLit(pl.LightningModule):
         return loss
     
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.wd)
         return optimizer

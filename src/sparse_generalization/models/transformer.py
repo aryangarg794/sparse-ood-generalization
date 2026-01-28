@@ -347,14 +347,14 @@ class TransformerLit(pl.LightningModule):
     def test_step(self, batch):
         loss, acc, attn = self._get_loss_acc(batch)
         self.log(
-            "test_loss",
+            f"test_loss_{self.test_name}",
             loss,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
         )
         self.log(
-            "test_acc", 
+            f"test_acc_{self.test_name}", 
             acc, 
             on_step=False,
             on_epoch=True,
