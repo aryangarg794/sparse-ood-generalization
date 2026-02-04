@@ -31,7 +31,7 @@ class BasicMLP(nn.Module):
         super(BasicMLP, self).__init__(*args, **kwargs)
 
         self.layers = nn.Sequential()
-        self.layers.extend([nn.Linear(input_dim, hidden_dims[-1]), act()])
+        self.layers.extend([nn.Linear(input_dim, hidden_dims[0]), act()])
         
         for dim1, dim2 in zip(hidden_dims[:-1], hidden_dims[1:]):
             self.layers.extend([nn.Linear(dim1, dim2), act(), nn.Dropout(dropout)])

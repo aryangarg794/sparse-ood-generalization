@@ -26,7 +26,24 @@ class L1SparsityWeights(nn.Module):
         low_vals = low_vals[:, :self.k]
         l1_loss = low_vals.sum(dim=-1).mean()
         return l1_loss
+
+class EntropyLoss(nn.Module):
+    """Sparsity loss that penalizes entropy to force the simplex to be less spread out. 
+
+    Args:
+        
+    """
     
+    def __init__(
+        self: Self, 
+        *args, 
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        
+    def forward(self: Self, weights: Tensor):
+         return -(weights * torch.log(weights + 1e-9)).sum(dim=-1).mean()
+
     
 class L1SparsityAdjacency(nn.Module):
     """L1 sparsity loss for attention matrices, forcing attention adjaceny to be low: 

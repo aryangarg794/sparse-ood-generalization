@@ -2,7 +2,7 @@ _target_: sparse_generalization.models.transformer.TransformerLit
 
 embed_size: 3
 out_dim: 1 
-hidden_dims: [128, 128, 128]
+hidden_dims: [512, 256]
 use_grid: true
 model_dim: 126
 num_feature_layers: 3
@@ -12,7 +12,7 @@ l1_weight: 0.0001
 residual: false
 positional_encoding: true
 lr: 1e-3
-k: 4032
+k: 9900
 lagrangian: false
 start_lambda: 5e6
 target_loss: 0.15

@@ -13,6 +13,7 @@ from typing import List, Self
 
 from sparse_generalization.models.mlp import BasicMLP
 from sparse_generalization.layers.bern_mha import MultiHeadAttentionBern
+from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency, L1SparsityWeights
 from sparse_generalization.utils.util_funcs import noise_scheduler
 
@@ -72,6 +73,7 @@ class MHABlock(nn.Module):
         else:
             self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1) or (b, 3, 2) with pe
         # self.norm = nn.LayerNorm(embed_size) # layer norm does not work for toy example
+        self.ln = nn.LayerNorm(embed_size)
         self.mlp = BasicMLP(input_dim=embed_size, out_dim=out_dim, hidden_dims=hidden_dims, act=act, dropout=dropout) # (b, 3) 
     
     def forward(self: Self, x: Tensor):
@@ -91,6 +93,7 @@ class MHABlock(nn.Module):
             x = torch.cat([x, indices], dim=-1)
         attn_out, attn_scores = self.mha(x, x, x)
         # out = self.norm(attn_out)
+        attn_out = self.ln(attn_out)
         if self.residual:
             out = self.mlp((attn_out + x).max(dim=1)[0])
         else:
@@ -296,7 +299,7 @@ class TransformerLit(pl.LightningModule):
 
         if self.lagrangian:
             self.lambd = torch.exp(self.step_size*self.ema_loss) * self.lambd
-            self.lambd = torch.clamp(self.lambd, min=1e-15, max=1e15)
+            self.lambd = torch.clamp(self.lambd, min=1e2, max=1e15)
             
         self.log(
             "train_loss", 
@@ -400,7 +403,8 @@ class TransformerLit(pl.LightningModule):
         self.test_attn_matrices.clear()
     
     def _compute_attn_mean(self: Self, all_attn: Tensor):
-        if self.l1_loss is None or isinstance(self.l1_loss, L1SparsityWeights):
+        if self.l1_loss is None or isinstance(self.model.mha, MultiHeadAttentionThresh) \
+            or isinstance(self.model.mha, torch.nn.MultiheadAttention):
             return (all_attn > 0.01).float().sum(dim=(1, 2)).mean().item()
         else:
             return all_attn.sum(dim=(1, 2)).mean().item()

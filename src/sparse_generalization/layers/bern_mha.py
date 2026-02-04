@@ -25,6 +25,7 @@ class MultiHeadAttentionBern(nn.Module):
         hard: bool = True, 
         noisy: bool = False,
         alpha: float = 3.0, 
+        residual: bool = False, 
         *args, 
         **kwargs
     ):
@@ -41,6 +42,7 @@ class MultiHeadAttentionBern(nn.Module):
         self.hard = hard
         self.noisy = noisy
         self.alpha = alpha
+        self.residual = residual
         
         self.queries = nn.Linear(embed_size, embed_size, bias=bias)
         self.keys = nn.Linear(embed_size, embed_size, bias=bias)
@@ -97,7 +99,10 @@ class MultiHeadAttentionBern(nn.Module):
         else:
             masked_attention_probs = A.view(batch_heads, seq_len, seq_len) * attention_probs # (b*h, l, l)
         
-        hidden_repr = torch.bmm(masked_attention_probs, value) # (b*h, l, d)        
+        hidden_repr = torch.bmm(masked_attention_probs, value) # (b*h, l, d)  
+        
+        if self.residual:
+            A = A + torch.eye(A.size(0), device=A.device)   
         
         return hidden_repr.view(-1, self.heads, seq_len, self.dk), A.view(-1, self.heads, seq_len, seq_len)
         
