@@ -18,3 +18,19 @@ class BasicDataset(Dataset):
     
     def __getitem__(self: Self, index: int):
         return self.x[index], self.y[index]
+    
+class EdgeDataset(Dataset):
+    def __init__(self: Self, x: Tensor, y: Tensor, edges: list):
+        super().__init__()
+        self.x = x.float()
+        self.y = y.float()
+        self.edges = edges
+        
+        if len(self.y.shape) < 2:
+            self.y = self.y.unsqueeze(dim=-1)
+    
+    def __len__(self: Self):
+        return self.x.size(0)
+    
+    def __getitem__(self: Self, index: int):
+        return self.x[index], self.y[index], self.edges[index]

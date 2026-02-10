@@ -7,8 +7,8 @@ from torch import Tensor
 from torch.nn.functional import gumbel_softmax, softmax
 from typing import Self, Callable
 
-class MultiHeadAttentionBern(nn.Module):
-    """Implements  
+class MultiHeadAttentionOracle(nn.Module):
+    """Implements oracle MHA, currently set to a single head.
 
     Args:
         nn (_type_): _description_
@@ -17,19 +17,16 @@ class MultiHeadAttentionBern(nn.Module):
     def __init__(
         self: Self, 
         embed_size: int, 
-        num_heads: int, 
+        num_heads: int = 1, 
         bias: int = True, 
         dropout: float = 0.0, 
         batch_first: bool = True, 
-        temp: float = 0.5,
-        hard: bool = True, 
-        noisy: bool = False,
-        alpha: float = 3.0, 
         residual: bool = False, 
+        size: int = 10, 
         *args, 
         **kwargs
     ):
-        super(MultiHeadAttentionBern, self).__init__(*args, **kwargs)
+        super(MultiHeadAttentionOracle, self).__init__(*args, **kwargs)
         
         if embed_size % num_heads != 0:
             raise SyntaxError(f'Embed Size not divisible by number of heads, embed_size % num_heads = {embed_size % num_heads}')
@@ -38,19 +35,18 @@ class MultiHeadAttentionBern(nn.Module):
         self.heads = num_heads
         self.embed_size = embed_size
         self.dropout = nn.Dropout(p=dropout)
-        self.temp = temp
-        self.hard = hard
-        self.noisy = noisy
-        self.alpha = alpha
         self.residual = residual
         
         self.queries = nn.Linear(embed_size, embed_size, bias=bias)
         self.keys = nn.Linear(embed_size, embed_size, bias=bias)
         self.values = nn.Linear(embed_size, embed_size, bias=bias)
         self.projection = nn.Linear(embed_size, embed_size, bias=bias)
+        self.height = size 
+        self.width = size
     
         
-    def forward(self: Self, queries: Tensor, keys: Tensor, values: Tensor, avg_attn_heads: bool = True, avg_mask: bool = True): 
+    def forward(self: Self, queries: Tensor, keys: Tensor, values: Tensor, oracle_edges: Tensor, avg_attn_heads: bool = True,
+                avg_mask: bool = True): 
         queries = self.queries(queries) # (b, l, d)
         keys = self.keys(keys)
         values = self.values(values)
@@ -61,7 +57,8 @@ class MultiHeadAttentionBern(nn.Module):
         
         attention_repr, mask_per_head, adjacency_per_head = self._attention(queries_split,
                                                              keys_split, 
-                                                             values_split)
+                                                             values_split, 
+                                                             oracle_edges)
 
         attention_repr = self._merge_heads(attention_repr) # (b, l, d)
         attention_repr = self.projection(attention_repr)
@@ -84,32 +81,32 @@ class MultiHeadAttentionBern(nn.Module):
         return x.reshape(batch_size, self.heads, seq_len, self.dk).transpose(1, 2).reshape(
             batch_size, seq_len, self.dk * self.heads) 
     
-    def _attention(self: Self, query: Tensor, key: Tensor, value: Tensor):
+    def _attention(self: Self, query: Tensor, key: Tensor, value: Tensor, oracle_edges: Tensor):
         batch_heads, seq_len, _ = query.size()
-        attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(self.dk) # (b*h, l, l)
+        batch = int(batch_heads / self.heads)
+        # attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(self.dk) # (b*h, l, l)
         
-        edges_logit = attention_logits.view(batch_heads, -1) # (b*h, l*l)
-        edges_logit = torch.stack([torch.zeros_like(edges_logit), edges_logit], dim=-1)
-        A = gumbel_softmax(edges_logit, tau=self.temp, hard=self.hard) # (b*h, l*l, 2)
-        A = A[:, :, -1] # get the mask value for class 1 (if there is edge)
+        # attention_probs = softmax(attention_logits, dim=-1)
+        A = torch.zeros((batch_heads, seq_len, seq_len), device=query.device)
+        # convert the nodes, coords to get nodes, 1 
         
-        attention_probs = softmax(attention_logits, dim=-1)
-        if self.noisy and self.training:
-            bern = torch.distributions.Bernoulli(probs=self.var)
-            noise = bern.sample(sample_shape=A.shape).to('cuda')
-            A = A * noise.detach()
-            masked_attention_probs = A.view(batch_heads, seq_len, seq_len) * attention_probs # (b*h, l, l)
-        else:
-            masked_attention_probs = A.view(batch_heads, seq_len, seq_len) * attention_probs # (b*h, l, l)
+        for i, item in enumerate(oracle_edges): # (num_paths, num_edges, 2, 2)
+            num_paths, num_edges, _, _ = item.shape
+            # NOTE: right now we check ALL paths but maybe we should change this to check a random one
+            item = item.view(num_paths * num_edges, 2, 2) 
+            item = item[:, : , 1] * self.width + item[:, :, 0] # (paths * edges, 2)
+            for h in range(self.heads):
+                A[i+batch*h, item[:, 0], item[:, 1]] = 1
+                
+        masked_attention_probs = A # (b*h, l, l)
         
         hidden_repr = torch.bmm(masked_attention_probs, value) # (b*h, l, d)  
         
         if self.residual:
-            A = A + torch.eye(A.size(1), device=A.device).unsqueeze(0).repeat(batch_heads, 1, 1)
+            A = A + torch.eye(A.size(1), device=A.device).unsqueeze(0).repeat(batch_heads, 1, 1)   
         
-        return hidden_repr.view(-1, self.heads, seq_len, self.dk), A.view(-1, self.heads, seq_len, seq_len)
+        return hidden_repr.view(-1, self.heads, seq_len, self.dk), \
+            A.view(-1, self.heads, seq_len, seq_len), masked_attention_probs.view(-1, self.heads, seq_len, seq_len)
+    
         
-    def noise_scheduler(self: Self, step: int, k: float = 1e-3):
-        self.var = 1 - 0.9 / (1 + step * k)**self.alpha
-        return self.var      
           

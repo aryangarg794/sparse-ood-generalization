@@ -93,16 +93,16 @@ class BoxWorldEnv(MiniGridEnv):
         self.paths = {}
         self.path_colors = {}
         self.edges = {}
+        self.attn_edges = []
         self.max_tries = max_tries
     
     def _gen_grid(self, width, height):
         self._current_context = self._list_idx if not self._randomize else None
         self.grid = Grid(width, height)
-    
         self.grid.wall_rect(0, 0, width, height)
         
         if self._randomize:
-            if self.randomize_num_pairs: self.num_pairs = random.randint(1, 4)
+            if self.randomize_num_pairs: self.num_pairs = self.np_random.integers(1, 5)
             # walls: for now simple just one wall
             if self._include_walls:
                 self.walls = self._simple_wall_gen()
@@ -113,7 +113,7 @@ class BoxWorldEnv(MiniGridEnv):
             self.place_agent()
             free = False
             while not free:
-                self.goal_pos = random.choice(self.valid_pos_gen(margin=1))
+                self.goal_pos = tuple(self.np_random.choice(self.valid_pos_gen(margin=1)))
                 next_goal = self._sanitize((self.goal_pos[0]+1, self.goal_pos[1]))
                 if self.grid.get(*next_goal) is None:
                     free = True
@@ -122,6 +122,10 @@ class BoxWorldEnv(MiniGridEnv):
             
             for _ in range(self.max_tries):
                 try:
+                    self.paths.clear()
+                    self.edges.clear()
+                    self.path_colors.clear()
+                    self.attn_edges.clear()
                     colors, last_color = self._gen_grid_once()
                     break
                 except IndexError:
@@ -129,28 +133,28 @@ class BoxWorldEnv(MiniGridEnv):
             
             self.grid.set(self.goal_pos[0]+1, self.goal_pos[1], LockBox(last_color, goal_lock=True, index=self.num_pairs))
                    
-            if np.random.rand() < self.unsolvable_prob:
+            if self.np_random.random() < self.unsolvable_prob:
                 for path in range(self.num_paths):
                     
                     if self.num_pairs > 1:
                         list_pairs = range(1, self.num_pairs)
-                        idx = random.choice(list(list_pairs))
+                        idx = self.np_random.choice(list(list_pairs))
                         multiplier = path * (self.num_pairs) 
                         for i in range(1, self.num_pairs):
-                            rand_color = random.choice(colors)
+                            rand_color = self.np_random.choice(colors)
                             if i == idx:
                                 key_lock = self.paths[path][i]
                                 lock, key = key_lock
                                 self.grid.set(*lock, LockBox(rand_color, index=-1, path=-1))
                                 self.edges[path].remove((i-1+multiplier, i+multiplier))
                 
-                            elif np.random.rand() < self.edge_drop_prob:
+                            elif self.np_random.random() < self.edge_drop_prob:
                                 key_lock = self.paths[path][i]
                                 lock, key = key_lock
                                 self.grid.set(*lock, LockBox(rand_color, index=-1, path=-1))
                                 self.edges[path].remove((i-1+multiplier, i+multiplier))
                     else:
-                        rand_color = random.choice(colors)
+                        rand_color = self.np_random.choice(colors)
                         self.grid.set(self.goal_pos[0]+1, self.goal_pos[1], LockBox(rand_color, index=-1, path=-1))
                         self.edges[path].remove((self.num_pairs*(path+1)-1, self.num_pairs*self.num_paths))
                             
@@ -193,13 +197,16 @@ class BoxWorldEnv(MiniGridEnv):
             
             multiplier = path * (self.num_pairs)
             edges = []
+            attn_edges = []
             self.grid.set(*pairs[0], KeyBox(colors_path[0], index=0, first_key=True, path=path))
+            attn_edges.append((self.agent_pos, pairs[0]))
             for i, key_lock in enumerate(pairs[1:]):
                 idx = i+1
                 lock, key = key_lock
                 self.grid.set(*key, KeyBox(colors_path[idx], index=idx, path=0))
                 self.grid.set(*lock, LockBox(colors_path[idx-1], index=idx, path=0))
                 edges.append((i+multiplier, idx+multiplier))
+                attn_edges.append((lock, key))
                 
             pairs.append(((self.goal_pos[0]+1, self.goal_pos[1]), self.goal_pos))
             
@@ -207,17 +214,14 @@ class BoxWorldEnv(MiniGridEnv):
             self.paths[path] = pairs
             self.path_colors[path] = colors_path
             self.edges[path] = edges 
-            
+            attn_edges.append(((pairs[-1][0], self.goal_pos)))
+            self.attn_edges.append(attn_edges)
+        
         return colors, last_color
     
     def reset(self, *, seed=None, options=None):
         if seed and not self._randomize:
-            random.seed(seed)
             self._list_idx = random.randint(0, self._list_size-1)
-        elif seed and self._randomize:
-            random.seed(seed)
-            np.random.seed(seed)
-            
         return super().reset(seed=seed, options=options)    
         
     def step(self, action):
@@ -316,10 +320,10 @@ class BoxWorldEnv(MiniGridEnv):
         
     def _simple_wall_gen(self, min_size=2):
         walls = []
-        orient = random.randint(0, 1)
-        place = random.choice(list(range(2+min_size, self.size-2-min_size))) # at least 1 space at start, or 2 atr end
-        door_size = random.randint(1, self.size-4)
-        door_place = random.randint(1, self.size-1-door_size)
+        orient = self.np_random.integers(0, 2)
+        place = self.np_random.choice(list(range(2+min_size, self.size-2-min_size))) # at least 1 space at start, or 2 atr end
+        door_size = self.np_random.integers(1, self.size-3)
+        door_place = self.np_random.integers(1, self.size-door_size)
         for i in range(1, self.size):
             if door_place <= i <= door_place+door_size:
                 continue
@@ -334,7 +338,7 @@ class BoxWorldEnv(MiniGridEnv):
         valid_pos = self.valid_pos_gen()
         free = False
         while not free:
-            first_key = random.choice(valid_pos)
+            first_key = tuple(self.np_random.choice(valid_pos))
             right_state = self._sanitize((first_key[0]+1, first_key[1]))
             left_state = self._sanitize((first_key[0]-1, first_key[1]))
             if self.grid.get(*right_state) is None and self.grid.get(*left_state) is None:
@@ -348,7 +352,7 @@ class BoxWorldEnv(MiniGridEnv):
         if state_left in valid_pos: valid_pos.remove(state_left)
         
         while len(pairs) < num_pairs:
-            lock = random.choice(valid_pos)
+            lock = tuple(self.np_random.choice(valid_pos))
             valid_pos.remove(self._sanitize(lock))
             if lock[0] == 1 or np.array_equal((lock[0]-1, lock[1]), self.agent_pos) \
                 or self.grid.get(lock[0]-1, lock[1]) is not None: 
@@ -359,7 +363,7 @@ class BoxWorldEnv(MiniGridEnv):
             valid_pos.remove(key_sanitized)       
             pairs.append((lock, key))
         
-        colors = random.sample(colors_list, k=num_pairs)
+        colors = list(self.np_random.choice(colors_list, size=num_pairs, replace=False))
             
         return pairs, colors
     
@@ -404,6 +408,9 @@ class BoxWorldEnv(MiniGridEnv):
     def set_agent(self, pos, dir=0):
         self.agent_pos = pos
         self.agent_dir = dir
+        
+    def get_attn_edges(self):
+        return deepcopy(self.attn_edges)
     
     def render_graph(self, figsize=(10, 6)):
         fig, ax = plt.subplots(1, 2, figsize=figsize)
@@ -479,13 +486,13 @@ class BoxWorldEnv(MiniGridEnv):
         colors, 
         max_distractors: int = 5,
     ):
-        num_dist = random.randint(1, max_distractors)
+        num_dist = self.np_random.integers(1, max_distractors+1)
         possible_objs = [KeyBox, LockBox, Ball, Box]
         for i in range(num_dist):
-            obj = random.choice(possible_objs)
+            obj = self.np_random.choice(possible_objs)
             valid_pos = self.valid_pos_gen()
-            pos = random.choice(valid_pos)
-            rand_color = random.choice(colors)
+            pos = tuple(self.np_random.choice(valid_pos))
+            rand_color = self.np_random.choice(colors)
             if isinstance(obj, KeyBox) or isinstance(obj, LockBox):
                 self.grid.set(*pos, obj(rand_color, index=-1, path=-1))
             else:

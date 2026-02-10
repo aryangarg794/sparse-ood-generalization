@@ -1,0 +1,10 @@
+_target_: sparse_generalization.models.spartan.OracleTransformer
+
+embed_size: 3
+out_dim: 1
+hidden_dims_ffn: [256, 256]
+model_dim: 62
+num_feature_layers: 3
+num_heads: 1
+residual: true
+num_layers: 1
