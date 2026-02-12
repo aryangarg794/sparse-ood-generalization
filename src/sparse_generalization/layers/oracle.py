@@ -92,6 +92,7 @@ class MultiHeadAttentionOracle(nn.Module):
         
         for i, item in enumerate(oracle_edges): # (num_paths, num_edges, 2, 2)
             num_paths, num_edges, _, _ = item.shape
+            item = item.to(query.device)
             # NOTE: right now we check ALL paths but maybe we should change this to check a random one
             item = item.view(num_paths * num_edges, 2, 2) 
             item = item[:, : , 1] * self.width + item[:, :, 0] # (paths * edges, 2)

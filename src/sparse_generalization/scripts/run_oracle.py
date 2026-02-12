@@ -13,6 +13,7 @@ from omegaconf import DictConfig, OmegaConf
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader
+from torchsummary import summary
 
 from sparse_generalization.utils.datasets import EdgeDataset
 
@@ -60,6 +61,7 @@ def main(cfg: DictConfig):
         test_loader_ood = DataLoader(test_dataset_ood, cfg.data.batch_size, shuffle=False, collate_fn=collate_fn)
         
         model = instantiate(cfg.model)
+        model = model.to(cfg.model.device)
         model.logger = logger
         print(f"{'='*60}")
         print(model)
@@ -100,6 +102,7 @@ def main(cfg: DictConfig):
             test_loader_ood = DataLoader(test_dataset_ood, cfg.data.batch_size, shuffle=False, collate_fn=collate_fn)
             
             model = instantiate(cfg.model)
+            model = model.to(cfg.model.device)
             model.logger = logger
             print(f"{'='*60}")
             print(model)

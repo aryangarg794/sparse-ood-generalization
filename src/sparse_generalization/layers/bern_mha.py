@@ -21,11 +21,10 @@ class MultiHeadAttentionBern(nn.Module):
         bias: int = True, 
         dropout: float = 0.0, 
         batch_first: bool = True, 
-        temp: float = 0.5,
+        temp: float = 1.0,
         hard: bool = True, 
-        noisy: bool = False,
-        alpha: float = 3.0, 
         residual: bool = False, 
+        separate_mask: bool = False, 
         *args, 
         **kwargs
     ):
@@ -40,14 +39,17 @@ class MultiHeadAttentionBern(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.temp = temp
         self.hard = hard
-        self.noisy = noisy
-        self.alpha = alpha
         self.residual = residual
         
         self.queries = nn.Linear(embed_size, embed_size, bias=bias)
         self.keys = nn.Linear(embed_size, embed_size, bias=bias)
         self.values = nn.Linear(embed_size, embed_size, bias=bias)
         self.projection = nn.Linear(embed_size, embed_size, bias=bias)
+        
+        self.separate_mask = separate_mask
+        if separate_mask:
+            self.queries_mask = nn.Linear(embed_size, embed_size, bias=bias)
+            self.keys_mask = nn.Linear(embed_size, embed_size, bias=bias)
     
         
     def forward(self: Self, queries: Tensor, keys: Tensor, values: Tensor, avg_attn_heads: bool = True, avg_mask: bool = True): 
@@ -59,18 +61,27 @@ class MultiHeadAttentionBern(nn.Module):
         keys_split = self._split_heads(keys)
         values_split = self._split_heads(values)
         
-        attention_repr, mask_per_head, adjacency_per_head = self._attention(queries_split,
+        if self.separate_mask:
+            queries_mask = self.queries_mask(queries)
+            queries_mask_split = self._split_heads(queries_mask)
+            keys_mask = self.keys_mask(keys)
+            keys_mask_split = self._split_heads(keys_mask)
+            
+        
+        attention_repr, mask_per_head, attn_per_head = self._attention(queries_split,
                                                              keys_split, 
-                                                             values_split)
+                                                             values_split,
+                                                             queries_mask_split if self.separate_mask else None,
+                                                             keys_mask_split if self.separate_mask else None)
 
         attention_repr = self._merge_heads(attention_repr) # (b, l, d)
         attention_repr = self.projection(attention_repr)
         
         if avg_attn_heads:
-            adjacency = adjacency_per_head.mean(dim=1)
+            adjacency = attn_per_head.sum(dim=1)
         
         if avg_mask:
-            mask = mask_per_head.mean(dim=1)
+            mask = mask_per_head.sum(dim=1)
         
         return attention_repr, mask, adjacency
     
@@ -84,32 +95,34 @@ class MultiHeadAttentionBern(nn.Module):
         return x.reshape(batch_size, self.heads, seq_len, self.dk).transpose(1, 2).reshape(
             batch_size, seq_len, self.dk * self.heads) 
     
-    def _attention(self: Self, query: Tensor, key: Tensor, value: Tensor):
+    def _attention(self: Self, query: Tensor, key: Tensor, value: Tensor, query_mask: Tensor, keys_mask: Tensor,):
         batch_heads, seq_len, _ = query.size()
         attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(self.dk) # (b*h, l, l)
         
-        edges_logit = attention_logits.view(batch_heads, -1) # (b*h, l*l)
-        edges_logit = torch.stack([torch.zeros_like(edges_logit), edges_logit], dim=-1)
-        A = gumbel_softmax(edges_logit, tau=self.temp, hard=self.hard) # (b*h, l*l, 2)
-        A = A[:, :, -1] # get the mask value for class 1 (if there is edge)
-        
         attention_probs = softmax(attention_logits, dim=-1)
-        if self.noisy and self.training:
-            bern = torch.distributions.Bernoulli(probs=self.var)
-            noise = bern.sample(sample_shape=A.shape).to('cuda')
-            A = A * noise.detach()
-            masked_attention_probs = A.view(batch_heads, seq_len, seq_len) * attention_probs # (b*h, l, l)
+        if self.separate_mask:
+            mask_logits = torch.bmm(query_mask, keys_mask.transpose(1, 2)) / np.sqrt(self.dk)
+            mask_logits = mask_logits.view(batch_heads, -1)
+            edges_logit = torch.stack([torch.zeros_like(mask_logits), mask_logits], dim=-1)
+            A = gumbel_softmax(edges_logit, tau=self.temp, hard=self.hard) # (b*h, l*l, 2)
+            A = A[:, :, -1]
         else:
-            masked_attention_probs = A.view(batch_heads, seq_len, seq_len) * attention_probs # (b*h, l, l)
+            edges_logit = attention_logits.view(batch_heads, -1) # (b*h, l*l)
+            edges_logit = torch.stack([torch.zeros_like(edges_logit), edges_logit], dim=-1)
+            A = gumbel_softmax(edges_logit, tau=self.temp, hard=self.hard) # (b*h, l*l, 2)
+            A = A[:, :, -1] # get the mask value for class 1 (if there is edge)
+        
+        A = A.view(-1, seq_len, seq_len)
+        masked_attention_probs = A * attention_probs # (b*h, l, l)
         
         hidden_repr = torch.bmm(masked_attention_probs, value) # (b*h, l, d)  
-        
         if self.residual:
             A = A + torch.eye(A.size(1), device=A.device).unsqueeze(0).repeat(batch_heads, 1, 1)
         
-        return hidden_repr.view(-1, self.heads, seq_len, self.dk), A.view(-1, self.heads, seq_len, seq_len)
+        return hidden_repr.view(-1, self.heads, seq_len, self.dk), A.view(-1, self.heads, seq_len, seq_len), \
+            masked_attention_probs.view(-1, self.heads, seq_len, seq_len)
         
-    def noise_scheduler(self: Self, step: int, k: float = 1e-3):
-        self.var = 1 - 0.9 / (1 + step * k)**self.alpha
-        return self.var      
+    # def noise_scheduler(self: Self, step: int, k: float = 1e-3):
+    #     self.var = 1 - 0.9 / (1 + step * k)**self.alpha
+    #     return self.var      
           

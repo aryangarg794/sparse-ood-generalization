@@ -22,6 +22,7 @@ dependencies = [
     "plotly>=6.5.0",
     "seaborn>=0.13.2",
     "torch>=2.9.1",
+    "torchsummary>=1.5.1",
     "torchvision>=0.24.1",
     "typing>=3.10.0.0",
     "wandb>=0.23.0",
@@ -32,6 +33,7 @@ sparse-generalization = "sparse_generalization:main"
 train-toy = "sparse_generalization.scripts.train_toy:main"
 box-world = "sparse_generalization.scripts.train_boxworld:main"
 oracle = "sparse_generalization.scripts.run_oracle:main"
+spartan = "sparse_generalization.scripts.run_spartan:main"
 generate-boxworld = "sparse_generalization.scripts.generate_boxworld_dataset:generate_dataset"
 
 [build-system]

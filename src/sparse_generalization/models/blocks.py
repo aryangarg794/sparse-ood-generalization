@@ -64,8 +64,10 @@ class MHABlock(nn.Module):
         else:
             self.mha = mha_layer(embed_size, num_heads=num_heads, dropout=dropout, batch_first=True) # (b, 3, 1) or (b, 3, 2) with pe
         # self.norm = nn.LayerNorm(embed_size) # layer norm does not work for toy example
-        self.ln = nn.LayerNorm(embed_size)
-        self.mlp = BasicMLP(input_dim=embed_size, out_dim=out_dim, hidden_dims=hidden_dims, act=act, dropout=dropout) # (b, 3) 
+        self.ln1 = nn.LayerNorm(embed_size)
+        self.ln2 = nn.LayerNorm(embed_size)
+        self.mlp = BasicMLP(input_dim=embed_size, out_dim=embed_size, hidden_dims=hidden_dims, act=act, dropout=dropout) # (b, 3) 
+        self.last = nn.Linear(embed_size, out_dim)
     
     def forward(self: Self, x: Tensor):
         if self.use_grid:
@@ -84,7 +86,7 @@ class MHABlock(nn.Module):
             x = torch.cat([x, indices], dim=-1)
         attn_out, attn_scores = self.mha(x, x, x)
         # out = self.norm(attn_out)
-        attn_out = self.ln(attn_out)
+        attn_out = self.ln1(attn_out)
         if self.residual:
             out = self.mlp((attn_out + x).max(dim=1)[0])
         else:
@@ -97,21 +99,31 @@ class MHABlock(nn.Module):
         batch_size, width, height, _ = x.size()
         x_features = self.feature_map(x.permute(0, 3, 1, 2)) # (b, 3, w, h)
         x_features = x_features.permute(0, 2, 3, 1)
-        x_attn = x_features.view(-1, width*height, self.model_dim)
         
         if self.pe:
             device = x.device
             xs = torch.arange(width, device=device)
             ys = torch.arange(height, device=device)
-            coords = torch.cartesian_prod(xs, ys)
-            coords = coords.expand(batch_size, width*height, 2)
-            x_attn = torch.cat([x_attn, coords], dim=-1)
+            coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
+            coords = coords.expand(batch_size, width, height, 2)
+            x_attn = torch.cat([x_features, coords], dim=-1)
+            x_attn = x_attn.view(-1, width*height, self.model_dim+2)
         
-        attn_out, attn_scores = self.mha(x_attn, x_attn, x_attn)
-        if self.residual:
-            out = self.mlp((attn_out + x_attn).max(dim=1)[0])
+        if isinstance(self.mha, MultiHeadAttentionBern):
+            attn_out, attn_scores, _ = self.mha(x_attn, x_attn, x_attn)
         else:
-            out = self.mlp(attn_out.max(dim=1)[0])    
+            attn_out, attn_scores = self.mha(x_attn, x_attn, x_attn)
+            
+        if self.residual:
+            # attn_out = self.ln1(attn_out + x_attn)
+            out = self.mlp(attn_out + x_attn)
+            # out = self.ln2(out + attn_out)
+        else:
+            # attn_out = self.ln1(attn_out)
+            out = self.mlp(attn_out)
+            # out = self.ln2(out)   
+            
+        out = self.last(out.max(dim=1)[0]) 
         
         return out, attn_scores
     
@@ -136,7 +148,8 @@ class MHABlockBern(nn.Module):
         act: nn.Module,
         dropout: int,
         residual: bool, 
-        noisy: bool = False, 
+        separate_mask: bool = False,
+        alpha_res: bool = False,  
         *args, 
         **kwargs
     ):
@@ -144,8 +157,12 @@ class MHABlockBern(nn.Module):
         self.residual = residual
         self.use_grid = use_grid
 
+        if alpha_res:
+            self.alpha = nn.Parameter(torch.tensor(0.0, dtype=torch.float))
+        self.alpha_res = alpha_res
         
-        self.mha = MultiHeadAttentionBern(embed_size, num_heads=num_heads, dropout=dropout, noisy=noisy, residual=residual)
+        self.mha = MultiHeadAttentionBern(embed_size, num_heads=num_heads, dropout=dropout, separate_mask=separate_mask, 
+                                          residual=residual)
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
         self.mlp = BasicMLP(input_dim=embed_size, out_dim=embed_size, hidden_dims=hidden_dims, act=act, dropout=dropout) 
@@ -177,13 +194,19 @@ class MHABlockBern(nn.Module):
     def _forward_image(self: Self, x: Tensor):
         attn_out, attn_masks, attn_scores = self.mha(x, x, x)
         if self.residual:
-            attn_out = self.ln1(attn_out + x) # (b, l, d)
-            out = self.mlp(attn_out)
-            out = self.ln2(out + attn_out)
+            if self.alpha_res:
+                alpha = nn.functional.sigmoid(self.alpha)
+                inp_l1 = (1 - alpha) * attn_out + alpha * x
+                attn_out = self.ln1(inp_l1) 
+                out = self.mlp(inp_l1)
+            else:
+                attn_out = self.ln1(attn_out + x)
+                out = self.mlp(attn_out)
+                out = self.ln2(out + attn_out)
         else:
-            out = self.ln1(attn_out)
-            out = self.mlp(out)
-            out = self.ln2(out)
+            # attn_out = self.ln1(attn_out)
+            out = self.mlp(attn_out)
+            # out = self.ln2(out)
         
         return out, attn_masks, attn_scores
     

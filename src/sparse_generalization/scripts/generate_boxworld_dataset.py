@@ -10,9 +10,9 @@ from sparse_generalization.envs.box_world.wrappers import make_env
 gym.register('BoxWorldEnv-v1', BoxWorldEnv)
 
 def generate_dataset(
-    num_samples: int = 500, 
+    num_samples: int = 1000, 
     ratio_labels: float = 0.5,
-    test_size: float = 2.0,  
+    test_size: float = 1.0,  
     start_seed: int = 0,
     num_paths: int = 1, 
     file_path: str = 'data/box_world/balanced_dist' 

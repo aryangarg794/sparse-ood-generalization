@@ -1,0 +1,25 @@
+_target_: sparse_generalization.models.spartan.SPARTAN
+
+embed_size: 3
+out_dim: 1 
+hidden_dims_ffn: [128, 128]
+use_grid: true
+model_dim: 62
+num_feature_layers: 3
+num_heads: 4
+num_layers: 3
+include_sparsity: false
+l1_weight: 1e-4
+residual: true
+pe: true
+path_sparsity: true
+lr: 1e-3
+lagrangian: false
+start_lambda: 1e15
+target_loss: 0.25
+cma: 0.9
+step_size: 1e-1
+dropout: 0.00
+device: cuda
+alpha_res: false
+separate_mask: false
