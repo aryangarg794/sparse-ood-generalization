@@ -62,8 +62,8 @@ def main(cfg: DictConfig):
         if cfg.save:
             torch.save(model.state_dict(), f'checkpoints/{cfg.run_name}_{timestamp}.pt')
         
-        test_metrics_1, _, _ = model.test('id', test_loader_ind)
-        test_metrics_2, _, _ = model.test('ood', test_loader_ood)
+        test_metrics_1 = model.test('id', test_loader_ind)
+        test_metrics_2 = model.test('ood', test_loader_ood)
         
         table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
         table.add_data('Test set ID', test_metrics_1['loss'], test_metrics_1['acc'])
@@ -102,8 +102,8 @@ def main(cfg: DictConfig):
             if cfg.save:
                 torch.save(model.state_dict(), f'checkpoints/{cfg.run_name}_{timestamp}.pt')
             
-            test_metrics_1, _, _ = model.test('id', test_loader_ind)
-            test_metrics_2, _, _ = model.test('ood', test_loader_ood)
+            test_metrics_1 = model.test('id', test_loader_ind)
+            test_metrics_2 = model.test('ood', test_loader_ood)
             
             table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
             table.add_data('Test set ID', test_metrics_1['loss'], test_metrics_1['acc'])

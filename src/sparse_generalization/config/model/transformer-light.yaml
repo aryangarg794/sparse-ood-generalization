@@ -2,17 +2,16 @@ _target_: sparse_generalization.models.transformer.TransformerLit
 
 embed_size: 3
 out_dim: 1 
-hidden_dims: [512, 256]
+layernorm: true
+agg_pool: false
 use_grid: true
-model_dim: 126
+model_dim: 62
 num_feature_layers: 3
-num_heads: 8
-include_sparsity: true
+num_layers: 4
+include_sparsity: false
 l1_weight: 0.0001
-residual: false
 positional_encoding: true
-lr: 1e-3
-k: 9900
+lr: 2.5e-4
 lagrangian: false
 start_lambda: 5e6
 target_loss: 0.15
@@ -22,13 +21,20 @@ noisy_grads: false
 eta: 1.0
 gamma: 0.55
 noisy_bern: false
-beta1: 0.99
+beta1: 0.9
 beta2: 0.999
 foopt: false
+residual: True
+num_heads: 4
+hidden_dims: [128, 128]
+dropout: 0.0
 
 mha_layer:
   _partial_: true
-  _target_: sparse_generalization.layers.bern_mha.MultiHeadAttentionBern
+  _target_: sparse_generalization.layers.thresh_mha.MultiHeadAttentionThresh
+
+
 sparse_loss: 
   _partial_: true
-  _target_: sparse_generalization.losses.sparse_loss.L1SparsityAdjacency
+  _target_: sparse_generalization.losses.sparse_loss.L1SparsityWeights
+  k: 9900

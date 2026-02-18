@@ -133,7 +133,6 @@ class SPARTAN(nn.Module):
             device = x.device
             xs = torch.arange(width, device=device)
             ys = torch.arange(height, device=device)
-            coords = torch.cartesian_prod(xs, ys)
             coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
             coords = coords.expand(batch_size, width, height, 2)
             x_attn = torch.cat([x_features, coords], dim=-1)
@@ -150,7 +149,7 @@ class SPARTAN(nn.Module):
         x_attn = x_attn.max(dim=1)[0]
         out = self.ffn(x_attn)
         
-        return out, masks, torch.stack(attn_matrices, dim=1) # (b, k, l, l)
+        return out, masks, attn_matrices # (b, k, l, l)
     
     def fit(self, dataloader: DataLoader, num_epochs: int):
         
@@ -159,13 +158,13 @@ class SPARTAN(nn.Module):
             epoch_loss = 0.0
             epoch_acc = 0.0
             epoch_sparse = 0.0
-            train_masks = []
-            train_attns = []
+            attn_running = 0.0
+            mask_running = 0.0
             
             for batch_idx, (x, y) in enumerate(dataloader):
                 x = x.to(self.device)
                 y = y.to(self.device)
-                out, masks, attns = self(x)
+                out, masks, attns = self(x) # list of (b, l, l)
                 rec_loss = self.loss(out, y)
                 if self.path_sparsity: 
                     path_matrix = masks
@@ -204,14 +203,18 @@ class SPARTAN(nn.Module):
                 with torch.no_grad():
                     acc = self.accuracy(out, y)
                     epoch_acc += acc.item()
+
+                    attn_running += self._compute_attn_mean(attns)
+                    mask_running += self._compute_mask_mean(path_matrix)
                 
-                train_attns.append(attns)
-                train_masks.append(path_matrix)
                 self.global_step += 1
             
             epoch_loss /= len(dataloader)
             epoch_acc /= len(dataloader)
             epoch_sparse /= len(dataloader)
+            attn_running /= len(dataloader)
+            mask_running /= len(dataloader)
+
             
             postfix = {
                 "loss": epoch_loss,
@@ -248,23 +251,18 @@ class SPARTAN(nn.Module):
                 with torch.no_grad():
                     for i, layer in enumerate(self.layers):
                         postfix[f"alpha_lay{i}"] = nn.functional.sigmoid(layer.alpha).item()
-                
-            train_attns = torch.cat(train_attns, dim=0)
-            train_masks = torch.cat(train_masks, dim=0)
-            attn_mean = self._compute_attn_mean(train_attns)
-            masks_mean = self._compute_mask_mean(train_masks)
             
             self.logger.log_metrics(
-                {f'train/attn_edges_train': attn_mean},
+                {f'train/attn_edges_train': attn_running},
                 step=self.global_step
             )
             
             self.logger.log_metrics(
-                {f'train/mask_edges_train': masks_mean},
+                {f'train/mask_edges_train': mask_running},
                 step=self.global_step
             )    
             
-            postfix['edges'] = masks_mean
+            postfix['edges'] = mask_running
             
             pbar.set_postfix(postfix)
 
@@ -272,8 +270,8 @@ class SPARTAN(nn.Module):
             
     def test(self, name: str, dataloader: DataLoader):
         self.eval()
-        masks = []
-        attns = []
+        attn_running = 0.0
+        mask_running = 0.0
         epoch_acc = 0.0
         epoch_loss = 0.0
         for batch_idx, (x, y) in enumerate(dataloader):
@@ -282,19 +280,18 @@ class SPARTAN(nn.Module):
             out, mask, attn = self(x)
             loss = self.loss(out, y)
             
-            masks.append(mask)
-            attns.append(attn)
-            
             epoch_loss += loss.item()
             with torch.no_grad():
                 acc = self.accuracy(out, y)
                 epoch_acc += acc.item()
+                attn_running += self._compute_attn_mean(attn)
+                mask_running += self._compute_mask_mean(mask)
                 
-        masks = torch.cat(masks, dim=0)
-        attns = torch.cat(attns, dim=0)
         
         epoch_loss /= len(dataloader)
         epoch_acc /= len(dataloader)
+        attn_running /= len(dataloader)
+        mask_running /= len(dataloader)
         
         self.logger.log_metrics(
             {f'test/loss_epoch_{name}': epoch_loss},
@@ -305,27 +302,31 @@ class SPARTAN(nn.Module):
             {f'test/acc_epoch_{name}': epoch_acc},
             step=self.global_step
         )
-        
-        attn_mean = self._compute_attn_mean(attns)
-        masks_mean = self._compute_mask_mean(masks)
+    
         
         self.logger.log_metrics(
-            {f'test/attn_edges_{name}': attn_mean},
+            {f'test/attn_edges_{name}': attn_running},
             step=self.global_step
         )
         
         self.logger.log_metrics(
-            {f'test/mask_edges_{name}': masks_mean},
+            {f'test/mask_edges_{name}': mask_running},
             step=self.global_step
         )
         
     
         self.train()
         
-        return {'loss': epoch_loss, 'acc': epoch_acc}, masks, attns
+        return {'loss': epoch_loss, 'acc': epoch_acc}
     
     def _compute_attn_mean(self, all_attn: Tensor):
-        return (all_attn > self.threshold).float().mean(dim=1).sum(dim=(1, 2)).mean().item()
+        thresh_list = [(attn > self.threshold).float() for attn in all_attn] # list of (b, l, l)
+        batch_size, seq_len, _ = thresh_list[0].size()
+        path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
+        for attn in reversed(thresh_list):
+            path = path @ attn
+        
+        return path.sum(dim=(1, 2)).mean().item()
     
     def _compute_mask_mean(self, all_masks: Tensor):
         return all_masks.sum(dim=(1, 2)).mean().item()

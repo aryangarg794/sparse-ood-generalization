@@ -7,16 +7,16 @@ import torch.nn as nn
 import torch.nn.utils as utils
 import wandb
 
+from hydra.utils import instantiate
 from torch import Tensor
 from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
 
-from sparse_generalization.models.mlp import BasicMLP
-from sparse_generalization.layers.bern_mha import MultiHeadAttentionBern
 from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
-from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency, L1SparsityWeights
+from sparse_generalization.losses.sparse_loss import L1SparsityWeights
 from sparse_generalization.utils.util_funcs import noise_scheduler
 from sparse_generalization.models.blocks import MHABlock
+from sparse_generalization.layers.agg_attention import AggregationAttention
 
     
 class TransformerLit(pl.LightningModule):
@@ -33,6 +33,8 @@ class TransformerLit(pl.LightningModule):
         out_dim: int,
         num_heads: int, # for the toy example just keep it one
         hidden_dims: List,
+        agg_pool: bool, 
+        layernorm: bool, 
         num_feature_layers: int = 3, 
         mha_layer: nn.Module = nn.MultiheadAttention, 
         act: nn.Module = nn.ReLU,
@@ -54,6 +56,7 @@ class TransformerLit(pl.LightningModule):
         eta: float = 1.0, 
         gamma: float = 0.55,
         noisy_bern: bool = False,
+        num_layers: int = 4, 
         beta1: float = 0.99, 
         beta2: float = 0.999,
         foopt: bool = False,
@@ -71,13 +74,10 @@ class TransformerLit(pl.LightningModule):
         self.foopt = foopt
         self.eps = eps
         self.var = var
+        self.agg_pool = agg_pool
         
         if include_sparsity:
-            if isinstance(sparse_loss, L1SparsityWeights):
-                self.l1_loss = sparse_loss(k=k)
-            else:
-                self.l1_loss = sparse_loss()    
-            
+            self.l1_loss = instantiate(sparse_loss)  
             self.l1_weight = l1_weight
         else:
             self.l1_loss = None
@@ -85,21 +85,74 @@ class TransformerLit(pl.LightningModule):
             
         self.lr = lr
         
-        self.model = MHABlock(
-            embed_size=embed_size,
-            out_dim=out_dim,
-            model_dim=model_dim, 
-            use_grid=use_grid,
-            num_heads=num_heads,
-            residual=residual,  
-            hidden_dims=hidden_dims,
-            act=act,
-            num_feature_layers=num_feature_layers, 
-            positional_encoding=positional_encoding,
-            dropout=dropout,
-            mha_layer=mha_layer,
-            noisy_bern=noisy_bern
+        self.residual = residual
+        self.use_grid = use_grid
+        self.model_dim = model_dim
+
+        if use_grid:
+            self.feature_map = nn.Sequential(
+                nn.Conv2d(in_channels=3, out_channels=model_dim, kernel_size=1),
+                act()
+            )
+            for _ in range(num_feature_layers):
+                self.feature_map.extend([
+                    nn.Conv2d(in_channels=model_dim, out_channels=model_dim, kernel_size=1),
+                    act()
+                ])                        
+            
+        if positional_encoding and not use_grid:
+            embed_size += 1
+        elif positional_encoding and use_grid:
+            model_dim += 2  
+            embed_size = model_dim  
+        
+        self.embed_size = embed_size
+        self.pe = positional_encoding
+        
+        self.layers = nn.ModuleList()
+        self.layers.append(MHABlock(
+                embed_size=self.embed_size,
+                out_dim=self.embed_size,
+                residual=residual,  
+                hidden_dims=hidden_dims,
+                act=act,
+                dropout=dropout,
+                use_grid=use_grid, 
+                mha_layer=mha_layer,
+                num_heads=num_heads,
+                layernorm=layernorm,  
+            )
         )
+        
+        num_layers = num_layers-1 if self.agg_pool else num_layers-2
+        for _ in range(num_layers):
+            self.layers.append(MHABlock(
+                embed_size=self.embed_size,
+                out_dim=self.embed_size,
+                residual=residual,  
+                hidden_dims=hidden_dims,
+                act=act,
+                dropout=dropout,
+                use_grid=use_grid,
+                mha_layer=mha_layer,
+                num_heads=num_heads,
+                layernorm=layernorm,
+            ))
+        
+        
+        if self.agg_pool:
+            self.out = AggregationAttention(
+                num_heads=num_heads, 
+                embed_size=embed_size, 
+                out_dim=out_dim, 
+                residual=residual, 
+                hidden_dims=hidden_dims, 
+                act=act,
+                dropout=dropout,
+                layernorm=layernorm
+            )
+        else:
+            self.out = nn.Linear(self.embed_size, out_dim)
         
         self.accuracy = BinaryAccuracy()
         self.test_attn_matrices = []
@@ -115,13 +168,37 @@ class TransformerLit(pl.LightningModule):
         
     def _get_loss_acc(self: Self, batch):
         x, y = batch
-        y_hat, attn = self.model(x)
+        attn_matrices = []
+        
+        batch_size, width, height, _ = x.size()
+        x_features = self.feature_map(x.permute(0, 3, 1, 2)) # (b, 3, w, h)
+        x_features = x_features.permute(0, 2, 3, 1)
+        
+        if self.pe:
+            device = x.device
+            xs = torch.arange(width, device=device)
+            ys = torch.arange(height, device=device)
+            coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
+            coords = coords.expand(batch_size, width, height, 2)
+            x_attn = torch.cat([x_features, coords], dim=-1)
+            x_attn = x_attn.view(-1, width*height, self.model_dim+2)
+        
+        for layer in self.layers:
+            x_attn, attn = layer(x_attn)
+            attn_matrices.append(attn)
+
+        if self.agg_pool:
+            y_hat, attn = self.out(x_attn)
+        else:
+            y_hat = self.out(x_attn.max(dim=1)[0]) 
+        
         loss = self.loss(y_hat, y)
         acc = self.accuracy(y_hat, y)
-        return loss, acc, attn
+        path_matrix = self._compute_thresh_path(attn_matrices)
+        return loss, acc, path_matrix # (b, l, h, h)
 
     def training_step(self, batch, batch_idx):
-        if self.noisy_bern:
+        if self.noisy_bern: #NOTE: doesnt work
             bern_var = self.model.mha.noise_scheduler(self.global_step)
             self.log(
                 "bern_noise", 
@@ -132,6 +209,7 @@ class TransformerLit(pl.LightningModule):
             
         rec_loss, acc, attn = self._get_loss_acc(batch)
         opt = self.optimizers()
+        
         if self.sparse:
             if self.lagrangian or self.foopt:
                 if self.global_step == 0:
@@ -161,7 +239,7 @@ class TransformerLit(pl.LightningModule):
         opt.zero_grad()
         self.manual_backward(loss)
     
-        if self.foopt:
+        if self.foopt: #NOTE: doesnt work
             total_norm = utils.clip_grad_norm_(self.model.mha_parameters(), max_norm=float('inf'))
             if total_norm <= self.eps and rec_loss >= self.target_loss:
                 with torch.no_grad():
@@ -275,13 +353,13 @@ class TransformerLit(pl.LightningModule):
         all_attn = torch.cat(self.test_attn_matrices, dim=0) 
         avg_attn = all_attn.mean(dim=0)  
         
-        fig, ax = plt.subplots(1, 1, figsize=(5, 4))
-        sns.heatmap(avg_attn.detach().cpu().numpy(), annot=True, cmap="viridis", xticklabels=[0,1,2], yticklabels=[0,1,2], ax=ax)
-        plt.title(f'Average Attention Matrix {self.test_name}')
-        plt.xlabel("Key")
-        plt.ylabel("Query")
-        self.logger.experiment.log({f'Heatmap Attn {self.test_name}': wandb.Image(fig)})
-        plt.close()
+        # fig, ax = plt.subplots(1, 1, figsize=(5, 4))
+        # sns.heatmap(avg_attn.detach().cpu().numpy(), annot=True, cmap="viridis", xticklabels=[0,1,2], yticklabels=[0,1,2], ax=ax)
+        # plt.title(f'Average Attention Matrix {self.test_name}')
+        # plt.xlabel("Key")
+        # plt.ylabel("Query")
+        # self.logger.experiment.log({f'Heatmap Attn {self.test_name}': wandb.Image(fig)})
+        # plt.close()
         
         num_attn = self._compute_attn_mean(all_attn)
         self.log(
@@ -293,14 +371,24 @@ class TransformerLit(pl.LightningModule):
 
         self.test_attn_matrices.clear()
     
+    
+    def _compute_thresh_path(self: Self, attn_list: List):
+        thresh_list = [(attn > 0.01).float() for attn in attn_list]
+        batch_size, seq_len, _ = thresh_list[0].size()
+        path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
+        for attn in reversed(thresh_list):
+            path = path @ attn
+        
+        return path
+    
     def _compute_attn_mean(self: Self, all_attn: Tensor):
-        if self.l1_loss is None or isinstance(self.model.mha, MultiHeadAttentionThresh) \
-            or isinstance(self.model.mha, torch.nn.MultiheadAttention):
-            return (all_attn > 0.01).float().sum(dim=(1, 2)).mean().item()
+        if self.l1_loss is None or isinstance(self.layers[0].mha, MultiHeadAttentionThresh) \
+            or isinstance(self.layers[0].mha, torch.nn.MultiheadAttention):
+            return all_attn.float().sum(dim=(1, 2)).mean().item()
         else:
             return all_attn.sum(dim=(1, 2)).mean().item()
             
     
     def configure_optimizers(self: Self):
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, betas=self.betas)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, betas=self.betas)
         return optimizer

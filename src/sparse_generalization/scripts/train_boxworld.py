@@ -75,6 +75,8 @@ def main(cfg: DictConfig):
         logger.experiment.finish()
     else:
         torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
         for seed in cfg.seeds:
             print(f'\n{'='*60}')
             print(f'Running Seed {seed} for group {group_name}')
@@ -112,6 +114,8 @@ def main(cfg: DictConfig):
             table.add_data('Test set OOD', test_metrics_2[0]['test_loss_ood'], test_metrics_2[0]['test_acc_ood'])
             logger.experiment.log({'Test Sets Table': table})
             logger.experiment.finish()
+            
+            torch.cuda.empty_cache()
 
 if __name__ == '__main__':
     main()
