@@ -78,6 +78,16 @@ class BasicMLPLit(pl.LightningModule):
         
         self.accuracy = BinaryAccuracy()
         
+        self.losses = []
+        self.accs = []
+        self.running_loss = 0.0
+        self.running_acc = 0.0
+        self.running_loss_test = {0: 0.0, 1: 0.0}
+        self.running_acc_test = {0: 0.0, 1: 0.0}
+        
+        self.losses_test = {0: [], 1: []}
+        self.accs_test = {0: [], 1: []}
+        
     def _get_loss_acc(self: Self, batch):
         x, y = batch
         y_hat = self.model(x)
@@ -101,26 +111,36 @@ class BasicMLPLit(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
         )
+        self.running_loss += loss.item()
+        self.running_acc += acc.item()
+        
         return loss
     
-    def validation_step(self, batch):
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
         loss, acc = self._get_loss_acc(batch)
+        name = 'id' if dataloader_idx == 0 else 'ood'
         self.log(
-            "val_loss",
+            f"test_loss_{name}",
             loss,
             on_step=False,
             on_epoch=True,
-            prog_bar=True,
+            prog_bar=False,
+            add_dataloader_idx=False
         )
         self.log(
-            "val_acc", 
+            f"test_acc_{name}", 
             acc, 
             on_step=False,
             on_epoch=True,
-            prog_bar=True,
+            prog_bar=False,
+            add_dataloader_idx=False
         )
+        
+        self.running_loss_test[dataloader_idx] += loss.item()
+        self.running_acc_test[dataloader_idx] += acc.item()
+        
         return loss
-    
+
     def test_step(self, batch):
         loss, acc = self._get_loss_acc(batch)
         self.log(
@@ -138,6 +158,28 @@ class BasicMLPLit(pl.LightningModule):
             prog_bar=True,
         )
         return loss
+    
+    def on_train_epoch_end(self):
+        epoch_loss = self.running_loss / self.num_train_batches
+        epoch_acc = self.running_acc / self.num_train_batches
+        
+        self.losses.append(epoch_loss)
+        self.accs.append(epoch_acc)
+        
+        self.running_loss = 0.0
+        self.running_acc = 0.0
+        
+    def on_validation_epoch_end(self):
+        for idx in [0, 1]:
+            epoch_loss = self.running_loss_test[idx] / self.num_val_batches
+            epoch_acc = self.running_acc_test[idx] / self.num_val_batches
+            self.losses_test[idx].append(epoch_loss)
+            self.accs_test[idx].append(epoch_acc)
+            
+            self.running_loss_test[idx] = 0.0
+            self.running_acc_test[idx] = 0.0
+        
+    
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.wd)

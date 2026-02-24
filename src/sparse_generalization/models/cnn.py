@@ -47,10 +47,10 @@ class BasicCNN(nn.Module):
         
         self.ffn = nn.Sequential()
         self.ffn.extend([
-            nn.Linear(in_features=8*8*hidden_channels[-1], out_features=100),
+            nn.Linear(in_features=8*8*hidden_channels[-1], out_features=64),
             act(),
             nn.Dropout(dropout), 
-            nn.Linear(in_features=100, out_features=64),
+            nn.Linear(in_features=64, out_features=64),
             act(),
             nn.Linear(in_features=64, out_features=out_dim),
         ])

@@ -15,6 +15,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader, random_split
 
+from sparse_generalization.models.transformer import TransformerLit
 from sparse_generalization.utils.datasets import BasicDataset
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
@@ -76,8 +77,11 @@ def main(cfg: DictConfig):
     else:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+        
+        results = {}
 
         for seed in cfg.seeds:
+            results[seed] = {}
             print(f'\n{'='*60}')
             print(f'Running Seed {seed} for group {group_name}')
             print(f'\n{'='*60}')
@@ -100,22 +104,38 @@ def main(cfg: DictConfig):
             
             model = instantiate(cfg.model)
             trainer = Trainer(**cfg.trainer, logger=logger)
-            trainer.fit(model, train_dataloaders=train_loader)
+            model.num_train_batches = len(train_loader)
+            model.num_val_batches = len(test_loader_ind)
+            trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=[test_loader_ind, test_loader_ood])
             if cfg.save:
                 torch.save(model.model.state_dict(), f'checkpoints/{cfg.run_name}_{timestamp}.pt')
         
-            model.test_name = 'id'
-            test_metrics_1 = trainer.test(model, test_loader_ind, verbose=False)
-            model.test_name = 'ood'
-            test_metrics_2 = trainer.test(model, test_loader_ood, verbose=False)
+            # model.test_name = 'id'
+            # test_metrics_1 = trainer.test(model, test_loader_ind, verbose=False)
+            # model.test_name = 'ood'
+            # test_metrics_2 = trainer.test(model, test_loader_ood, verbose=False)
             
-            table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
-            table.add_data('Test set ID', test_metrics_1[0]['test_loss_id'], test_metrics_1[0]['test_acc_id'])
-            table.add_data('Test set OOD', test_metrics_2[0]['test_loss_ood'], test_metrics_2[0]['test_acc_ood'])
-            logger.experiment.log({'Test Sets Table': table})
+            results[seed]['train_loss'] = model.losses
+            results[seed]['train_acc'] = model.accs
+            
+            if isinstance(cfg.model, TransformerLit):
+                results[seed]['train_masks'] = model.masks
+                results[seed]['train_sparse'] = model.sparses
+                results[seed]['test_masks'] = model.masks_test
+                
+            results[seed]['test_losses'] = model.losses_test
+            results[seed]['test_accs'] = model.accs_test
+            
+            # table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
+            # table.add_data('Test set ID', test_metrics_1[0]['test_loss_id'], test_metrics_1[0]['test_acc_id'])
+            # table.add_data('Test set OOD', test_metrics_2[0]['test_loss_ood'], test_metrics_2[0]['test_acc_ood'])
+            # logger.experiment.log({'Test Sets Table': table})
             logger.experiment.finish()
             
             torch.cuda.empty_cache()
 
+        with open(f'results/{group_name}.pl', 'wb') as file:
+            dill.dump(results, file)
+            file.close()
 if __name__ == '__main__':
     main()

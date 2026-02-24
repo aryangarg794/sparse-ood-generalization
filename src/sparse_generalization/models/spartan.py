@@ -151,7 +151,17 @@ class SPARTAN(nn.Module):
         
         return out, masks, attn_matrices # (b, k, l, l)
     
-    def fit(self, dataloader: DataLoader, num_epochs: int):
+    def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
+        losses = []
+        accs = []
+        attn_edges = []
+        mask_edges = []
+        sparses = []
+        
+        attn_test = {'id': [], 'ood': []}
+        masks_test = {'id': [], 'ood': []}
+        losses_test = {'id': [], 'ood': []}
+        accs_test = {'id': [], 'ood': []}
         
         for step in (pbar := tqdm(range(1, num_epochs+1))): 
             self.train()
@@ -214,6 +224,12 @@ class SPARTAN(nn.Module):
             epoch_sparse /= len(dataloader)
             attn_running /= len(dataloader)
             mask_running /= len(dataloader)
+            
+            losses.append(epoch_loss)
+            accs.append(epoch_acc)
+            sparses.append(epoch_sparse)
+            attn_edges.append(attn_running)
+            mask_edges.append(mask_running)
 
             
             postfix = {
@@ -265,8 +281,16 @@ class SPARTAN(nn.Module):
             postfix['edges'] = mask_running
             
             pbar.set_postfix(postfix)
-
             
+            for loader, name in zip(testloaders, ['id', 'ood']):
+                test_metrics = self.test(name, loader)
+                masks_test[name].append(test_metrics['mask'])
+                attn_test[name].append(test_metrics['attn'])
+                losses_test[name].append(test_metrics['loss'])
+                accs_test[name].append(test_metrics['acc'])
+            
+
+        return losses, accs, sparses, mask_edges, attn_edges, losses_test, accs_test, attn_test, masks_test
             
     def test(self, name: str, dataloader: DataLoader):
         self.eval()
@@ -302,7 +326,6 @@ class SPARTAN(nn.Module):
             {f'test/acc_epoch_{name}': epoch_acc},
             step=self.global_step
         )
-    
         
         self.logger.log_metrics(
             {f'test/attn_edges_{name}': attn_running},
@@ -317,7 +340,7 @@ class SPARTAN(nn.Module):
     
         self.train()
         
-        return {'loss': epoch_loss, 'acc': epoch_acc}
+        return {'loss': epoch_loss, 'acc': epoch_acc, 'attn': attn_running, 'mask': mask_running}
     
     def _compute_attn_mean(self, all_attn: Tensor):
         thresh_list = [(attn > self.threshold).float() for attn in all_attn] # list of (b, l, l)

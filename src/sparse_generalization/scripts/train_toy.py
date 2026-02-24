@@ -1,3 +1,4 @@
+import dill
 import hydra
 import os
 import numpy as np
@@ -9,7 +10,7 @@ import wandb
 from datetime import datetime
 from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
-from lightning.pytorch import Trainer
+from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader
 
@@ -64,7 +65,9 @@ def main(cfg: DictConfig):
         logger.experiment.log({'Test Sets Table': table})
         logger.experiment.finish()
     else:
+        results = {}
         for seed in cfg.seeds:
+            results[seed] = {}
             print(f'\n{'='*60}')
             print(f'Running Seed {seed} for group {group_name}')
             print(f'\n{'='*60}')
@@ -78,6 +81,7 @@ def main(cfg: DictConfig):
             torch.manual_seed(seed)
             torch.cuda.manual_seed(seed)
             torch.cuda.manual_seed_all(seed)
+            seed_everything(seed, workers=True)
             
             training_set = BasicDataset(raw_data['training_x'], raw_data['training_y'])
             test_expl_1 = BasicDataset(raw_data['test1_x'], raw_data['test1_y'])
@@ -88,7 +92,7 @@ def main(cfg: DictConfig):
             test_loader_2 = DataLoader(test_expl_2, cfg.data.batch_size)
             
             model = instantiate(cfg.model)
-            trainer = Trainer(**cfg.trainer, default_root_dir='../../checkpoints/', logger=logger)
+            trainer = Trainer(**cfg.trainer, default_root_dir='../../checkpoints/', logger=logger, deterministic=True)
             trainer.fit(model, train_dataloaders=train_loader)
             
             model.test_name = 'Expl. 1'
@@ -96,11 +100,23 @@ def main(cfg: DictConfig):
             model.test_name = 'Expl. 2'
             test_metrics_2 = trainer.test(model, test_loader_2, verbose=False)
             
+            results[seed]['train_loss'] = model.losses
+            results[seed]['train_acc'] = model.accs
+            results[seed]['train_sparse'] = model.sparses
+            results[seed]['train_masks'] = model.masks
+            
+            results[seed]['test_metrics_1'] = test_metrics_1
+            results[seed]['test_metrics_2'] = test_metrics_2
+            
             table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
             table.add_data('Test set Expl. 1', test_metrics_1[0]['test_loss'], test_metrics_1[0]['test_acc'])
             table.add_data('Test set Expl. 2', test_metrics_2[0]['test_loss'], test_metrics_2[0]['test_acc'])
             logger.experiment.log({'Test Sets Table': table})
             logger.experiment.finish()
+            
+        with open(f'results/{group_name}.pl', 'wb') as file:
+            dill.dump(results, file)
+            file.close()
 
 if __name__ == '__main__':
     main()

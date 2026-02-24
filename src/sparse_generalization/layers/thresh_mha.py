@@ -58,7 +58,7 @@ class MultiHeadAttentionThresh(nn.Module):
         attention_repr = self.projection(attention_repr)
         
         if avg_attn_heads:
-            adjacency_per_head = adjacency_per_head.mean(dim=1)
+            adjacency_per_head = adjacency_per_head.sum(dim=1)
         
         return attention_repr, adjacency_per_head
     

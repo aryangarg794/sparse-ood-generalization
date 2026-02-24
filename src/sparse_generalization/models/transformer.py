@@ -77,7 +77,7 @@ class TransformerLit(pl.LightningModule):
         self.agg_pool = agg_pool
         
         if include_sparsity:
-            self.l1_loss = instantiate(sparse_loss)  
+            self.l1_loss = sparse_loss()  
             self.l1_weight = l1_weight
         else:
             self.l1_loss = None
@@ -156,6 +156,7 @@ class TransformerLit(pl.LightningModule):
         
         self.accuracy = BinaryAccuracy()
         self.test_attn_matrices = []
+        self.val_attn_matrices = {0: [], 1: []}
         self.train_attn_matrices = []
         self.test_name = 'placeholder'
         self.automatic_optimization = False
@@ -165,6 +166,21 @@ class TransformerLit(pl.LightningModule):
         self.target_loss = target_loss
         self.step_size = step_size
         self.ema_step = cma
+        
+        self.running_loss = 0.0
+        self.running_sparse = 0.0
+        self.running_acc = 0.0
+        self.losses = []
+        self.accs = []
+        self.sparses = []
+        self.masks = []
+        
+        self.running_loss_test = {0: 0.0, 1: 0.0}
+        self.running_acc_test = {0: 0.0, 1: 0.0}
+        self.masks_test = {0: [], 1: []}
+        self.losses_test = {0: [], 1: []}
+        self.accs_test = {0: [], 1: []}
+        
         
     def _get_loss_acc(self: Self, batch):
         x, y = batch
@@ -233,6 +249,8 @@ class TransformerLit(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True,
             )
+            
+            self.running_sparse += sparse_loss.item()
         else:
             loss = rec_loss  
             
@@ -277,6 +295,9 @@ class TransformerLit(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
         )
+        
+        self.running_loss += loss.item()
+        
         self.log(
             "train_acc", 
             acc, 
@@ -284,6 +305,8 @@ class TransformerLit(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
         )
+        
+        self.running_acc += acc
         
         if self.lagrangian:
             self.log(
@@ -298,22 +321,28 @@ class TransformerLit(pl.LightningModule):
         self.train_attn_matrices.append(attn)
         return loss
     
-    def validation_step(self, batch):
-        loss, acc, _ = self._get_loss_acc(batch)
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        loss, acc, attn = self._get_loss_acc(batch)
+        name = 'id' if dataloader_idx == 0 else 'ood'
         self.log(
-            "val_loss",
+            f"test_loss_{name}",
             loss,
             on_step=False,
             on_epoch=True,
-            prog_bar=True,
+            prog_bar=False,
+            add_dataloader_idx=False
         )
         self.log(
-            "val_acc", 
+            f"test_acc_{name}", 
             acc, 
             on_step=False,
             on_epoch=True,
-            prog_bar=True,
+            prog_bar=False,
+            add_dataloader_idx=False
         )
+        self.val_attn_matrices[dataloader_idx].append(attn.detach().cpu())
+        self.running_loss_test[dataloader_idx] += loss.item()
+        self.running_acc_test[dataloader_idx] += acc.item()
         return loss
     
     def test_step(self, batch):
@@ -341,13 +370,58 @@ class TransformerLit(pl.LightningModule):
         num_attn = self._compute_attn_mean(all_attn)
         
         self.log(
-            "avg_num_edges_train",
+            "num_edges_train",
             num_attn,
             on_step=False,
             on_epoch=True,
+            prog_bar=True
         )
+        
+        self.masks.append(num_attn)
+        
+        self.sparses.append(self.running_sparse / self.num_train_batches)
+        self.losses.append(self.running_loss / self.num_train_batches)
+        self.accs.append(self.running_acc / self.num_train_batches)
+        
+        self.running_loss = 0.0
+        self.running_sparse = 0.0
+        self.running_acc = 0.0
 
-        self.train_attn_matrices.clear()  
+        self.train_attn_matrices.clear()
+        
+        
+    def on_validation_epoch_end(self):
+        all_attn_id = torch.cat(self.val_attn_matrices[0], dim=0) 
+        all_attn_ood = torch.cat(self.val_attn_matrices[1], dim=0) 
+
+        num_attn_id = self._compute_attn_mean(all_attn_id)
+        num_attn_ood = self._compute_attn_mean(all_attn_ood)
+        
+        self.log(
+            f"num_edges_test_id",
+            num_attn_id,
+            on_step=False,
+            on_epoch=True,
+        )
+        self.log(
+            f"num_edges_test_ood",
+            num_attn_ood,
+            on_step=False,
+            on_epoch=True,
+        )
+        
+        self.masks_test[0].append(num_attn_id)
+        self.masks_test[1].append(num_attn_ood)
+
+        for idx in [0, 1]:
+            epoch_loss = self.running_loss_test[idx] / self.num_val_batches
+            epoch_acc = self.running_acc_test[idx] / self.num_val_batches
+            self.losses_test[idx].append(epoch_loss)
+            self.accs_test[idx].append(epoch_acc)
+            
+            self.running_loss_test[idx] = 0.0
+            self.running_acc_test[idx] = 0.0
+            self.val_attn_matrices[idx].clear() 
     
     def on_test_epoch_end(self):
         all_attn = torch.cat(self.test_attn_matrices, dim=0) 

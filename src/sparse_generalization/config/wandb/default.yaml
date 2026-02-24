@@ -1,4 +1,4 @@
 project: sparse-generalization 
 save_dir: wandb_logs
-offline: false
+offline: true
 log_model: false

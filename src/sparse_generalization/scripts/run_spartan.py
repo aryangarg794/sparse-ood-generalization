@@ -72,7 +72,12 @@ def main(cfg: DictConfig):
         logger.experiment.finish()
     else:
         torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        
+        results = {}
         for seed in cfg.seeds:
+            results[seed] = {}
+            
             print(f'\n{'='*60}')
             print(f'Running Seed {seed} for group {group_name}')
             print(f'\n{'='*60}')
@@ -97,7 +102,9 @@ def main(cfg: DictConfig):
             model = model.to(cfg.model.device)
             model.logger = logger
             # print(summary(model, (10, 10, 3), device=cfg.model.device))
-            model.fit(dataloader=train_loader, num_epochs=cfg.trainer.max_epochs)
+            losses, accs, sparses, mask_edges, attn_edges, losses_test, accs_test, attn_test, masks_test = model.fit(
+                dataloader=train_loader, num_epochs=cfg.trainer.max_epochs,
+                testloaders=[test_loader_ind, test_loader_ood])
             
             if cfg.save:
                 torch.save(model.state_dict(), f'checkpoints/{cfg.run_name}_{timestamp}.pt')
@@ -105,17 +112,32 @@ def main(cfg: DictConfig):
             test_metrics_1 = model.test('id', test_loader_ind)
             test_metrics_2 = model.test('ood', test_loader_ood)
             
-            table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
-            table.add_data('Test set ID', test_metrics_1['loss'], test_metrics_1['acc'])
-            table.add_data('Test set OOD', test_metrics_2['loss'], test_metrics_2['acc'])
-            logger.experiment.log({'Test Sets Table': table})
+            # table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
+            # table.add_data('Test set ID', test_metrics_1['loss'], test_metrics_1['acc'])
+            # table.add_data('Test set OOD', test_metrics_2['loss'], test_metrics_2['acc'])
+            # logger.experiment.log({'Test Sets Table': table})
             logger.experiment.finish()
+            
+            results[seed]['train_loss'] = losses
+            results[seed]['train_acc'] = accs
+            results[seed]['train_sparse'] = sparses
+            results[seed]['train_masks'] = mask_edges
+            results[seed]['train_attns'] = attn_edges
+                
+            results[seed]['test_losses'] = losses_test
+            results[seed]['test_accs'] = accs_test
+            results[seed]['test_attns'] = attn_test
+            results[seed]['test_masks'] = masks_test
             
             del model
             del logger
             del train_loader
             torch.cuda.empty_cache() 
             gc.collect()
+            
+        with open(f'results/{group_name}.pl', 'wb') as file:
+            dill.dump(results, file)
+            file.close()
 
 if __name__ == '__main__':
     main()
