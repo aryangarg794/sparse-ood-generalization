@@ -6,6 +6,7 @@ import random
 import torch
 import warnings
 import wandb
+import gc
 
 from datetime import datetime
 from hydra.utils import instantiate, to_absolute_path
@@ -38,8 +39,17 @@ def main(cfg: DictConfig):
         data = dill.load(file)
     group_name = cfg.run_name + "_" + timestamp
     dataset = BasicDataset(data['X_train'], data['Y_train'])
-    test_dataset_ind = BasicDataset(data['X_test_ind'], data['Y_test_ind'])
-    test_dataset_ood = BasicDataset(data['X_test_ood'], data['Y_test_ood'])
+    val_dataset_id = BasicDataset(data['X_val_id'], data['Y_val_id'])
+    test_dataset_id = BasicDataset(data['X_test_id'], data['Y_test_id'])
+    val_dataset_col = BasicDataset(data['X_val_col'], data['Y_val_col'])
+    test_dataset_col = BasicDataset(data['X_test_col'], data['Y_test_col'])
+    val_dataset_pair = BasicDataset(data['X_val_pair'], data['Y_val_pair'])
+    test_dataset_pair = BasicDataset(data['X_test_pair'], data['Y_test_pair'])
+    val_dataset_dist = BasicDataset(data['X_val_dist'], data['Y_val_dist'])
+    test_dataset_dist = BasicDataset(data['X_test_dist'], data['Y_test_dist'])
+    val_dataset_comb = BasicDataset(data['X_val_comb'], data['Y_val_comb'])
+    test_dataset_comb = BasicDataset(data['X_test_comb'], data['Y_test_comb'])
+    
     
     print(OmegaConf.to_yaml(cfg, resolve=True))
 
@@ -52,27 +62,38 @@ def main(cfg: DictConfig):
         logger = WandbLogger(**wandb_dict, name=name, config=config_dict, group=group_name) 
         
         train_loader = DataLoader(dataset, cfg.data.batch_size, shuffle=True)
-        test_loader_ind = DataLoader(test_dataset_ind, cfg.data.batch_size, shuffle=True)
-        test_loader_ood = DataLoader(test_dataset_ood, cfg.data.batch_size, shuffle=True)
+        val_loaders = []
+        for val_dataset in [val_dataset_id, val_dataset_col, val_dataset_pair, val_dataset_dist, val_dataset_comb]:
+            val_loaders.append(DataLoader(val_dataset, cfg.data.batch_size))
+            
+        test_loaders = []
+        for test_dataset in [test_dataset_id, test_dataset_col, test_dataset_pair, test_dataset_dist, test_dataset_comb]:
+            test_loaders.append(DataLoader(test_dataset, cfg.data.batch_size))
         
         model = instantiate(cfg.model)
         print(f"{'='*60}")
         print(model)
         trainer = Trainer(**cfg.trainer, logger=logger)
-        trainer.fit(model, train_dataloaders=train_loader)
+        trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loaders)
         
         if cfg.save:
             torch.save(model.model.state_dict(), f'checkpoints/{cfg.run_name}_{timestamp}.pt')
         
         model.test_name = 'In-Distribution'
-        test_metrics_1 = trainer.test(model, test_loader_ind, verbose=False)
-        model.test_name = 'Out-of Distribution'
-        test_metrics_2 = trainer.test(model, test_loader_ood, verbose=False)
+        test_metrics_id = trainer.test(model, test_loaders[0], verbose=False)
+        model.test_name = 'OOD: Colors'
+        test_metrics_col = trainer.test(model, test_loaders[1], verbose=False)
+        model.test_name = 'OOD: Num pairs'
+        test_metrics_pair = trainer.test(model, test_loaders[2], verbose=False)
+        model.test_name = 'OOD: Distractors'
+        test_metrics_dist = trainer.test(model, test_loaders[3], verbose=False)
+        model.test_name = 'OOD: Combined'
+        test_metrics_comb = trainer.test(model, test_loaders[4], verbose=False)
         
-        table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
-        table.add_data('Test set ID', test_metrics_1[0]['test_loss'], test_metrics_1[0]['test_acc'])
-        table.add_data('Test set OOD', test_metrics_2[0]['test_loss'], test_metrics_2[0]['test_acc'])
-        logger.experiment.log({'Test Sets Table': table})
+        # table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
+        # table.add_data('Test set ID', test_metrics_1[0]['test_loss'], test_metrics_1[0]['test_acc'])
+        # table.add_data('Test set OOD', test_metrics_2[0]['test_loss'], test_metrics_2[0]['test_acc'])
+        # logger.experiment.log({'Test Sets Table': table})
         logger.experiment.finish()
     else:
         torch.backends.cudnn.deterministic = True
@@ -99,21 +120,32 @@ def main(cfg: DictConfig):
             generator = torch.Generator().manual_seed(seed)
         
             train_loader = DataLoader(dataset, cfg.data.batch_size, shuffle=True, generator=generator)
-            test_loader_ind = DataLoader(test_dataset_ind, cfg.data.batch_size, shuffle=True)
-            test_loader_ood = DataLoader(test_dataset_ood, cfg.data.batch_size, shuffle=True)
+            val_loaders = []
+            for val_dataset in [val_dataset_id, val_dataset_col, val_dataset_pair, val_dataset_dist, val_dataset_comb]:
+                val_loaders.append(DataLoader(val_dataset, cfg.data.batch_size))
+                
+            test_loaders = []
+            for test_dataset in [test_dataset_id, test_dataset_col, test_dataset_pair, test_dataset_dist, test_dataset_comb]:
+                test_loaders.append(DataLoader(test_dataset, cfg.data.batch_size))
             
             model = instantiate(cfg.model)
             trainer = Trainer(**cfg.trainer, logger=logger)
             model.num_train_batches = len(train_loader)
-            model.num_val_batches = len(test_loader_ind)
-            trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=[test_loader_ind, test_loader_ood])
+            model.num_val_batches = len(val_loaders[0])
+            trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loaders)
             if cfg.save:
                 torch.save(model.model.state_dict(), f'checkpoints/{cfg.run_name}_{timestamp}.pt')
         
-            # model.test_name = 'id'
-            # test_metrics_1 = trainer.test(model, test_loader_ind, verbose=False)
-            # model.test_name = 'ood'
-            # test_metrics_2 = trainer.test(model, test_loader_ood, verbose=False)
+            model.test_name = 'id'
+            test_metrics_id = trainer.test(model, test_loaders[0], verbose=False)
+            model.test_name = 'col'
+            test_metrics_col = trainer.test(model, test_loaders[1], verbose=False)
+            model.test_name = 'pair'
+            test_metrics_pair = trainer.test(model, test_loaders[2], verbose=False)
+            model.test_name = 'dist'
+            test_metrics_dist = trainer.test(model, test_loaders[3], verbose=False)
+            model.test_name = 'comb'
+            test_metrics_comb = trainer.test(model, test_loaders[4], verbose=False)
             
             results[seed]['train_loss'] = model.losses
             results[seed]['train_acc'] = model.accs
@@ -123,8 +155,14 @@ def main(cfg: DictConfig):
                 results[seed]['train_sparse'] = model.sparses
                 results[seed]['test_masks'] = model.masks_test
                 
-            results[seed]['test_losses'] = model.losses_test
-            results[seed]['test_accs'] = model.accs_test
+            results[seed]['val_losses'] = model.losses_test
+            results[seed]['val_accs'] = model.accs_test
+            
+            results[seed]['test_id'] = test_metrics_id
+            results[seed]['test_col'] = test_metrics_col
+            results[seed]['test_pair'] = test_metrics_pair
+            results[seed]['test_dist'] = test_metrics_dist
+            results[seed]['test_comb'] = test_metrics_comb
             
             # table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
             # table.add_data('Test set ID', test_metrics_1[0]['test_loss_id'], test_metrics_1[0]['test_acc_id'])
@@ -132,7 +170,11 @@ def main(cfg: DictConfig):
             # logger.experiment.log({'Test Sets Table': table})
             logger.experiment.finish()
             
-            torch.cuda.empty_cache()
+            del model
+            del logger
+            del train_loader
+            torch.cuda.empty_cache() 
+            gc.collect()
 
         with open(f'results/{group_name}.pl', 'wb') as file:
             dill.dump(results, file)

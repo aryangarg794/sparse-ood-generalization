@@ -44,6 +44,8 @@ class SPARTAN(nn.Module):
         act: nn.Module = nn.ReLU, 
         logger: WandbLogger = None, 
         device: str = 'cuda', 
+        beta1: float = 0.9, 
+        beta2: float = 0.999, 
         threshold: float = 0.01, 
         separate_mask: bool = False, 
         *args, 
@@ -102,7 +104,7 @@ class SPARTAN(nn.Module):
             
         self.ffn = nn.Linear(self.embed_size, out_dim)
         
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr, betas=(beta1, beta2))
         self.accuracy = BinaryAccuracy()
         self.loss = nn.BCEWithLogitsLoss()
         self.global_step = 0
@@ -158,10 +160,10 @@ class SPARTAN(nn.Module):
         mask_edges = []
         sparses = []
         
-        attn_test = {'id': [], 'ood': []}
-        masks_test = {'id': [], 'ood': []}
-        losses_test = {'id': [], 'ood': []}
-        accs_test = {'id': [], 'ood': []}
+        attn_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
+        masks_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
+        losses_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
+        accs_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
         
         for step in (pbar := tqdm(range(1, num_epochs+1))): 
             self.train()
@@ -207,9 +209,9 @@ class SPARTAN(nn.Module):
                 
                 if self.lagrangian:
                     self.lambd = torch.exp(self.step_size*self.ema_loss) * self.lambd
-                    self.lambd = torch.clamp(self.lambd, min=1e1, max=1e15)
+                    self.lambd = torch.clamp(self.lambd, min=5e3, max=1e15)
                 
-                epoch_loss += loss.item()
+                epoch_loss += rec_loss.item()
                 with torch.no_grad():
                     acc = self.accuracy(out, y)
                     epoch_acc += acc.item()
@@ -282,8 +284,8 @@ class SPARTAN(nn.Module):
             
             pbar.set_postfix(postfix)
             
-            for loader, name in zip(testloaders, ['id', 'ood']):
-                test_metrics = self.test(name, loader)
+            for loader, name in zip(testloaders, ['id', 'col', 'pair', 'dist', 'comb']):
+                test_metrics = self.test(name, loader, folder='val')
                 masks_test[name].append(test_metrics['mask'])
                 attn_test[name].append(test_metrics['attn'])
                 losses_test[name].append(test_metrics['loss'])
@@ -292,7 +294,7 @@ class SPARTAN(nn.Module):
 
         return losses, accs, sparses, mask_edges, attn_edges, losses_test, accs_test, attn_test, masks_test
             
-    def test(self, name: str, dataloader: DataLoader):
+    def test(self, name: str, dataloader: DataLoader, folder: str = 'test'):
         self.eval()
         attn_running = 0.0
         mask_running = 0.0
@@ -318,22 +320,22 @@ class SPARTAN(nn.Module):
         mask_running /= len(dataloader)
         
         self.logger.log_metrics(
-            {f'test/loss_epoch_{name}': epoch_loss},
+            {f'{folder}/loss_epoch_{name}': epoch_loss},
             step=self.global_step
         )
         
         self.logger.log_metrics(
-            {f'test/acc_epoch_{name}': epoch_acc},
+            {f'{folder}/acc_epoch_{name}': epoch_acc},
             step=self.global_step
         )
         
         self.logger.log_metrics(
-            {f'test/attn_edges_{name}': attn_running},
+            {f'{folder}/attn_edges_{name}': attn_running},
             step=self.global_step
         )
         
         self.logger.log_metrics(
-            {f'test/mask_edges_{name}': mask_running},
+            {f'{folder}/mask_edges_{name}': mask_running},
             step=self.global_step
         )
         

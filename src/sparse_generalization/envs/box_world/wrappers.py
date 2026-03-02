@@ -11,6 +11,7 @@ def make_env(
     num_paths: int = 2, 
     include_walls: bool = False,
     num_distractors: int = 0,  
+    ood_colors: bool = False, 
     render_mode: str = 'rgb_array',
     seed=None
 ):
@@ -21,6 +22,7 @@ def make_env(
                    num_pairs=num_pairs,
                    include_walls=include_walls,
                    num_paths=num_paths,
-                   num_distractors=num_distractors
+                   num_distractors=num_distractors,
+                   ood_colors=ood_colors
                    )
     return ImgObsWrapper(FullyObsWrapper(env))

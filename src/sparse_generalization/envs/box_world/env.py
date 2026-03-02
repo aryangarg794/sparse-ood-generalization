@@ -6,15 +6,13 @@ import networkx as nx
 import random
 
 from copy import deepcopy
-from collections import defaultdict
-from itertools import product
 from PIL import Image
 from minigrid.minigrid_env import MiniGridEnv 
 from minigrid.core.mission import MissionSpace
 from minigrid.core.grid import Grid
 
 from sparse_generalization.envs.box_world.objects import Wall, Goal, KeyBox, LockBox, Ball, Box
-from sparse_generalization.envs.box_world.constants import COLOR_NAMES
+from sparse_generalization.envs.box_world.constants import COLOR_NAMES, OOD_COLOR_NAMES
 
 # somewhat inspired from https://github.com/aryangarg794/rnd_dqn_four_room/blob/master/four_room/env.py
 class BoxWorldEnv(MiniGridEnv):
@@ -46,7 +44,8 @@ class BoxWorldEnv(MiniGridEnv):
         include_walls=False,
         unsolvable_prob=0.0,
         edge_remove_prob=0.3,
-        max_tries=50, 
+        max_tries=10, 
+        ood_colors=False, 
         render_mode='human',
     ):
         self._agent_pos_list = agent_pos
@@ -70,6 +69,7 @@ class BoxWorldEnv(MiniGridEnv):
         self._include_walls = include_walls
         self.goal_pos = None
         self.randomize_num_pairs = True if self.num_pairs == -1 else False
+        self.ood_colors = ood_colors
         
         if not self._randomize:
             self._list_size = len(self._agent_pos_list)
@@ -115,7 +115,7 @@ class BoxWorldEnv(MiniGridEnv):
             while not free:
                 self.goal_pos = tuple(self.np_random.choice(self.valid_pos_gen(margin=1)))
                 next_goal = self._sanitize((self.goal_pos[0]+1, self.goal_pos[1]))
-                if self.grid.get(*next_goal) is None:
+                if self.grid.get(*next_goal) is None and not np.array_equal(next_goal, self.agent_pos):
                     free = True
                 
             self.grid.set(*self.goal_pos, Goal())
@@ -160,7 +160,7 @@ class BoxWorldEnv(MiniGridEnv):
                             
 
         
-            if self.num_distractors:
+            if self.num_distractors > 0:
                 self.add_distractors(colors, self.num_distractors)
             
         else: #TODO: from given contexts
@@ -179,11 +179,12 @@ class BoxWorldEnv(MiniGridEnv):
         
     def _gen_grid_once(self):
         last_color = None
-        colors = deepcopy(COLOR_NAMES)
+        colors = deepcopy(COLOR_NAMES) if not self.ood_colors else deepcopy(OOD_COLOR_NAMES)
         for path in range(self.num_paths):
             samples = self.num_pairs
             for color in ['green', 'grey', 'red']: # base objs
-                colors.remove(color)
+                if color in colors:
+                    colors.remove(color)
             pairs, colors_path = self._sample_key_pairs(samples, colors)
                 
             for color in colors_path: # no clash with colors
@@ -203,8 +204,8 @@ class BoxWorldEnv(MiniGridEnv):
             for i, key_lock in enumerate(pairs[1:]):
                 idx = i+1
                 lock, key = key_lock
-                self.grid.set(*key, KeyBox(colors_path[idx], index=idx, path=0))
-                self.grid.set(*lock, LockBox(colors_path[idx-1], index=idx, path=0))
+                self.grid.set(*key, KeyBox(colors_path[idx], index=idx, path=path))
+                self.grid.set(*lock, LockBox(colors_path[idx-1], index=idx, path=path))
                 edges.append((i+multiplier, idx+multiplier))
                 attn_edges.append((lock, key))
                 
@@ -260,7 +261,7 @@ class BoxWorldEnv(MiniGridEnv):
                     self._current_key = cur_cell.index
                     self._current_path = cur_cell.path
                     
-                    next_lock, _  = self.pairs[cur_cell.path][cur_cell.index+1] # we can open the next lock
+                    next_lock, _  = self.paths[cur_cell.path][cur_cell.index+1] # we can open the next lock
                     lock_cell = self.grid.get(*next_lock)
                     assert lock_cell.is_lock(), 'Not a lock'
                     lock_cell.unlockable = True
@@ -286,7 +287,7 @@ class BoxWorldEnv(MiniGridEnv):
                     if cur_cell.is_goal_lock():
                         self.grid.set(*self.agent_pos, None)
                     else:
-                        next_lock, _ = self.pairs[cur_cell.path][cur_cell.index+1]
+                        next_lock, _ = self.paths[cur_cell.path][cur_cell.index+1]
                         lock_cell = self.grid.get(*next_lock)
                         assert lock_cell.is_lock() or lock_cell.is_goal(), 'Not a lock or goal'
                         lock_cell.unlockable = True
@@ -341,8 +342,10 @@ class BoxWorldEnv(MiniGridEnv):
             first_key = tuple(self.np_random.choice(valid_pos))
             right_state = self._sanitize((first_key[0]+1, first_key[1]))
             left_state = self._sanitize((first_key[0]-1, first_key[1]))
-            if self.grid.get(*right_state) is None and self.grid.get(*left_state) is None:
+            if (self.grid.get(*right_state) is None and self.grid.get(*left_state) is None):
                 free = True
+                
+        
         pairs.append(first_key)
         valid_pos.remove(first_key)
         # remove states on left and right of first key
@@ -374,7 +377,7 @@ class BoxWorldEnv(MiniGridEnv):
                 obj = self.grid.get(x, y)
                 if obj is None:  
                     if (margin <= x <= self.width - margin-1 and 
-                        margin <= y <= self.height - margin-1) :
+                        margin <= y <= self.height - margin-1):
                         valid_pos_gen.append((x, y))
 
         sanitized_pos = self._sanitize(self.agent_pos)
@@ -487,7 +490,7 @@ class BoxWorldEnv(MiniGridEnv):
         max_distractors: int = 5,
     ):
         num_dist = self.np_random.integers(1, max_distractors+1)
-        possible_objs = [KeyBox, LockBox, Ball, Box]
+        possible_objs = [Ball, Box]
         for i in range(num_dist):
             obj = self.np_random.choice(possible_objs)
             valid_pos = self.valid_pos_gen()

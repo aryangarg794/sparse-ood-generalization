@@ -41,7 +41,6 @@ class MHABlock(nn.Module):
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
         self.mlp = BasicMLP(input_dim=embed_size, out_dim=embed_size, hidden_dims=hidden_dims, act=act, dropout=dropout) # (b, 3) 
-        self.last = nn.Linear(embed_size, out_dim)
     
     def forward(self: Self, x: Tensor):
         if self.use_grid:

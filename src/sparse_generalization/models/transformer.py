@@ -155,8 +155,16 @@ class TransformerLit(pl.LightningModule):
             self.out = nn.Linear(self.embed_size, out_dim)
         
         self.accuracy = BinaryAccuracy()
+
+        self.val_to_name = {
+            0: 'id', 
+            1: 'col', 
+            2: 'pair', 
+            3: 'dist', 
+            4: 'comb'
+        }
         self.test_attn_matrices = []
-        self.val_attn_matrices = {0: [], 1: []}
+        self.val_attn_matrices = {0: [], 1: [], 2: [], 3: [], 4: []}
         self.train_attn_matrices = []
         self.test_name = 'placeholder'
         self.automatic_optimization = False
@@ -175,11 +183,11 @@ class TransformerLit(pl.LightningModule):
         self.sparses = []
         self.masks = []
         
-        self.running_loss_test = {0: 0.0, 1: 0.0}
-        self.running_acc_test = {0: 0.0, 1: 0.0}
-        self.masks_test = {0: [], 1: []}
-        self.losses_test = {0: [], 1: []}
-        self.accs_test = {0: [], 1: []}
+        self.running_loss_test = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+        self.running_acc_test = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+        self.masks_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
+        self.losses_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
+        self.accs_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
         
         
     def _get_loss_acc(self: Self, batch):
@@ -217,7 +225,7 @@ class TransformerLit(pl.LightningModule):
         if self.noisy_bern: #NOTE: doesnt work
             bern_var = self.model.mha.noise_scheduler(self.global_step)
             self.log(
-                "bern_noise", 
+                "train/bern_noise", 
                 bern_var, 
                 on_step=False,
                 on_epoch=True,
@@ -243,7 +251,7 @@ class TransformerLit(pl.LightningModule):
                 loss = rec_loss + sparse_loss
                 
             self.log(
-                "sparse_loss", 
+                "train/sparse_loss", 
                 sparse_loss, 
                 on_step=False,
                 on_epoch=True,
@@ -276,7 +284,7 @@ class TransformerLit(pl.LightningModule):
                     param.grad.data.add_(noise)
             
             self.log(
-                "noise", 
+                "train/noise", 
                 var, 
                 on_step=False,
                 on_epoch=True,
@@ -289,7 +297,7 @@ class TransformerLit(pl.LightningModule):
             self.lambd = torch.clamp(self.lambd, min=1e2, max=1e15)
             
         self.log(
-            "train_loss", 
+            "train/loss", 
             loss, 
             on_step=False,
             on_epoch=True,
@@ -299,18 +307,18 @@ class TransformerLit(pl.LightningModule):
         self.running_loss += loss.item()
         
         self.log(
-            "train_acc", 
+            "train/acc", 
             acc, 
             on_step=False,
             on_epoch=True,
             prog_bar=True,
         )
         
-        self.running_acc += acc
+        self.running_acc += acc.item()
         
         if self.lagrangian:
             self.log(
-                "log_lambda", 
+                "train/log_lambda", 
                 self.lambd.log().item(), 
                 on_step=False,
                 on_epoch=True,
@@ -323,9 +331,9 @@ class TransformerLit(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         loss, acc, attn = self._get_loss_acc(batch)
-        name = 'id' if dataloader_idx == 0 else 'ood'
+        name = self.val_to_name[dataloader_idx]
         self.log(
-            f"test_loss_{name}",
+            f"val/loss_{name}",
             loss,
             on_step=False,
             on_epoch=True,
@@ -333,13 +341,15 @@ class TransformerLit(pl.LightningModule):
             add_dataloader_idx=False
         )
         self.log(
-            f"test_acc_{name}", 
+            f"val/acc_{name}", 
             acc, 
             on_step=False,
             on_epoch=True,
             prog_bar=False,
             add_dataloader_idx=False
         )
+        
+        
         self.val_attn_matrices[dataloader_idx].append(attn.detach().cpu())
         self.running_loss_test[dataloader_idx] += loss.item()
         self.running_acc_test[dataloader_idx] += acc.item()
@@ -348,14 +358,14 @@ class TransformerLit(pl.LightningModule):
     def test_step(self, batch):
         loss, acc, attn = self._get_loss_acc(batch)
         self.log(
-            f"test_loss_{self.test_name}",
+            f"test/loss_{self.test_name}",
             loss,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
         )
         self.log(
-            f"test_acc_{self.test_name}", 
+            f"test/acc_{self.test_name}", 
             acc, 
             on_step=False,
             on_epoch=True,
@@ -370,7 +380,7 @@ class TransformerLit(pl.LightningModule):
         num_attn = self._compute_attn_mean(all_attn)
         
         self.log(
-            "num_edges_train",
+            "train/num_edges",
             num_attn,
             on_step=False,
             on_epoch=True,
@@ -391,36 +401,25 @@ class TransformerLit(pl.LightningModule):
         
         
     def on_validation_epoch_end(self):
-        all_attn_id = torch.cat(self.val_attn_matrices[0], dim=0) 
-        all_attn_ood = torch.cat(self.val_attn_matrices[1], dim=0) 
-
-        num_attn_id = self._compute_attn_mean(all_attn_id)
-        num_attn_ood = self._compute_attn_mean(all_attn_ood)
-        
-        self.log(
-            f"num_edges_test_id",
-            num_attn_id,
-            on_step=False,
-            on_epoch=True,
-        )
-        self.log(
-            f"num_edges_test_ood",
-            num_attn_ood,
-            on_step=False,
-            on_epoch=True,
-        )
-        
-        self.masks_test[0].append(num_attn_id)
-        self.masks_test[1].append(num_attn_ood)
-
-        for idx in [0, 1]:
+        for idx, name in self.val_to_name.items():
+            all_attn_id = torch.cat(self.val_attn_matrices[idx], dim=0) 
+            num_attn_id = self._compute_attn_mean(all_attn_id)
+            
+            self.log(
+                f"val/num_edges_{name}",
+                num_attn_id,
+                on_step=False,
+                on_epoch=True,
+            )
+            
             epoch_loss = self.running_loss_test[idx] / self.num_val_batches
             epoch_acc = self.running_acc_test[idx] / self.num_val_batches
-            self.losses_test[idx].append(epoch_loss)
-            self.accs_test[idx].append(epoch_acc)
+            self.losses_test[name].append(epoch_loss)
+            self.accs_test[name].append(epoch_acc)
             
             self.running_loss_test[idx] = 0.0
             self.running_acc_test[idx] = 0.0
+            self.masks_test[name].append(num_attn_id)
             self.val_attn_matrices[idx].clear() 
     
     def on_test_epoch_end(self):
@@ -437,7 +436,7 @@ class TransformerLit(pl.LightningModule):
         
         num_attn = self._compute_attn_mean(all_attn)
         self.log(
-            "avg_num_edges_test",
+            f"test/num_edges_{self.test_name}",
             num_attn,
             on_step=False,
             on_epoch=True,
