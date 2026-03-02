@@ -1319,12 +1319,6 @@ wheels = [
 ]
 
 [[package]]
-name = "petname"
-version = "2.6"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8e/a5/348c90b3fb09d7bd76f7dacf1b92e251d75bfbe715006cb9b84eb23be1b1/petname-2.6.tar.gz", hash = "sha256:981c31ef772356a373640d1bb7c67c102e0159eda14578c67a1c99d5b34c9e4c", size = 8357, upload-time = "2019-06-13T20:35:21.021Z" }
-
-[[package]]
 name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1870,7 +1864,6 @@ dependencies = [
     { name = "networkx" },
     { name = "numpy" },
     { name = "opencv-python" },
-    { name = "petname" },
     { name = "plotly" },
     { name = "seaborn" },
     { name = "torch", version = "2.9.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' and sys_platform != 'win32'" },
@@ -1895,7 +1888,6 @@ requires-dist = [
     { name = "networkx", specifier = ">=3.5" },
     { name = "numpy", specifier = ">=2.3.5" },
     { name = "opencv-python", specifier = ">=4.11.0.86" },
-    { name = "petname", specifier = ">=2.6" },
     { name = "plotly", specifier = ">=6.5.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32'", specifier = ">=2.9.1" },
