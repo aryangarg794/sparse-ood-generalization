@@ -82,11 +82,18 @@ class BasicMLPLit(pl.LightningModule):
         self.accs = []
         self.running_loss = 0.0
         self.running_acc = 0.0
-        self.running_loss_test = {0: 0.0, 1: 0.0}
-        self.running_acc_test = {0: 0.0, 1: 0.0}
+        self.running_loss_test = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+        self.running_acc_test = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
         
-        self.losses_test = {0: [], 1: []}
-        self.accs_test = {0: [], 1: []}
+        self.losses_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
+        self.accs_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
+        self.val_to_name = {
+            0: 'id', 
+            1: 'col', 
+            2: 'pair', 
+            3: 'dist', 
+            4: 'comb'
+        }
         
     def _get_loss_acc(self: Self, batch):
         x, y = batch
@@ -98,14 +105,14 @@ class BasicMLPLit(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss, acc = self._get_loss_acc(batch)
         self.log(
-            "train_loss", 
+            "train/loss", 
             loss, 
             on_step=True,
             on_epoch=True,
             prog_bar=True,
         )
         self.log(
-            "train_acc", 
+            "train/acc", 
             acc, 
             on_step=False,
             on_epoch=True,
@@ -118,9 +125,9 @@ class BasicMLPLit(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         loss, acc = self._get_loss_acc(batch)
-        name = 'id' if dataloader_idx == 0 else 'ood'
+        name = self.val_to_name[dataloader_idx]
         self.log(
-            f"test_loss_{name}",
+            f"val/loss_{name}",
             loss,
             on_step=False,
             on_epoch=True,
@@ -128,7 +135,7 @@ class BasicMLPLit(pl.LightningModule):
             add_dataloader_idx=False
         )
         self.log(
-            f"test_acc_{name}", 
+            f"val/acc_{name}", 
             acc, 
             on_step=False,
             on_epoch=True,
@@ -144,14 +151,14 @@ class BasicMLPLit(pl.LightningModule):
     def test_step(self, batch):
         loss, acc = self._get_loss_acc(batch)
         self.log(
-            f"test_loss_{self.test_name}",
+            f"test/loss_{self.test_name}",
             loss,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
         )
         self.log(
-            f"test_acc_{self.test_name}", 
+            f"test/acc_{self.test_name}", 
             acc, 
             on_step=False,
             on_epoch=True,
@@ -170,16 +177,15 @@ class BasicMLPLit(pl.LightningModule):
         self.running_acc = 0.0
         
     def on_validation_epoch_end(self):
-        for idx in [0, 1]:
+        for idx, name in self.val_to_name.items():
             epoch_loss = self.running_loss_test[idx] / self.num_val_batches
             epoch_acc = self.running_acc_test[idx] / self.num_val_batches
-            self.losses_test[idx].append(epoch_loss)
-            self.accs_test[idx].append(epoch_acc)
+            self.losses_test[name].append(epoch_loss)
+            self.accs_test[name].append(epoch_acc)
             
             self.running_loss_test[idx] = 0.0
             self.running_acc_test[idx] = 0.0
         
-    
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=self.wd)
