@@ -1,4 +1,4 @@
 data_dir: data/box_world
-data_file: balanced_ood_2000.pl
+data_file: boxworld_v2_500_pairs2.pl
 
-batch_size: 128
+batch_size: 16

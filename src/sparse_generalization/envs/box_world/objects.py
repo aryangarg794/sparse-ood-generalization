@@ -131,6 +131,13 @@ class Goal(WorldObj):
         else:
             fill_coords(img, point_in_rect(0.12, 0.88, 0.12, 0.88), COLORS[self.color])
             fill_coords(img, point_in_rect(0.18, 0.82, 0.18, 0.82), (0, 0, 0))
+            
+        diamond_color = (255, 255, 255)
+        
+        fill_coords(img, point_in_rect(0.35, 0.65, 0.30, 0.45), diamond_color)
+        fill_coords(img, point_in_rect(0.40, 0.60, 0.45, 0.55), diamond_color)
+        fill_coords(img, point_in_rect(0.45, 0.55, 0.55, 0.65), diamond_color)
+        fill_coords(img, point_in_rect(0.48, 0.52, 0.65, 0.75), diamond_color)
 
 
 class Floor(WorldObj):

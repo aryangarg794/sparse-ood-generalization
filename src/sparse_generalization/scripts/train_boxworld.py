@@ -64,11 +64,11 @@ def main(cfg: DictConfig):
         train_loader = DataLoader(dataset, cfg.data.batch_size, shuffle=True)
         val_loaders = []
         for val_dataset in [val_dataset_id, val_dataset_col, val_dataset_pair, val_dataset_dist, val_dataset_comb]:
-            val_loaders.append(DataLoader(val_dataset, cfg.data.batch_size))
+            val_loaders.append(DataLoader(val_dataset, 256))
             
         test_loaders = []
         for test_dataset in [test_dataset_id, test_dataset_col, test_dataset_pair, test_dataset_dist, test_dataset_comb]:
-            test_loaders.append(DataLoader(test_dataset, cfg.data.batch_size))
+            test_loaders.append(DataLoader(test_dataset, 512))
         
         model = instantiate(cfg.model)
         print(f"{'='*60}")
@@ -122,11 +122,11 @@ def main(cfg: DictConfig):
             train_loader = DataLoader(dataset, cfg.data.batch_size, shuffle=True, generator=generator)
             val_loaders = []
             for val_dataset in [val_dataset_id, val_dataset_col, val_dataset_pair, val_dataset_dist, val_dataset_comb]:
-                val_loaders.append(DataLoader(val_dataset, cfg.data.batch_size))
+                val_loaders.append(DataLoader(val_dataset, 256))
                 
             test_loaders = []
             for test_dataset in [test_dataset_id, test_dataset_col, test_dataset_pair, test_dataset_dist, test_dataset_comb]:
-                test_loaders.append(DataLoader(test_dataset, cfg.data.batch_size))
+                test_loaders.append(DataLoader(test_dataset, 512))
             
             model = instantiate(cfg.model)
             trainer = Trainer(**cfg.trainer, logger=logger)

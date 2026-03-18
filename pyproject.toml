@@ -33,7 +33,8 @@ train-toy = "sparse_generalization.scripts.train_toy:main"
 box-world = "sparse_generalization.scripts.train_boxworld:main"
 oracle = "sparse_generalization.scripts.run_oracle:main"
 spartan = "sparse_generalization.scripts.run_spartan:main"
-generate-boxworld = "sparse_generalization.scripts.generate_boxworld_dataset:generate_dataset"
+generate-box = "sparse_generalization.scripts.generate_boxworld_dataset:generate_dataset"
+generate-box-v2 = "sparse_generalization.scripts.gen_box_v2:generate_dataset"
 
 [build-system]
 requires = ["uv_build>=0.9.3,<0.10.0"]
