@@ -33,23 +33,51 @@ def main(cfg: DictConfig):
     box world example. 
     """
     timestamp = datetime.now().strftime("%d_%b_%Y__%Hh%Mm")
-    file_names = {
-        
-    }
-    data_path = cfg.data.data_dir
-    X_train = torch.tensor(np.load(to_absolute_path(data_path + '/grid_tensors_train.npy')))
-    Y_train = torch.tensor(np.load(to_absolute_path(data_path + '/grid_labels_train.npy')))
-    X_test_ID = torch.tensor(np.load(to_absolute_path(data_path + '/grid_tensors_train.npy')))
-    Y_test_ID = torch.tensor(np.load(to_absolute_path(data_path + '/grid_labels_train.npy')))
-    X_test_A = torch.tensor(np.load(to_absolute_path(data_path + '/grid_tensors_train.npy')))
-    Y_test_A = torch.tensor(np.load(to_absolute_path(data_path + '/grid_labels_train.npy')))
-    X_test_B = torch.tensor(np.load(to_absolute_path(data_path + '/grid_tensors_train.npy')))
-    Y_test_B = torch.tensor(np.load(to_absolute_path(data_path + '/grid_labels_train.npy')))
+    data_path = os.path.join(cfg.data.data_dir, f"shapes_train_{cfg.data.size}.pl")
+    data_path = to_absolute_path(data_path)
+
+    with open(data_path, 'rb') as file:
+        train_data = dill.load(file)
+        file.close()
+
+    test_id_path = os.path.join(cfg.data.data_dir, f"shapes_test.pl")
+    with open(test_id_path, 'rb') as file:
+        test_id = dill.load(file)
+        file.close()
+    
+    val_id_path = os.path.join(cfg.data.data_dir, f"shapes_val.pl")
+    with open(val_id_path, 'rb') as file:
+        val_id = dill.load(file)
+        file.close()
+
+    test_a_path = os.path.join(cfg.data.data_dir, f"shapes_test_a.pl")
+    with open(test_a_path, 'rb') as file:
+        test_a = dill.load(file)
+        file.close()
+
+    test_b_path = os.path.join(cfg.data.data_dir, f"shapes_test_b.pl")
+    with open(test_b_path, 'rb') as file:
+        test_b = dill.load(file)
+        file.close()
+
+    val_a_path = os.path.join(cfg.data.data_dir, f"shapes_val_a.pl")
+    with open(val_a_path, 'rb') as file:
+        val_a = dill.load(file)
+        file.close()
+
+    val_b_path = os.path.join(cfg.data.data_dir, f"shapes_val_b.pl")
+    with open(val_b_path, 'rb') as file:
+        val_b = dill.load(file)
+        file.close()
+
     group_name = cfg.run_name + "_" + timestamp
-    dataset = BasicDataset(X_train, Y_train)
-    test_dataset_id = BasicDataset(X_test_ID, Y_test_ID)
-    test_dataset_a = BasicDataset(X_test_A, Y_test_A)
-    test_dataset_b = BasicDataset(X_test_B, Y_test_B)
+    dataset = BasicDataset(train_data['X_train'], train_data['Y_train'])
+    val_dataset_id = BasicDataset(val_id['X_train'], val_id['Y_train'])
+    val_dataset_a = BasicDataset(val_a['X_train'], val_a['Y_train'])
+    val_dataset_b = BasicDataset(val_b['X_train'], val_b['Y_train'])
+    test_dataset_id = BasicDataset(test_id['X_train'], test_id['Y_train'])
+    test_dataset_a = BasicDataset(test_a['X_test_a'], test_a['Y_test_a'])
+    test_dataset_b = BasicDataset(test_b['X_test_b'], test_b['Y_test_b'])
     
     print(OmegaConf.to_yaml(cfg, resolve=True))
 

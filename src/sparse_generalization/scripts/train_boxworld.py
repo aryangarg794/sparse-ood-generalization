@@ -33,22 +33,76 @@ def main(cfg: DictConfig):
     box world example. 
     """
     timestamp = datetime.now().strftime("%d_%b_%Y__%Hh%Mm")
-    data_path = os.path.join(cfg.data.data_dir, cfg.data.data_file)
+    data_path = os.path.join(cfg.data.data_dir, f"boxworld_v2_train_{cfg.data.size}_pairs{cfg.data.num_pairs}.pl")
     data_path = to_absolute_path(data_path)
+    
     with open(data_path, 'rb') as file:
-        data = dill.load(file)
+        train_data = dill.load(file)
+        file.close()
+
     group_name = cfg.run_name + "_" + timestamp
-    dataset = BasicDataset(data['X_train'], data['Y_train'])
-    val_dataset_id = BasicDataset(data['X_val_id'], data['Y_val_id'])
-    test_dataset_id = BasicDataset(data['X_test_id'], data['Y_test_id'])
-    val_dataset_col = BasicDataset(data['X_val_col'], data['Y_val_col'])
-    test_dataset_col = BasicDataset(data['X_test_col'], data['Y_test_col'])
-    val_dataset_pair = BasicDataset(data['X_val_pair'], data['Y_val_pair'])
-    test_dataset_pair = BasicDataset(data['X_test_pair'], data['Y_test_pair'])
-    val_dataset_dist = BasicDataset(data['X_val_dist'], data['Y_val_dist'])
-    test_dataset_dist = BasicDataset(data['X_test_dist'], data['Y_test_dist'])
-    val_dataset_comb = BasicDataset(data['X_val_comb'], data['Y_val_comb'])
-    test_dataset_comb = BasicDataset(data['X_test_comb'], data['Y_test_comb'])
+    dataset = BasicDataset(train_data['X_train'], train_data['Y_train'])
+
+    test_id_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_test_id_pairs{cfg.data.num_pairs}.pl"))
+    with open(test_id_path, 'rb') as file:
+        test_id = dill.load(file)
+        file.close()
+
+    val_id_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_val_id_pairs{cfg.data.num_pairs}.pl"))
+    with open(val_id_path, 'rb') as file:
+        val_id = dill.load(file)
+        file.close()
+
+    test_col_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_test_col_pairs{cfg.data.num_pairs}.pl"))
+    with open(test_col_path, 'rb') as file:
+        test_col = dill.load(file)
+        file.close()
+
+    val_col_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_val_col_pairs{cfg.data.num_pairs}.pl"))
+    with open(val_col_path, 'rb') as file:
+        val_col = dill.load(file)
+        file.close()
+
+    test_pair_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_test_pair_pairs{cfg.data.num_pairs}.pl"))
+    with open(test_pair_path, 'rb') as file:
+        test_pair = dill.load(file)
+        file.close()
+
+    val_pair_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_val_pair_pairs{cfg.data.num_pairs}.pl"))
+    with open(val_pair_path, 'rb') as file:
+        val_pair = dill.load(file)
+        file.close()
+
+    test_dist_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_test_dist_pairs{cfg.data.num_pairs}.pl"))
+    with open(test_dist_path, 'rb') as file:
+        test_dist = dill.load(file)
+        file.close()
+
+    val_dist_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_val_dist_pairs{cfg.data.num_pairs}.pl"))
+    with open(val_dist_path, 'rb') as file:
+        val_dist = dill.load(file)
+        file.close()
+
+    test_comb_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_test_comb_pairs{cfg.data.num_pairs}.pl"))
+    with open(test_comb_path, 'rb') as file:
+        test_comb = dill.load(file)
+        file.close()
+
+    val_comb_path = to_absolute_path(os.path.join(cfg.data.data_dir, f"boxworld_v2_val_comb_pairs{cfg.data.num_pairs}.pl"))
+    with open(val_comb_path, 'rb') as file:
+        val_comb = dill.load(file)
+        file.close()
+
+    val_dataset_id = BasicDataset(val_id['X_train'], val_id['Y_train'])
+    test_dataset_id = BasicDataset(test_id['X_train'], test_id['Y_train'])
+    val_dataset_col = BasicDataset(val_col['X_col'], val_col['Y_col'])
+    test_dataset_col = BasicDataset(test_col['X_col'], test_col['Y_col'])
+    val_dataset_pair = BasicDataset(val_pair['X_pair'], val_pair['Y_pair'])
+    test_dataset_pair = BasicDataset(test_pair['X_pair'], test_pair['Y_pair'])
+    val_dataset_dist = BasicDataset(val_dist['X_dist'], val_dist['Y_dist'])
+    test_dataset_dist = BasicDataset(test_dist['X_dist'], test_dist['Y_dist'])
+    val_dataset_comb = BasicDataset(val_comb['X_comb'], val_comb['Y_comb'])
+    test_dataset_comb = BasicDataset(test_comb['X_comb'], test_comb['Y_comb'])
     
     
     print(OmegaConf.to_yaml(cfg, resolve=True))

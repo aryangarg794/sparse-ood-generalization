@@ -35,6 +35,7 @@ oracle = "sparse_generalization.scripts.run_oracle:main"
 spartan = "sparse_generalization.scripts.run_spartan:main"
 generate-box = "sparse_generalization.scripts.generate_boxworld_dataset:generate_dataset"
 generate-box-v2 = "sparse_generalization.scripts.gen_box_v2:generate_dataset"
+generate-shapes = "sparse_generalization.scripts.shape_dataset:generate_dataset"
 
 [build-system]
 requires = ["uv_build>=0.9.3,<0.10.0"]

@@ -9,7 +9,7 @@ SHAPES_TO_IDX = {s:i for i, s in enumerate(SHAPES)}
 IDX_TO_SHAPES = {v:k for k, v in SHAPES_TO_IDX.items()}
 
 SHAPE_COLORS = {
-    "rectangle": "blue",
+    "square": "blue",
     "circle": "red",
     "triangle": "green",
     "diamond": "purple",

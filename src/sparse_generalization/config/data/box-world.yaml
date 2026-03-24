@@ -1,4 +1,5 @@
 data_dir: data/box_world
-data_file: boxworld_v2_500_pairs2.pl
+size: 500 
+num_pairs: 2
 
 batch_size: 16

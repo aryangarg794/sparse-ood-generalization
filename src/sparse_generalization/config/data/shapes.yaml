@@ -1,3 +1,4 @@
 data_dir: data/shapes
+size: 250
 
 batch_size: 32

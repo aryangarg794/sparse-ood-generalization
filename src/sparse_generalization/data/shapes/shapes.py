@@ -17,7 +17,7 @@ class Shape:
         ...
 
 # from caroline's script
-class RectangleS(Shape):
+class Square(Shape):
 
     def draw(self, ax):
         ax.add_patch(Rectangle((self.x-self.size, self.y-self.size), 
@@ -374,7 +374,7 @@ class DiamondRing(Shape):
 
 
 SHAPE_MAP = {
-    "rectangle": RectangleS, 
+    "square": Square, 
     "circle": CircleS, 
     "triangle": Triangle, 
     "diamond": Diamond, 
