@@ -5,8 +5,8 @@ import random
 import torch
 from tqdm import tqdm
 
-from sparse_generalization.envs.box_world.env import BoxWorldEnv
-from sparse_generalization.envs.box_world.wrappers import make_env
+from sparse_generalization.data.box_world.env import BoxWorldEnv
+from sparse_generalization.data.box_world.wrappers import make_env
 
 gym.register('BoxWorldEnv-v1', BoxWorldEnv)
 
