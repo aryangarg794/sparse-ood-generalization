@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.utils as utils
 import wandb
 
+from copy import deepcopy
 from lightning.pytorch.loggers import WandbLogger
 from torch import Tensor
 from torchmetrics.classification import BinaryAccuracy
@@ -15,12 +16,13 @@ from typing import List
 
 from sparse_generalization.models.blocks import MHABlockBern, MHABlockOracle
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
+from sparse_generalization.utils.util_funcs import positionalencoding2d
 
 class SPARTAN(nn.Module):
     
     def __init__(
         self,  
-        embed_size: int, 
+        inp_dim: int, 
         out_dim: int, 
         hidden_dims_ffn: list, 
         model_dim: int, 
@@ -30,7 +32,14 @@ class SPARTAN(nn.Module):
         residual: bool, 
         include_sparsity: bool, 
         path_sparsity: bool,
-        alpha_res: bool, 
+        alpha_res: bool,
+        val_to_name: dict = {
+            0: 'id', 
+            1: 'col', 
+            2: 'pair', 
+            3: 'dist', 
+            4: 'comb'
+        }, 
         l1_weight: float = 0.1, 
         lagrangian: bool = False, 
         target_loss: float = 0.05, 
@@ -38,11 +47,14 @@ class SPARTAN(nn.Module):
         step_size: float = 1e-1, 
         cma: float = 0.9, 
         pe: bool = True,
+        sinusoidal: bool = True, 
+        embedding_inp: bool = True, 
         lr: float = 1e-3, 
         dropout: float = 0.1, 
-        use_grid: bool = True, 
+        layernorm: bool = True, 
         act: nn.Module = nn.ReLU, 
         logger: WandbLogger = None, 
+        num_embeddings: int = 64, 
         device: str = 'cuda', 
         beta1: float = 0.9, 
         beta2: float = 0.999, 
@@ -56,30 +68,35 @@ class SPARTAN(nn.Module):
         self.logger = logger
         self.model_dim = model_dim
         
-        self.feature_map = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=model_dim, kernel_size=1),
-            act()
-        )
-        for _ in range(num_feature_layers):
-            self.feature_map.extend([
-                nn.Conv2d(in_channels=model_dim, out_channels=model_dim, kernel_size=1),
+        if not embedding_inp:
+            self.feature_map = nn.Sequential(
+                nn.Conv2d(in_channels=inp_dim, out_channels=model_dim, kernel_size=1),
                 act()
-            ]) 
-                                   
+            )
+            for _ in range(num_feature_layers):
+                self.feature_map.extend([
+                    nn.Conv2d(in_channels=model_dim, out_channels=model_dim, kernel_size=1),
+                    act()
+                ])    
+        else:
+            self.feature_map = nn.Embedding(num_embeddings, model_dim)              
             
-        if pe and not use_grid:
-            embed_size += 1
-        elif pe and use_grid:
-            model_dim += 2  
-            embed_size = model_dim  
+        if pe:
+            if sinusoidal:
+                model_dim = model_dim
+            else:
+                model_dim += 2  
+            embed_size = model_dim
         
         self.embed_size = embed_size
         self.pe = pe
+        self.sinusoidal = sinusoidal
+        self.embedding_inp = embedding_inp
         
         self.layers = nn.ModuleList()
         self.layers.append(MHABlockBern(
             embed_size=self.embed_size, 
-            use_grid=use_grid, 
+            layernorm=layernorm, 
             num_heads=num_heads, 
             hidden_dims=hidden_dims_ffn, 
             residual=residual, 
@@ -92,7 +109,7 @@ class SPARTAN(nn.Module):
         for _ in range(num_layers-1):
             self.layers.append(MHABlockBern(
                 embed_size=self.embed_size, 
-                use_grid=use_grid, 
+                layernorm=layernorm, 
                 num_heads=num_heads, 
                 hidden_dims=hidden_dims_ffn,
                 residual=residual, 
@@ -121,24 +138,36 @@ class SPARTAN(nn.Module):
         self.ema_step = cma
         
         self.alpha_res = alpha_res
+        self.val_to_name = val_to_name
         
         
     def forward(self, x: Tensor):
         attn_matrices = []
         
         batch_size, width, height, _ = x.size()
-        x_features = self.feature_map(x.permute(0, 3, 1, 2)) # (b, 3, w, h)
-        x_features = x_features.permute(0, 2, 3, 1)
+        if self.embedding_inp:
+            assert x.size(3) == 1, "channels is not 1 for shapes input"
+            x_features = self.feature_map(x.squeeze(3).int()) # (b, w, h, e)
+        else:
+            x_features = self.feature_map(x.permute(0, 3, 1, 2)) # (b, 3, w, h)
+            x_features = x_features.permute(0, 2, 3, 1)
+
         masks = torch.eye(width*height, device=self.device).repeat(batch_size, 1, 1) if self.path_sparsity else []
         
         if self.pe:
             device = x.device
-            xs = torch.arange(width, device=device)
-            ys = torch.arange(height, device=device)
-            coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
-            coords = coords.expand(batch_size, width, height, 2)
-            x_attn = torch.cat([x_features, coords], dim=-1)
-            x_attn = x_attn.view(-1, width*height, self.model_dim+2)
+            if self.sinusoidal:
+                embeddings = positionalencoding2d(self.embed_size, width, height)
+                embeddings = embeddings.view(width, height, -1).to(device=device) # (w, h, e) 
+                x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1) 
+                x_attn = x_attn.view(-1, width*height, self.embed_size)
+            else:
+                xs = torch.arange(width, device=device)
+                ys = torch.arange(height, device=device)
+                coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
+                coords = coords.expand(batch_size, width, height, 2)
+                x_attn = torch.cat([x_features, coords], dim=-1)
+                x_attn = x_attn.view(-1, width*height, self.embed_size)
         
         for layer in self.layers:
             x_attn, mask, attn = layer(x_attn)
@@ -160,10 +189,10 @@ class SPARTAN(nn.Module):
         mask_edges = []
         sparses = []
         
-        attn_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
-        masks_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
-        losses_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
-        accs_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
+        attn_test = {i:[] for i in self.val_to_name.values()}
+        masks_test = deepcopy(attn_test)
+        losses_test = deepcopy(attn_test)
+        accs_test = deepcopy(attn_test)
         
         for step in (pbar := tqdm(range(1, num_epochs+1))): 
             self.train()
@@ -284,7 +313,7 @@ class SPARTAN(nn.Module):
             
             pbar.set_postfix(postfix)
             
-            for loader, name in zip(testloaders, ['id', 'col', 'pair', 'dist', 'comb']):
+            for loader, name in zip(testloaders, self.val_to_name.values()):
                 test_metrics = self.test(name, loader, folder='val')
                 masks_test[name].append(test_metrics['mask'])
                 attn_test[name].append(test_metrics['attn'])

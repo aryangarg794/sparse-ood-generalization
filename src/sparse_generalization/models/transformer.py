@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.utils as utils
 import wandb
 
+from copy import deepcopy
 from hydra.utils import instantiate
 from torch import Tensor
 from torchmetrics.classification import BinaryAccuracy
@@ -17,6 +18,7 @@ from sparse_generalization.losses.sparse_loss import L1SparsityWeights
 from sparse_generalization.utils.util_funcs import noise_scheduler
 from sparse_generalization.models.blocks import MHABlock
 from sparse_generalization.layers.agg_attention import AggregationAttention
+from sparse_generalization.utils.util_funcs import positionalencoding2d
 
     
 class TransformerLit(pl.LightningModule):
@@ -27,8 +29,7 @@ class TransformerLit(pl.LightningModule):
     """
     def __init__(
         self: Self, 
-        embed_size: int, 
-        use_grid: bool, 
+        inp_dim: int,  
         model_dim: int, 
         out_dim: int,
         num_heads: int, # for the toy example just keep it one
@@ -36,16 +37,25 @@ class TransformerLit(pl.LightningModule):
         agg_pool: bool, 
         layernorm: bool, 
         num_feature_layers: int = 3, 
+        val_to_name: dict = {
+            0: 'id', 
+            1: 'col', 
+            2: 'pair', 
+            3: 'dist', 
+            4: 'comb'
+        }, 
         mha_layer: nn.Module = nn.MultiheadAttention, 
         act: nn.Module = nn.ReLU,
         dropout: int = 0.1, 
         lr: float = 1e-3,
+        embedding_inp: bool = True, 
         residual: bool = True,
         include_sparsity: bool = False,
         sparse_loss: nn.Module = L1SparsityWeights, 
         l1_weight: float = 0.1,  
         positional_encoding: bool = True,
-        k: int = 5,  
+        sinusoidal: bool = True, 
+        num_embeddings: int = 64,  
         loss: nn.Module = nn.BCEWithLogitsLoss,
         lagrangian: bool = False, 
         target_loss: float = 0.05, 
@@ -75,6 +85,7 @@ class TransformerLit(pl.LightningModule):
         self.eps = eps
         self.var = var
         self.agg_pool = agg_pool
+        self.embedding_inp = embedding_inp
         
         if include_sparsity:
             self.l1_loss = sparse_loss()  
@@ -86,38 +97,40 @@ class TransformerLit(pl.LightningModule):
         self.lr = lr
         
         self.residual = residual
-        self.use_grid = use_grid
         self.model_dim = model_dim
 
-        if use_grid:
+        if not embedding_inp:
             self.feature_map = nn.Sequential(
-                nn.Conv2d(in_channels=3, out_channels=model_dim, kernel_size=1),
+                nn.Conv2d(in_channels=inp_dim, out_channels=model_dim, kernel_size=1),
                 act()
             )
             for _ in range(num_feature_layers):
                 self.feature_map.extend([
                     nn.Conv2d(in_channels=model_dim, out_channels=model_dim, kernel_size=1),
                     act()
-                ])                        
-            
-        if positional_encoding and not use_grid:
-            embed_size += 1
-        elif positional_encoding and use_grid:
-            model_dim += 2  
-            embed_size = model_dim  
-        
-        self.embed_size = embed_size
+                ])    
+        else:
+            self.feature_map = nn.Embedding(num_embeddings, model_dim)  
+
+        if positional_encoding:
+            if sinusoidal:
+                model_dim = model_dim
+            else:
+                model_dim += 2  
+
+        self.embed_size = model_dim
         self.pe = positional_encoding
+        self.sinusoidal = sinusoidal                  
         
         self.layers = nn.ModuleList()
+
         self.layers.append(MHABlock(
                 embed_size=self.embed_size,
                 out_dim=self.embed_size,
                 residual=residual,  
                 hidden_dims=hidden_dims,
                 act=act,
-                dropout=dropout,
-                use_grid=use_grid, 
+                dropout=dropout, 
                 mha_layer=mha_layer,
                 num_heads=num_heads,
                 layernorm=layernorm,  
@@ -133,17 +146,16 @@ class TransformerLit(pl.LightningModule):
                 hidden_dims=hidden_dims,
                 act=act,
                 dropout=dropout,
-                use_grid=use_grid,
                 mha_layer=mha_layer,
                 num_heads=num_heads,
                 layernorm=layernorm,
-            ))
-        
+            )
+        )
         
         if self.agg_pool:
             self.out = AggregationAttention(
                 num_heads=num_heads, 
-                embed_size=embed_size, 
+                embed_size=self.embed_size, 
                 out_dim=out_dim, 
                 residual=residual, 
                 hidden_dims=hidden_dims, 
@@ -156,13 +168,7 @@ class TransformerLit(pl.LightningModule):
         
         self.accuracy = BinaryAccuracy()
 
-        self.val_to_name = {
-            0: 'id', 
-            1: 'col', 
-            2: 'pair', 
-            3: 'dist', 
-            4: 'comb'
-        }
+        self.val_to_name = val_to_name
         self.test_attn_matrices = []
         self.val_attn_matrices = {0: [], 1: [], 2: [], 3: [], 4: []}
         self.train_attn_matrices = []
@@ -183,11 +189,11 @@ class TransformerLit(pl.LightningModule):
         self.sparses = []
         self.masks = []
         
-        self.running_loss_test = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-        self.running_acc_test = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-        self.masks_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
-        self.losses_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
-        self.accs_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
+        self.running_loss_test = {i:0.0 for i in val_to_name.keys()}
+        self.running_acc_test = deepcopy(self.running_loss_test)
+        self.masks_test = {i:[] for i in val_to_name.values()}
+        self.losses_test = deepcopy(self.masks_test)
+        self.accs_test = deepcopy(self.masks_test)
         
         
     def _get_loss_acc(self: Self, batch):
@@ -195,17 +201,27 @@ class TransformerLit(pl.LightningModule):
         attn_matrices = []
         
         batch_size, width, height, _ = x.size()
-        x_features = self.feature_map(x.permute(0, 3, 1, 2)) # (b, 3, w, h)
-        x_features = x_features.permute(0, 2, 3, 1)
-        
+        if self.embedding_inp:
+            assert x.size(3) == 1, "channels is not 1 for shapes input"
+            x_features = self.feature_map(x.squeeze(3).int()) # (b, w, h, e)
+        else:
+            x_features = self.feature_map(x.permute(0, 3, 1, 2)) # (b, 3, w, h)
+            x_features = x_features.permute(0, 2, 3, 1)
+
         if self.pe:
             device = x.device
-            xs = torch.arange(width, device=device)
-            ys = torch.arange(height, device=device)
-            coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
-            coords = coords.expand(batch_size, width, height, 2)
-            x_attn = torch.cat([x_features, coords], dim=-1)
-            x_attn = x_attn.view(-1, width*height, self.model_dim+2)
+            if self.sinusoidal:
+                embeddings = positionalencoding2d(self.embed_size, width, height)
+                embeddings = embeddings.view(width, height, -1).to(device=device) # (w, h, e) 
+                x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1) 
+                x_attn = x_attn.view(-1, width*height, self.embed_size)
+            else:
+                xs = torch.arange(width, device=device)
+                ys = torch.arange(height, device=device)
+                coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
+                coords = coords.expand(batch_size, width, height, 2)
+                x_attn = torch.cat([x_features, coords], dim=-1)
+                x_attn = x_attn.view(-1, width*height, self.embed_size)
         
         for layer in self.layers:
             x_attn, attn = layer(x_attn)

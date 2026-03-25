@@ -1,4 +1,12 @@
-data_dir: data/shapes
-size: 250
+data_func: 
+  _target_: sparse_generalization.utils.dataloading.get_shapes_datasets
+  _partial_: true
+  size: 250
+  data_dir: data/shapes
 
-batch_size: 32
+val_to_name:
+  0: id
+  1: a
+  2: b
+
+batch_size: 16

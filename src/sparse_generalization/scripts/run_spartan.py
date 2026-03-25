@@ -16,8 +16,6 @@ from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader
 from torchsummary import summary
 
-from sparse_generalization.utils.datasets import BasicDataset
-
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 warnings.filterwarnings(
     "ignore", ".*can be accelerated via the 'torch-scatter' package*"
@@ -31,25 +29,11 @@ def main(cfg: DictConfig):
     box world example. 
     """
     timestamp = datetime.now().strftime("%d_%b_%Y__%Hh%Mm")
-    data_path = os.path.join(cfg.data.data_dir, cfg.data.data_file)
-    data_path = to_absolute_path(data_path)
-    with open(data_path, 'rb') as file:
-        data = dill.load(file)
     group_name = cfg.run_name + "_" + timestamp
-    dataset = BasicDataset(data['X_train'], data['Y_train'])
-    val_dataset_id = BasicDataset(data['X_val_id'], data['Y_val_id'])
-    test_dataset_id = BasicDataset(data['X_test_id'], data['Y_test_id'])
-    val_dataset_col = BasicDataset(data['X_val_col'], data['Y_val_col'])
-    test_dataset_col = BasicDataset(data['X_test_col'], data['Y_test_col'])
-    val_dataset_pair = BasicDataset(data['X_val_pair'], data['Y_val_pair'])
-    test_dataset_pair = BasicDataset(data['X_test_pair'], data['Y_test_pair'])
-    val_dataset_dist = BasicDataset(data['X_val_dist'], data['Y_val_dist'])
-    test_dataset_dist = BasicDataset(data['X_test_dist'], data['Y_test_dist'])
-    val_dataset_comb = BasicDataset(data['X_val_comb'], data['Y_val_comb'])
-    test_dataset_comb = BasicDataset(data['X_test_comb'], data['Y_test_comb'])
+    
+    dataset, val_sets, test_sets = instantiate(cfg.data.data_func)()
     
     print(OmegaConf.to_yaml(cfg, resolve=True))
-
 
     if cfg.seeds is None:
         print(f'\n{'='*60}')
@@ -60,11 +44,11 @@ def main(cfg: DictConfig):
         
         train_loader = DataLoader(dataset, cfg.data.batch_size, shuffle=True)
         val_loaders = []
-        for dataset in [val_dataset_id, val_dataset_col, val_dataset_pair, val_dataset_dist, val_dataset_comb]:
+        for dataset in val_sets:
             val_loaders.append(DataLoader(dataset, cfg.data.batch_size))
             
         test_loaders = []
-        for dataset in [test_dataset_id, test_dataset_col, test_dataset_pair, test_dataset_dist, test_dataset_comb]:
+        for dataset in test_sets:
             test_loaders.append(DataLoader(dataset, cfg.data.batch_size))
         
         model = instantiate(cfg.model)
@@ -112,26 +96,20 @@ def main(cfg: DictConfig):
         
             train_loader = DataLoader(dataset, cfg.data.batch_size, shuffle=True, generator=generator)
             val_loaders = []
-            for val_dataset in [val_dataset_id, val_dataset_col, val_dataset_pair, val_dataset_dist, val_dataset_comb]:
+            for val_dataset in val_sets:
                 val_loaders.append(DataLoader(val_dataset, cfg.data.batch_size))
                 
             test_loaders = []
-            for test_dataset in [test_dataset_id, test_dataset_col, test_dataset_pair, test_dataset_dist, test_dataset_comb]:
+            for test_dataset in test_sets:
                 test_loaders.append(DataLoader(test_dataset, cfg.data.batch_size))
             
-            model = instantiate(cfg.model)
+            model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
             model = model.to(cfg.model.device)
             model.logger = logger
             # print(summary(model, (10, 10, 3), device=cfg.model.device))
             losses, accs, sparses, mask_edges, attn_edges, losses_test, accs_test, attn_test, masks_test = model.fit(
                 dataloader=train_loader, num_epochs=cfg.trainer.max_epochs,
                 testloaders=val_loaders)
-            
-            test_metrics_id = model.test('id', test_loaders[0])
-            test_metrics_col = model.test('col', test_loaders[1])
-            test_metrics_pair = model.test('pair', test_loaders[2])
-            test_metrics_dist = model.test('dist', test_loaders[3])
-            test_metrics_comb = model.test('comb', test_loaders[4])
             
             if cfg.save:
                 torch.save(model.state_dict(), f'checkpoints/{cfg.run_name}_{timestamp}.pt')
@@ -142,16 +120,15 @@ def main(cfg: DictConfig):
             results[seed]['train_masks'] = mask_edges
             results[seed]['train_attns'] = attn_edges
                 
-            results[seed]['test_losses'] = losses_test
-            results[seed]['test_accs'] = accs_test
-            results[seed]['test_attns'] = attn_test
-            results[seed]['test_masks'] = masks_test
+            results[seed]['val_losses'] = losses_test
+            results[seed]['val_accs'] = accs_test
+            results[seed]['val_attns'] = attn_test
+            results[seed]['val_masks'] = masks_test
             
-            results[seed]['test_id'] = test_metrics_id
-            results[seed]['test_col'] = test_metrics_col
-            results[seed]['test_pair'] = test_metrics_pair
-            results[seed]['test_dist'] = test_metrics_dist
-            results[seed]['test_comb'] = test_metrics_comb
+            for i, name in enumerate(cfg.data.val_to_name.values()):
+                model.test_name = name
+                test_metrics = model.test(name, test_loaders[i])
+                results[seed][f'test_{name}'] = test_metrics
             
             # table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
             # table.add_data('Test set ID', test_metrics_1['loss'], test_metrics_1['acc'])
@@ -165,7 +142,7 @@ def main(cfg: DictConfig):
             torch.cuda.empty_cache() 
             gc.collect()
             
-        with open(f'results/{group_name}.pl', 'wb') as file:
+        with open(f'results/{cfg.run_name}.pl', 'wb') as file:
             dill.dump(results, file)
             file.close()
 

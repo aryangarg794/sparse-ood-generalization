@@ -1,4 +1,5 @@
 _target_: sparse_generalization.models.spartan.OracleTransformer
+_partial_: true
 
 embed_size: 3
 out_dim: 1

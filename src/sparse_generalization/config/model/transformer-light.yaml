@@ -1,17 +1,20 @@
 _target_: sparse_generalization.models.transformer.TransformerLit
+_partial_: true
 
-embed_size: 3
+inp_dim: 3
 out_dim: 1 
 layernorm: true
+embedding_inp: true
 agg_pool: false
-use_grid: true
-model_dim: 62
+model_dim: 32
 num_feature_layers: 3
 num_layers: 4
+num_heads: 1
 include_sparsity: false
 l1_weight: 0.0001
 positional_encoding: true
-lr: 5e-4
+sinusoidal: false
+lr: 1e-4
 lagrangian: false
 start_lambda: 5e6
 target_loss: 0.15
@@ -25,7 +28,6 @@ beta1: 0.9
 beta2: 0.999
 foopt: false
 residual: True
-num_heads: 4
 hidden_dims: [128, 128]
 dropout: 0.0
 

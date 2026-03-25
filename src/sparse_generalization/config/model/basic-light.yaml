@@ -1,4 +1,5 @@
 _target_: sparse_generalization.models.mlp.BasicMLPLit
+_partial_: true
 
 input_dim: 3
 out_dim: 1 
