@@ -20,13 +20,19 @@ class BasicCNN(nn.Module):
         self: Self, 
         input_dim: int, 
         out_dim: int,
+        embedding_inp: bool, 
         hidden_channels: List,
         act: nn.Module,
-        dropout: float, 
+        dropout: float,
+        num_embeddings: int = 64, 
+        model_dim: int = 32, 
         *args, 
         **kwargs
     ):
         super(BasicCNN, self).__init__(*args, **kwargs)
+        self.embedding_inp = embedding_inp
+        if embedding_inp:
+            self.feature_map = nn.Embedding(num_embeddings, model_dim)
 
         self.layers = nn.Sequential()
         self.layers.extend([
@@ -56,6 +62,8 @@ class BasicCNN(nn.Module):
         ])
         
     def forward(self: Self, x: Tensor):
+        if self.embedding_inp:
+            x = self.feature_map(x.squeeze(3).int()) 
         x = x.permute(0, 3, 1, 2)
         x = self.layers(x)
         x = x.flatten(start_dim=1)

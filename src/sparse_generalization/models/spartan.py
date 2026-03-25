@@ -67,6 +67,8 @@ class SPARTAN(nn.Module):
         self.device = device
         self.logger = logger
         self.model_dim = model_dim
+        self.num_heads = num_heads
+        self.num_layers = num_layers
         
         if not embedding_inp:
             self.feature_map = nn.Sequential(
@@ -131,6 +133,7 @@ class SPARTAN(nn.Module):
         self.path_sparsity = path_sparsity
         self.lagrangian = lagrangian
         self.include_sparsity = include_sparsity if not self.lagrangian else True
+        self.max_paths = None
         self.l1_weight = l1_weight
         self.lambd = start_lambda
         self.target_loss = target_loss
@@ -143,8 +146,10 @@ class SPARTAN(nn.Module):
         
     def forward(self, x: Tensor):
         attn_matrices = []
-        
         batch_size, width, height, _ = x.size()
+        if self.max_paths is None:
+            self.max_paths = self._compute_max_paths(width * height)
+
         if self.embedding_inp:
             assert x.size(3) == 1, "channels is not 1 for shapes input"
             x_features = self.feature_map(x.squeeze(3).int()) # (b, w, h, e)
@@ -224,7 +229,7 @@ class SPARTAN(nn.Module):
                         sparse_loss = self.sparse_loss(path_matrix)
                         loss = rec_loss + sparse_loss/self.lambd
                     else:
-                        sparse_loss = self.l1_weight * self.sparse_loss(path_matrix)
+                        sparse_loss = self.l1_weight * self.sparse_loss(path_matrix) / self.max_paths
                         loss = rec_loss + sparse_loss
                         
                     epoch_sparse += sparse_loss.item()
@@ -384,6 +389,15 @@ class SPARTAN(nn.Module):
     
     def _compute_mask_mean(self, all_masks: Tensor):
         return all_masks.sum(dim=(1, 2)).mean().item()
+    
+    def _compute_max_paths(self, seq_len: int):
+        paths = torch.ones((seq_len, seq_len)) * self.num_heads
+        for l in range(self.num_layers):
+            multiplier = torch.ones((seq_len, seq_len)) * self.num_heads
+            paths = paths @ multiplier
+
+        return paths.sum().item()
+
         
         
 class OracleTransformer(nn.Module):
