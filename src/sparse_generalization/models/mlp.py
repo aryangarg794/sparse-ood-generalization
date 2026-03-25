@@ -59,9 +59,20 @@ class BasicMLPLit(pl.LightningModule):
         act: nn.Module = nn.ReLU,
         lr: float = 1e-3,
         wd: float = 1e-3, 
+        val_to_name: dict = {
+            0: 'id', 
+            1: 'col', 
+            2: 'pair', 
+            3: 'dist', 
+            4: 'comb'
+        }, 
+        embedding_inp: bool = True, 
+        num_embeddings: int = 64, 
+        model_dim: int = 32, 
         dropout: float = 0.1, 
         loss: nn.Module = nn.BCEWithLogitsLoss,
-        module: nn.Module = BasicMLP
+        module: nn.Module = BasicMLP,
+        inp_size: int = 10, 
     ):
         super().__init__()
         self.loss = loss()
@@ -69,11 +80,15 @@ class BasicMLPLit(pl.LightningModule):
         self.wd = wd
         
         self.model = module(
-            input_dim,
-            out_dim,
-            hidden_dims,
-            act,
-            dropout
+            input_dim=input_dim,
+            out_dim=out_dim,
+            hidden_dims=hidden_dims,
+            act=act,
+            dropout=dropout, 
+            num_embeddings=num_embeddings,
+            embedding_inp=embedding_inp,
+            model_dim=model_dim,
+            inp_size=inp_size
         )
         
         self.accuracy = BinaryAccuracy()
@@ -82,18 +97,14 @@ class BasicMLPLit(pl.LightningModule):
         self.accs = []
         self.running_loss = 0.0
         self.running_acc = 0.0
-        self.running_loss_test = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-        self.running_acc_test = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+        self.val_to_name = val_to_name
+
+        self.running_loss_test = {i:0.0 for i in val_to_name.keys()}
+        self.running_acc_test = {i:0.0 for i in val_to_name.keys()}
         
-        self.losses_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
-        self.accs_test = {'id': [], 'col': [], 'pair': [], 'dist': [], 'comb': []}
-        self.val_to_name = {
-            0: 'id', 
-            1: 'col', 
-            2: 'pair', 
-            3: 'dist', 
-            4: 'comb'
-        }
+        self.losses_test = {i:[] for i in val_to_name.values()}
+        self.accs_test = {i:[] for i in val_to_name.values()}
+        
         
     def _get_loss_acc(self: Self, batch):
         x, y = batch

@@ -1,15 +1,15 @@
 _target_: sparse_generalization.models.spartan.SPARTAN
 _partial_: true
 
-inp_dim: 3
+inp_dim: 64
 out_dim: 1 
 hidden_dims_ffn: [128, 128]
 layernorm: true
-model_dim: 32
-embedding_inp: true
+model_dim: 64
+embedding_inp: false
 num_feature_layers: 3
 num_heads: 1
-num_layers: 4
+num_layers: 1
 include_sparsity: false
 lr: 5e-4
 l1_weight: 1e-3

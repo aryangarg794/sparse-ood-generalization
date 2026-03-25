@@ -3,6 +3,7 @@ data_func:
   _partial_: true
   size: 250
   data_dir: data/shapes
+  one_hot: true
 
 val_to_name:
   0: id

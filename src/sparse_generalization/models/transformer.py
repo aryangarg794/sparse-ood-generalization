@@ -137,7 +137,7 @@ class TransformerLit(pl.LightningModule):
             )
         )
         
-        num_layers = num_layers-1 if self.agg_pool else num_layers-2
+        num_layers = num_layers-1 if not self.agg_pool else num_layers-2
         for _ in range(num_layers):
             self.layers.append(MHABlock(
                 embed_size=self.embed_size,
@@ -169,9 +169,6 @@ class TransformerLit(pl.LightningModule):
         self.accuracy = BinaryAccuracy()
 
         self.val_to_name = val_to_name
-        self.test_attn_matrices = []
-        self.val_attn_matrices = {0: [], 1: [], 2: [], 3: [], 4: []}
-        self.train_attn_matrices = []
         self.test_name = 'placeholder'
         self.automatic_optimization = False
         self.lagrangian = lagrangian
@@ -188,6 +185,9 @@ class TransformerLit(pl.LightningModule):
         self.accs = []
         self.sparses = []
         self.masks = []
+        self.test_attn_matrices = []
+        self.val_attn_matrices = {i:[] for i in val_to_name.keys()}
+        self.train_attn_matrices = []
         
         self.running_loss_test = {i:0.0 for i in val_to_name.keys()}
         self.running_acc_test = deepcopy(self.running_loss_test)

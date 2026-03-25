@@ -1,5 +1,5 @@
 defaults:
-- data: box-world
+- data: shapes
 - model: transformer-light
 - wandb: default
 - trainer: default

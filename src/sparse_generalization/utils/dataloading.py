@@ -5,7 +5,7 @@ from hydra.utils import to_absolute_path
 
 from sparse_generalization.utils.datasets import BasicDataset
 
-def get_shapes_datasets(size: int, data_dir: str):
+def get_shapes_datasets(size: int, data_dir: str, one_hot: bool):
     data_path = os.path.join(data_dir, f"shapes_train_{size}.pl")
     data_path = to_absolute_path(data_path)
 
@@ -43,13 +43,13 @@ def get_shapes_datasets(size: int, data_dir: str):
         val_b = dill.load(file)
         file.close()
         
-    dataset = BasicDataset(train_data['X_train'], train_data['Y_train'])
-    val_dataset_id = BasicDataset(val_id['X_train'], val_id['Y_train'])
-    val_dataset_a = BasicDataset(val_a['X_test_a'], val_a['Y_test_a'])
-    val_dataset_b = BasicDataset(val_b['X_test_b'], val_b['Y_test_b'])
-    test_dataset_id = BasicDataset(test_id['X_train'], test_id['Y_train'])
-    test_dataset_a = BasicDataset(test_a['X_test_a'], test_a['Y_test_a'])
-    test_dataset_b = BasicDataset(test_b['X_test_b'], test_b['Y_test_b'])
+    dataset = BasicDataset(train_data['X_train'], train_data['Y_train'], one_hot)
+    val_dataset_id = BasicDataset(val_id['X_train'], val_id['Y_train'], one_hot)
+    val_dataset_a = BasicDataset(val_a['X_test_a'], val_a['Y_test_a'], one_hot)
+    val_dataset_b = BasicDataset(val_b['X_test_b'], val_b['Y_test_b'], one_hot)
+    test_dataset_id = BasicDataset(test_id['X_train'], test_id['Y_train'], one_hot)
+    test_dataset_a = BasicDataset(test_a['X_test_a'], test_a['Y_test_a'], one_hot)
+    test_dataset_b = BasicDataset(test_b['X_test_b'], test_b['Y_test_b'], one_hot)
     
     val_sets = [val_dataset_id, val_dataset_a, val_dataset_b]
     test_sets = [test_dataset_id, test_dataset_a, test_dataset_b]
