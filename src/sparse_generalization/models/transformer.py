@@ -29,13 +29,13 @@ class TransformerLit(pl.LightningModule):
     """
     def __init__(
         self: Self, 
-        inp_dim: int,  
-        model_dim: int, 
-        out_dim: int,
-        num_heads: int, # for the toy example just keep it one
-        hidden_dims: List,
-        agg_pool: bool, 
-        layernorm: bool, 
+        inp_dim: int = 3,  
+        model_dim: int = 64, 
+        out_dim: int = 1,
+        num_heads: int = 1, # for the toy example just keep it one
+        hidden_dims: List = list([128, 128]),
+        agg_pool: bool = False, 
+        layernorm: bool = True, 
         num_feature_layers: int = 3, 
         val_to_name: dict = {
             0: 'id', 

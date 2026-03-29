@@ -1,8 +1,9 @@
 data_func: 
   _target_: sparse_generalization.utils.dataloading.get_boxworld_datasets
   _partial_: true
-  size: 500
+  size: 5000
   num_pairs: 2
+  one_hot: true
   data_dir: data/box_world
 
 val_to_name:
@@ -12,4 +13,4 @@ val_to_name:
   3: dist
   4: comb
 
-batch_size: 16
+batch_size: 157

@@ -120,7 +120,7 @@ def main(cfg: DictConfig):
             model.num_val_batches = len(val_loaders[0])
             trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loaders)
             if cfg.save:
-                torch.save(model.model.state_dict(), f'checkpoints/{cfg.run_name}_{timestamp}.pt')
+                trainer.save_checkpoint(f'checkpoints/{cfg.run_name}_{timestamp}.ckpt')
         
             
             results[seed]['train_loss'] = model.losses
