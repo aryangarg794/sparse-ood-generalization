@@ -22,17 +22,17 @@ class SPARTAN(nn.Module):
     
     def __init__(
         self,  
-        inp_dim: int, 
-        out_dim: int, 
-        hidden_dims_ffn: list, 
-        model_dim: int, 
-        num_feature_layers: int, 
-        num_heads: int, 
-        num_layers: int, 
-        residual: bool, 
-        include_sparsity: bool, 
-        path_sparsity: bool,
-        alpha_res: bool,
+        inp_dim: int = 3, 
+        out_dim: int = 1, 
+        hidden_dims_ffn: list = list([128, 128]), 
+        model_dim: int = 64, 
+        num_feature_layers: int = 3, 
+        num_heads: int = 1, 
+        num_layers: int = 4, 
+        residual: bool = True, 
+        include_sparsity: bool = False, 
+        path_sparsity: bool = True,
+        alpha_res: bool = False,
         val_to_name: dict = {
             0: 'id', 
             1: 'col', 
@@ -142,7 +142,7 @@ class SPARTAN(nn.Module):
         
         self.alpha_res = alpha_res
         self.val_to_name = val_to_name
-        
+        self.args = locals()
         
     def forward(self, x: Tensor):
         attn_matrices = []
@@ -397,6 +397,10 @@ class SPARTAN(nn.Module):
             paths = paths @ multiplier
 
         return paths.sum().item()
+    
+    @classmethod
+    def load(self, path: str):
+        return 
 
         
         

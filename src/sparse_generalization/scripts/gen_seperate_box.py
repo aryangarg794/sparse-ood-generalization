@@ -12,7 +12,6 @@ gym.register('BoxWorldEnv-v2', BoxWorldEnvV2)
 
 def generate_dataset(
     num_samples: int = 1000,
-    start_seed: int = 0,
     mode: str = 'train', 
     num_paths: int = 1,
     num_pairs: int = 2, 
@@ -32,7 +31,7 @@ def generate_dataset(
         attn_edges = []
 
         for env, label, count in [(env_solv, 0, half_samples), (env_unsolv, 1, half_samples)]:
-            env.reset(seed=start_seed)
+            env.reset()
             for _ in tqdm(range(count), desc=f"Generating {label} samples"):
                 obs, _ = env.reset()
                 edges = env.get_wrapper_attr('get_attn_edges')()
@@ -61,7 +60,7 @@ def generate_dataset(
         env_unsolv_test = make_env_v2(size=size, num_pairs=num_pairs, ratio_red_blue=1.0, num_paths=num_paths, ood_colors=True)
 
         for env, label, count in [(env_solv_test, 0, half_samples), (env_unsolv_test, 1, half_samples)]:
-            env.reset(seed=start_seed)
+            env.reset()
             for _ in tqdm(range(count), desc=f"Generating {label} OOD colors"):
                 obs, _ = env.reset()
                 edges = env.get_wrapper_attr('get_attn_edges')()
@@ -91,7 +90,7 @@ def generate_dataset(
         env_unsolv_test = make_env_v2(size=size, num_pairs=-1, ratio_red_blue=1.0, num_paths=num_paths)
 
         for env, label, count in [(env_solv_test, 0, half_samples), (env_unsolv_test, 1, half_samples)]:
-            env.reset(seed=start_seed)
+            env.reset()
             for _ in tqdm(range(count), desc=f"Generating {label} OOD pairs"):
                 obs, _ = env.reset()
                 edges = env.get_wrapper_attr('get_attn_edges')()
@@ -122,7 +121,7 @@ def generate_dataset(
         env_unsolv_test = make_env_v2(size=size, num_pairs=num_pairs, ratio_red_blue=1.0, num_paths=num_paths, num_distractors=5)
 
         for env, label, count in [(env_solv_test, 0, half_samples), (env_unsolv_test, 1, half_samples)]:
-            env.reset(seed=start_seed)
+            env.reset()
             for _ in tqdm(range(count), desc=f"Generating {label} OOD distractors"):
                 obs, _ = env.reset()
                 edges = env.get_wrapper_attr('get_attn_edges')()
@@ -154,7 +153,7 @@ def generate_dataset(
         env_unsolv_test = make_env_v2(size=size, num_pairs=-1, ratio_red_blue=1.0, num_paths=num_paths, num_distractors=5, ood_colors=True)
 
         for env, label, count in [(env_solv_test, 0, half_samples), (env_unsolv_test, 1, half_samples)]:
-            env.reset(seed=start_seed)
+            env.reset()
             for _ in tqdm(range(count), desc=f"Generating {label} OOD combined"):
                 obs, _ = env.reset()
                 edges = env.get_wrapper_attr('get_attn_edges')()

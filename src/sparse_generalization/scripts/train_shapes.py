@@ -103,11 +103,11 @@ def main(cfg: DictConfig):
                 
             val_loaders = []
             for val_dataset in val_sets:
-                val_loaders.append(DataLoader(val_dataset, 256))
+                val_loaders.append(DataLoader(val_dataset, 512))
                 
             test_loaders = []
             for test_dataset in test_sets:
-                test_loaders.append(DataLoader(test_dataset, 512))
+                test_loaders.append(DataLoader(test_dataset, 1024))
             
             model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
             trainer = Trainer(**cfg.trainer, logger=logger)

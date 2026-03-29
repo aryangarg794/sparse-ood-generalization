@@ -73,8 +73,9 @@ class TransformerLit(pl.LightningModule):
         eps: float = 1e-3,
         var: float = 1.0
     ):
-        self.betas = (beta1, beta2)
         super().__init__()
+        self.save_hyperparameters()
+        self.betas = (beta1, beta2)
         self.loss = loss()
         self.sparse = include_sparsity
         self.noisy_grads = noisy_grads

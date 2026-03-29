@@ -1,5 +1,6 @@
 import dill
 import os
+import torch
 
 from hydra.utils import to_absolute_path
 
@@ -58,25 +59,32 @@ def get_shapes_datasets(size: int, data_dir: str, one_hot: bool):
 
 
 def get_boxworld_datasets(size: int, num_pairs: int, data_dir: str, one_hot: bool = False):
-    data_path = os.path.join(data_dir, f"boxworld_v2_train_{size}_pairs{num_pairs}.pl")
+    data_path = os.path.join(data_dir, f"boxworld_v2_train_pairs{num_pairs}.pl")
     data_path = to_absolute_path(data_path)
     data_cls = OneHotBoxWorld if one_hot else BasicDataset
     
     with open(data_path, 'rb') as file:
         train_data = dill.load(file)
         file.close()
-        
-    dataset = data_cls(train_data['X_train'], train_data['Y_train'])
 
-    test_id_path = to_absolute_path(os.path.join(data_dir, f"boxworld_v2_test_id_pairs{num_pairs}.pl"))
-    with open(test_id_path, 'rb') as file:
-        test_id = dill.load(file)
-        file.close()
+    midpoint = train_data['X_train'].size(0) // 2
+    X_train_pos = train_data['X_train'][:midpoint]
+    Y_train_pos = train_data['Y_train'][:midpoint]
+    X_train_neg = train_data['X_train'][midpoint:]
+    Y_train_neg = train_data['Y_train'][midpoint:]
 
-    val_id_path = to_absolute_path(os.path.join(data_dir, f"boxworld_v2_val_id_pairs{num_pairs}.pl"))
-    with open(val_id_path, 'rb') as file:
-        val_id = dill.load(file)
-        file.close()
+    half_size = size // 2
+
+    X_train = torch.cat([X_train_pos[:half_size], X_train_neg[:half_size]], dim=0)
+    Y_train = torch.cat([Y_train_pos[:half_size], Y_train_neg[:half_size]], dim=0)
+
+    X_val = torch.cat([X_train_pos[20000:20500], X_train_neg[20000:20500]], dim=0)
+    Y_val = torch.cat([Y_train_pos[20000:20500], Y_train_neg[20000:20500]], dim=0)
+
+    X_test = torch.cat([X_train_pos[20500:], X_train_neg[20500:]], dim=0)
+    Y_test = torch.cat([Y_train_pos[20500:], Y_train_neg[20500:]], dim=0)
+
+    dataset = data_cls(X_train, Y_train)
 
     test_col_path = to_absolute_path(os.path.join(data_dir, f"boxworld_v2_test_col_pairs{num_pairs}.pl"))
     with open(test_col_path, 'rb') as file:
@@ -118,8 +126,8 @@ def get_boxworld_datasets(size: int, num_pairs: int, data_dir: str, one_hot: boo
         val_comb = dill.load(file)
         file.close()
 
-    val_dataset_id = data_cls(val_id['X_train'], val_id['Y_train'])
-    test_dataset_id = data_cls(test_id['X_train'], test_id['Y_train'])
+    val_dataset_id = data_cls(X_val, Y_val)
+    test_dataset_id = data_cls(X_test, Y_test)
     val_dataset_col = data_cls(val_col['X_col'], val_col['Y_col'])
     test_dataset_col = data_cls(test_col['X_col'], test_col['Y_col'])
     val_dataset_pair = data_cls(val_pair['X_pair'], val_pair['Y_pair'])

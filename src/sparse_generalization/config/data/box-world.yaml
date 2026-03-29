@@ -3,7 +3,7 @@ data_func:
   _partial_: true
   size: 5000
   num_pairs: 2
-  one_hot: true
+  one_hot: false
   data_dir: data/box_world
 
 val_to_name:
