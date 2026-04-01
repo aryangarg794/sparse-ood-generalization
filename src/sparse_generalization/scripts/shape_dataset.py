@@ -17,11 +17,11 @@ def is_horizontal_adjacent(grid, shape1, shape2):
                 return True
     return False
 
-def generate_grid(size=6, label_A=False, mode='train'):
+def generate_grid_adjacent(size=6, label_A=False, mode='train'):
     assert size <= 8, 'Only have enough shapes for 8x8'
-    rows, cols = size,size
-    grid = np.empty((rows,cols),dtype=object)
-    remaining = SHAPES.copy()
+
+    grid = np.empty((size,size),dtype=object)
+    remaining = SHAPES.copy()[:(size**2)]
 
     positions = [(x, y) for x in range(size) for y in range(size)]
     inner_positions = []
@@ -98,9 +98,90 @@ def generate_grid(size=6, label_A=False, mode='train'):
     
     return grid
 
+def generate_grid_row(size=6, label_A=False, mode='train'):
+    assert size <= 8, 'Only have enough shapes for 8x8'
+    rows, cols = size,size
+    grid = np.empty((rows,cols),dtype=object)
+    remaining = SHAPES.copy()[:(size**2)]
+
+    positions = np.zeros((size, size), dtype=np.bool)
+    coords = [(x, y) for x in range(size) for y in range(size)]
+        
+    if label_A:
+        if mode == 'train':
+            for shape in ['heart', 'star', 'circle', 'square']:
+                remaining.remove(shape)
+
+            for shapeA, shapeB in [('heart', 'star'), ('circle', 'square')]:
+                posA = random.choice(coords)
+                positions[*posA] = True
+                coords.remove(posA)
+
+                new_y = random.randint(0, size-1)
+                posB = (posA[0], new_y)
+                while positions[*posB]:
+                    new_y = random.randint(0, size-1)
+                    posB = (posA[0], new_y)
+                
+                positions[*posB] = True
+                coords.remove(posB)
+
+                grid[*posA] = shapeA
+                grid[*posB] = shapeB            
+
+        
+        elif mode == 'test_a':
+            for shape in ['heart', 'star']:
+                remaining.remove(shape)
+
+            posA = random.choice(coords)
+            positions[*posA] = True
+            coords.remove(posA)
+
+            new_y = random.randint(0, size-1)
+            posB = (posA[0], new_y)
+            while positions[*posB]:
+                new_y = random.randint(0, size-1)
+                posB = (posA[0], new_y)
+            
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = 'heart'
+            grid[*posB] = 'star' 
+
+        elif mode == 'test_b':
+            for shape in ['circle', 'square']:
+                remaining.remove(shape)
+
+            posA = random.choice(coords)
+            positions[*posA] = True
+            coords.remove(posA)
+
+            new_y = random.randint(0, size-1)
+            posB = (posA[0], new_y)
+            while positions[*posB]:
+                new_y = random.randint(0, size-1)
+                posB = (posA[0], new_y)
+            
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = 'circle'
+            grid[*posB] = 'square'
+
+    random.shuffle(remaining)
+    idx = 0
+    for x, y in coords:
+        grid[x, y] = remaining[idx]
+        idx += 1
+    
+    return grid
+
 def generate_dataset(
     num_samples: int = 500, 
     mode: str = 'train', 
+    func: str = 'row', 
     visualize: bool = True, 
     size: int = 8,
     file_path: str = 'data/shapes/shapes'
@@ -113,9 +194,10 @@ def generate_dataset(
     # train
     samples = []
     labels = []
+    data_func = generate_grid_row if func == 'row' else generate_grid_adjacent
     for label in [True, False]:
         for _ in range(half_samples):
-            grid = generate_grid(size=size, label_A=label, mode=mode)
+            grid = data_func(size=size, label_A=label, mode=mode)
             inp_tensor = torch.zeros((size, size, 1), dtype=torch.int64)
             for x in range(size):
                 for y in range(size):
@@ -127,7 +209,7 @@ def generate_dataset(
     dataset[f'Y_{mode}'] = torch.stack(labels, dim=0)       
 
     print('Saving')
-    file_path = file_path + f'_{name}_{num_samples}.pl'
+    file_path = file_path + f'_{name}_{num_samples}_size{size}.pl'
     with open(file_path, 'wb') as f:
         dill.dump(dataset, f)
 
@@ -137,6 +219,7 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--num_samples', type=int, default=250, help='numnber of samples')
     parser.add_argument('-s', '--size', type=int, default=8, help='size')
     parser.add_argument('-m', '--mode', type=str, default='train', help='mode name')
+    parser.add_argument('-f', '--func', type=str, default='row', help='mode name')
 
     args = parser.parse_args()
     generate_dataset(

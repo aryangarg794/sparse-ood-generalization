@@ -2,55 +2,69 @@ import dill
 import os
 import torch
 
+from functools import partial
 from hydra.utils import to_absolute_path
 
-from sparse_generalization.utils.datasets import BasicDataset, OneHotBoxWorld
+from sparse_generalization.utils.datasets import BasicDataset, OneHotBoxWorld, ShapesDataset
 
-def get_shapes_datasets(size: int, data_dir: str, one_hot: bool):
-    data_path = os.path.join(data_dir, f"shapes_train_{size}.pl")
+def get_shapes_datasets(size: int, data_dir: str, grid_size: int, one_hot: bool):
+    data_path = os.path.join(data_dir, f"shapes_train_size{grid_size}.pl")
     data_path = to_absolute_path(data_path)
+    data_cls = partial(ShapesDataset, one_hot=one_hot, size=grid_size)
 
     with open(data_path, 'rb') as file:
         train_data = dill.load(file)
         file.close()
 
-    test_id_path = os.path.join(data_dir, f"shapes_test.pl")
-    with open(test_id_path, 'rb') as file:
-        test_id = dill.load(file)
-        file.close()
-    
-    val_id_path = os.path.join(data_dir, f"shapes_val.pl")
-    with open(val_id_path, 'rb') as file:
-        val_id = dill.load(file)
-        file.close()
+    midpoint = train_data['X_train'].size(0) // 2
+    X_train_pos = train_data['X_train'][:midpoint]
+    Y_train_pos = train_data['Y_train'][:midpoint]
+    X_train_neg = train_data['X_train'][midpoint:]
+    Y_train_neg = train_data['Y_train'][midpoint:]
 
-    test_a_path = os.path.join(data_dir, f"shapes_test_a.pl")
+    half_size = size // 2
+
+    X_train = torch.cat([X_train_pos[:half_size], X_train_neg[:half_size]], dim=0)
+    Y_train = torch.cat([Y_train_pos[:half_size], Y_train_neg[:half_size]], dim=0)
+
+    X_val = torch.cat([X_train_pos[20000:20500], X_train_neg[20000:20500]], dim=0)
+    Y_val = torch.cat([Y_train_pos[20000:20500], Y_train_neg[20000:20500]], dim=0)
+
+    X_test = torch.cat([X_train_pos[20500:], X_train_neg[20500:]], dim=0)
+    Y_test = torch.cat([Y_train_pos[20500:], Y_train_neg[20500:]], dim=0)
+
+    assert X_train.size(0) == size
+    assert X_val.size(0) == 1000
+    assert X_test.size(0) == 5000
+
+    dataset = data_cls(X_train, Y_train)
+
+    test_a_path = os.path.join(data_dir, f"shapes_test_a_size{grid_size}.pl")
     with open(test_a_path, 'rb') as file:
         test_a = dill.load(file)
         file.close()
 
-    test_b_path = os.path.join(data_dir, f"shapes_test_b.pl")
+    test_b_path = os.path.join(data_dir, f"shapes_test_b_size{grid_size}.pl")
     with open(test_b_path, 'rb') as file:
         test_b = dill.load(file)
         file.close()
 
-    val_a_path = os.path.join(data_dir, f"shapes_val_a.pl")
+    val_a_path = os.path.join(data_dir, f"shapes_val_a_size{grid_size}.pl")
     with open(val_a_path, 'rb') as file:
         val_a = dill.load(file)
         file.close()
 
-    val_b_path = os.path.join(data_dir, f"shapes_val_b.pl")
+    val_b_path = os.path.join(data_dir, f"shapes_val_b_size{grid_size}.pl")
     with open(val_b_path, 'rb') as file:
         val_b = dill.load(file)
         file.close()
         
-    dataset = BasicDataset(train_data['X_train'], train_data['Y_train'], one_hot)
-    val_dataset_id = BasicDataset(val_id['X_train'], val_id['Y_train'], one_hot)
-    val_dataset_a = BasicDataset(val_a['X_test_a'], val_a['Y_test_a'], one_hot)
-    val_dataset_b = BasicDataset(val_b['X_test_b'], val_b['Y_test_b'], one_hot)
-    test_dataset_id = BasicDataset(test_id['X_train'], test_id['Y_train'], one_hot)
-    test_dataset_a = BasicDataset(test_a['X_test_a'], test_a['Y_test_a'], one_hot)
-    test_dataset_b = BasicDataset(test_b['X_test_b'], test_b['Y_test_b'], one_hot)
+    val_dataset_id = data_cls(X_val, Y_val)
+    val_dataset_a = data_cls(val_a['X_test_a'], val_a['Y_test_a'])
+    val_dataset_b = data_cls(val_b['X_test_b'], val_b['Y_test_b'])
+    test_dataset_id = data_cls(X_test, Y_test)
+    test_dataset_a = data_cls(test_a['X_test_a'], test_a['Y_test_a'])
+    test_dataset_b = data_cls(test_b['X_test_b'], test_b['Y_test_b'])
     
     val_sets = [val_dataset_id, val_dataset_a, val_dataset_b]
     test_sets = [test_dataset_id, test_dataset_a, test_dataset_b]

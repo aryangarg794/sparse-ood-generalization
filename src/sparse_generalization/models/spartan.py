@@ -243,7 +243,7 @@ class SPARTAN(nn.Module):
                 
                 if self.lagrangian:
                     self.lambd = torch.exp(self.step_size*self.ema_loss) * self.lambd
-                    self.lambd = torch.clamp(self.lambd, min=5e4, max=1e15)
+                    self.lambd = torch.clamp(self.lambd, min=5e3, max=1e15)
                 
                 epoch_loss += rec_loss.item()
                 with torch.no_grad():
