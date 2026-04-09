@@ -286,14 +286,14 @@ class ExtraTokenAttention(nn.Module):
                     [torch.zeros_like(mask_logits), mask_logits], dim=-1
                 )
                 A = gumbel_softmax(edges_logit, tau=self.temp, hard=True)
-                A = A[:, :, -1].reshape(batch_heads, 1, seq_len)
+                A = A[:, :, -1].reshape(batch_heads, seq_len, seq_len)
             else:
                 edges_logit = attention_logits.view(batch_heads, -1)  # (b*h, l*l)
                 edges_logit = torch.stack(
                     [torch.zeros_like(edges_logit), edges_logit], dim=-1
                 )
                 A = gumbel_softmax(edges_logit, tau=self.temp, hard=True)
-                A = A[:, :, -1].reshape(batch_heads, 1, seq_len)
+                A = A[:, :, -1].reshape(batch_heads, seq_len, seq_len)
             
             attention_probs = A * attention_probs
 
