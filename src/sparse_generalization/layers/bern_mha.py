@@ -24,7 +24,8 @@ class MultiHeadAttentionBern(nn.Module):
         temp: float = 1.0,
         hard: bool = True, 
         residual: bool = False, 
-        separate_mask: bool = False, 
+        separate_mask: bool = False,
+        mask_residuals: bool = False,  
         *args, 
         **kwargs
     ):
