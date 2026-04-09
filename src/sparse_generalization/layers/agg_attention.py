@@ -224,7 +224,7 @@ class ExtraTokenAttention(nn.Module):
 
     def forward(self, x: Tensor, sum_heads: bool = True):
         batch_size, seq_len, _ = x.size()
-        seq_len =+ 1
+        seq_len += 1
         x = torch.cat([x, self.clf_token.repeat(batch_size, 1, 1)], dim=1)
         
         queries = self.queries(x)  # (b, l+1, d)
@@ -259,7 +259,7 @@ class ExtraTokenAttention(nn.Module):
 
         out = self.mlp(attention_repr[:, -1, :])
 
-        return out, attention_probs[:, :-1, :-1]
+        return out, attention_probs[:, -1, -1]
 
     def _attention(
         self: Self,
