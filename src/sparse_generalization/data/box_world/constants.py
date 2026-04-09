@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 TILE_PIXELS = 32
 import numpy as np
 
@@ -32,7 +31,6 @@ COLORS = {
     "darkcyan": np.array([0, 139, 139]),
     "mediumvioletred": np.array([199, 21, 133]),
     "mediumslateblue": np.array([123, 104, 238]),
-    
     # ood
     "aliceblue": np.array([240, 248, 255]),
     "aquamarine": np.array([127, 255, 212]),
@@ -92,9 +90,9 @@ OBJECT_TO_IDX = {
     "goal": 8,
     "lava": 9,
     "agent": 10,
-    "tile": 11, 
-    "keybox": 12, 
-    "lockbox": 13, 
+    "tile": 11,
+    "keybox": 12,
+    "lockbox": 13,
 }
 
 IDX_TO_OBJECT = dict(zip(OBJECT_TO_IDX.values(), OBJECT_TO_IDX.keys()))

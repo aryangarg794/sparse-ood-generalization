@@ -1,4 +1,4 @@
-"""File containing custom objects, most are taken from 
+"""File containing custom objects, most are taken from
 https://github.com/Farama-Foundation/Minigrid/blob/master/minigrid/core/world_object.py
 """
 
@@ -119,7 +119,7 @@ class Goal(WorldObj):
 
     def can_overlap(self):
         return True
-    
+
     def is_goal(self):
         return True
 
@@ -131,9 +131,9 @@ class Goal(WorldObj):
         else:
             fill_coords(img, point_in_rect(0.12, 0.88, 0.12, 0.88), COLORS[self.color])
             fill_coords(img, point_in_rect(0.18, 0.82, 0.18, 0.82), (0, 0, 0))
-            
+
         diamond_color = (255, 255, 255)
-        
+
         fill_coords(img, point_in_rect(0.35, 0.65, 0.30, 0.45), diamond_color)
         fill_coords(img, point_in_rect(0.40, 0.60, 0.45, 0.55), diamond_color)
         fill_coords(img, point_in_rect(0.45, 0.55, 0.55, 0.65), diamond_color)
@@ -294,27 +294,28 @@ class Ball(WorldObj):
 
 class KeyBox(WorldObj):
     """Box that contains the key to open other locks"""
-    def __init__(self, color, index = None, first_key = False, path = None):
+
+    def __init__(self, color, index=None, first_key=False, path=None):
         super().__init__("keybox", color)
         self.interactable = False
         self.first_key = first_key
         if first_key:
             self.interactable = True
-        self.index = index # key of the index in the path
-        self.path = path # on which path is the key
-        
-    def is_key(self): 
+        self.index = index  # key of the index in the path
+        self.path = path  # on which path is the key
+
+    def is_key(self):
         return True
-    
-    def is_lock(self): 
+
+    def is_lock(self):
         return False
 
     def can_pickup(self):
         return self.interactable
-    
+
     def is_first_key(self):
         return self.first_key
-    
+
     def can_overlap(self):
         return True
 
@@ -327,33 +328,34 @@ class KeyBox(WorldObj):
 
         # Horizontal slit
         # fill_coords(img, point_in_rect(0.16, 0.84, 0.47, 0.53), c)
-        
-        
+
+
 class LockBox(WorldObj):
     """Box that contains the lock and needs a key to be opened"""
-    def __init__(self, color, index = None, goal_lock = False, path = None):
+
+    def __init__(self, color, index=None, goal_lock=False, path=None):
         super().__init__("lockbox", color)
         self.pickable = False
         self.goal_lock = goal_lock
         self.unlockable = False
         self.index = index
         self.path = path
-    
+
     def is_goal_lock(self):
         return self.goal_lock
-    
+
     def is_lock(self):
         return True
-    
+
     def is_key(self):
         return False
-    
+
     def can_overlap(self):
         return True
-    
+
     def can_pickup(self):
         return self.unlockable
-    
+
     def render(self, img):
         c = COLORS[self.color]
 
@@ -363,15 +365,16 @@ class LockBox(WorldObj):
 
         # Horizontal slit
         # fill_coords(img, point_in_rect(0.16, 0.84, 0.47, 0.53), c)
-    
+
+
 class Tile(WorldObj):
     def __init__(self, color):
         super().__init__("tile", color)
-        
+
     def render(self, img):
         fill_coords(img, point_in_rect(0, 1, 0, 1), COLORS[self.color])
-        
-        
+
+
 class Box(WorldObj):
     def __init__(self, color, contains: WorldObj | None = None):
         super().__init__("box", color)

@@ -1,93 +1,105 @@
 import numpy as np
-import torch 
+import torch
 import torch.nn as nn
 
 from torch import Tensor
 from torch.nn.functional import softmax
 from typing import Self
 
-from sparse_generalization.models.mlp import BasicMLP 
+from sparse_generalization.models.mlp import BasicMLP
+
 
 class AggregationAttention(nn.Module):
-    
+
     def __init__(
-        self, 
-        num_heads: int, 
-        embed_size: int, 
-        out_dim: int, 
-        dropout: float, 
-        residual: bool, 
+        self,
+        num_heads: int,
+        embed_size: int,
+        out_dim: int,
+        dropout: float,
+        residual: bool,
         hidden_dims: list,
         act: nn.Module = nn.ReLU,
-        device: str = 'cuda', 
-        layernorm: bool = True, 
-        *args, 
-        **kwargs
+        device: str = "cuda",
+        layernorm: bool = True,
+        *args,
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         if embed_size % num_heads != 0:
-            raise SyntaxError(f'Embed Size not divisible by number of heads, embed_size % num_heads = {embed_size % num_heads}')        
-        
+            raise SyntaxError(
+                f"Embed Size not divisible by number of heads, embed_size % num_heads = {embed_size % num_heads}"
+            )
+
         self.embed_size = embed_size
         self.heads = num_heads
         self.dk = embed_size // num_heads
         self.residual = residual
         self.layernorm = layernorm
-        
+
         self.query = nn.Parameter(torch.rand((1, embed_size), device=device))
-        
+
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
         self.values = nn.Linear(embed_size, embed_size)
-        
+
         self.ln = nn.LayerNorm(embed_size)
-        
-        self.mlp = BasicMLP(embed_size, out_dim, 
-                            hidden_dims=hidden_dims, 
-                            act=act, dropout=dropout)
-    
+
+        self.mlp = BasicMLP(
+            embed_size, out_dim, hidden_dims=hidden_dims, act=act, dropout=dropout
+        )
+
     def _split_heads(self: Self, x: Tensor):
         batch_size, seq_len, _ = x.size()
-        return x.reshape(batch_size, seq_len, self.heads, self.dk).transpose(1, 2).reshape(
-            batch_size * self.heads, seq_len, self.dk)
-    
+        return (
+            x.reshape(batch_size, seq_len, self.heads, self.dk)
+            .transpose(1, 2)
+            .reshape(batch_size * self.heads, seq_len, self.dk)
+        )
+
     def _merge_heads(self: Self, x: Tensor):
         batch_size, _, seq_len, _ = x.size()
-        return x.reshape(batch_size, self.heads, seq_len, self.dk).transpose(1, 2).reshape(
-            batch_size, seq_len, self.dk * self.heads) 
-    
+        return (
+            x.reshape(batch_size, self.heads, seq_len, self.dk)
+            .transpose(1, 2)
+            .reshape(batch_size, seq_len, self.dk * self.heads)
+        )
+
     def forward(self, x: Tensor, sum_heads: bool = True):
         batch_size, seq_len, _ = x.size()
-        queries = self.queries(self.query.repeat(batch_size, 1, 1)) # (b, 1, d)
-        keys = self.keys(x) # (b, l, d)
-        values = self.values(x) # (b, l, d)
-        
-        queries_split = self._split_heads(queries) # (b * h, 1, d_k)
+        queries = self.queries(self.query.repeat(batch_size, 1, 1))  # (b, 1, d)
+        keys = self.keys(x)  # (b, l, d)
+        values = self.values(x)  # (b, l, d)
+
+        queries_split = self._split_heads(queries)  # (b * h, 1, d_k)
         keys_split = self._split_heads(keys)
         values_split = self._split_heads(values)
-            
-        
-        attention_repr, attention_probs = self._attention(queries_split,
-                                        keys_split, 
-                                        values_split)
 
-        attention_repr = self._merge_heads(attention_repr) # (b, 1, d)
-        
+        attention_repr, attention_probs = self._attention(
+            queries_split, keys_split, values_split
+        )
+
+        attention_repr = self._merge_heads(attention_repr)  # (b, 1, d)
+
         if sum_heads:
             attention_probs = attention_probs.sum(dim=1)
-            
+
         if self.layernorm:
             attention_repr = self.ln(attention_repr)
 
         out = self.mlp(attention_repr.squeeze(dim=1))
-        
-        return out, attention_probs 
-    
+
+        return out, attention_probs
+
     def _attention(self: Self, query: Tensor, key: Tensor, value: Tensor):
         batch_heads, seq_len, _ = key.size()
-        attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(self.dk) # (bh, 1, dk) @ (bh, dk, l) 
-        
-        attention_probs = softmax(attention_logits, dim=-1) # (bh, 1, l)
-        hidden_repr = torch.bmm(attention_probs, value) # (bh, 1, l) @ (bh, l, dk)
-        
-        return hidden_repr.view(-1, self.heads, 1, self.dk), attention_probs.view(-1, self.heads, 1, seq_len)
+        attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(
+            self.dk
+        )  # (bh, 1, dk) @ (bh, dk, l)
+
+        attention_probs = softmax(attention_logits, dim=-1)  # (bh, 1, l)
+        hidden_repr = torch.bmm(attention_probs, value)  # (bh, 1, l) @ (bh, l, dk)
+
+        return hidden_repr.view(-1, self.heads, 1, self.dk), attention_probs.view(
+            -1, self.heads, 1, seq_len
+        )
