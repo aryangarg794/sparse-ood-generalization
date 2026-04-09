@@ -5,6 +5,7 @@ inp_dim: 25
 out_dim: 1 
 hidden_dims_ffn: [128, 128]
 layernorm: true
+agg_pool: false
 model_dim: 30
 embedding_inp: false
 num_feature_layers: 3

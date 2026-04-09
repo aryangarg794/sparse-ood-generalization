@@ -15,6 +15,7 @@ from tqdm import tqdm
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockBern, MHABlockOracle
+from sparse_generalization.layers.agg_attention import AggregationAttention
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
 from sparse_generalization.utils.util_funcs import positionalencoding2d
 
@@ -30,6 +31,7 @@ class SPARTAN(nn.Module):
         num_feature_layers: int = 3,
         num_heads: int = 1,
         num_layers: int = 4,
+        agg_pool: bool = False,
         residual: bool = True,
         include_sparsity: bool = False,
         path_sparsity: bool = True,
@@ -64,6 +66,7 @@ class SPARTAN(nn.Module):
         self.model_dim = model_dim
         self.num_heads = num_heads
         self.num_layers = num_layers
+        self.agg_pool = agg_pool
 
         if not embedding_inp:
             self.feature_map = nn.Sequential(
@@ -109,7 +112,8 @@ class SPARTAN(nn.Module):
             )
         )
 
-        for _ in range(num_layers - 1):
+        num_layers = num_layers - 1
+        for _ in range(num_layers):
             self.layers.append(
                 MHABlockBern(
                     embed_size=self.embed_size,
@@ -124,7 +128,19 @@ class SPARTAN(nn.Module):
                 )
             )
 
-        self.ffn = nn.Linear(self.embed_size, out_dim)
+        if self.agg_pool:
+            self.out = AggregationAttention(
+                num_heads=num_heads,
+                embed_size=self.embed_size,
+                out_dim=out_dim,
+                residual=residual,
+                hidden_dims=hidden_dims_ffn,
+                act=act,
+                dropout=dropout,
+                layernorm=layernorm,
+            )
+        else:
+            self.out = nn.Linear(self.embed_size, out_dim)
 
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
@@ -193,10 +209,15 @@ class SPARTAN(nn.Module):
             else:
                 masks.append(mask)
 
-        x_attn = x_attn.max(dim=1)[0]
-        out = self.ffn(x_attn)
+        if self.agg_pool:
+            out, agg_attn = self.out(x_attn)
+        else:
+            out = self.out(x_attn.max(dim=1)[0])
 
-        return out, masks, attn_matrices  # (b, k, l, l)
+        if self.agg_pool:
+            path_matrix = torch.bmm(agg_attn, attn_matrices)
+
+        return out, masks, path_matrix  # (b, k, l, l)
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []

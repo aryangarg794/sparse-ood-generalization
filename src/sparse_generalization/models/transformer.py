@@ -17,7 +17,7 @@ from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
 from sparse_generalization.losses.sparse_loss import L1SparsityWeights
 from sparse_generalization.utils.util_funcs import noise_scheduler
 from sparse_generalization.models.blocks import MHABlock
-from sparse_generalization.layers.agg_attention import AggregationAttention
+from sparse_generalization.layers.agg_attention import AggregationAttention, ExtraTokenAttention
 from sparse_generalization.utils.util_funcs import positionalencoding2d
 
 
@@ -36,6 +36,7 @@ class TransformerLit(pl.LightningModule):
         num_heads: int = 1,  # for the toy example just keep it one
         hidden_dims: List = list([128, 128]),
         agg_pool: bool = False,
+        token_pool: bool = False,
         layernorm: bool = True,
         num_feature_layers: int = 3,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
@@ -81,6 +82,7 @@ class TransformerLit(pl.LightningModule):
         self.eps = eps
         self.var = var
         self.agg_pool = agg_pool
+        self.token_pool = token_pool
         self.embedding_inp = embedding_inp
 
         if include_sparsity:
@@ -138,7 +140,7 @@ class TransformerLit(pl.LightningModule):
             )
         )
 
-        num_layers = num_layers - 1 if not self.agg_pool else num_layers - 2
+        num_layers = num_layers - 1 
         for _ in range(num_layers):
             self.layers.append(
                 MHABlock(
@@ -156,6 +158,17 @@ class TransformerLit(pl.LightningModule):
 
         if self.agg_pool:
             self.out = AggregationAttention(
+                num_heads=num_heads,
+                embed_size=self.embed_size,
+                out_dim=out_dim,
+                residual=residual,
+                hidden_dims=hidden_dims,
+                act=act,
+                dropout=dropout,
+                layernorm=layernorm,
+            )
+        elif self.token_pool:
+            self.out = ExtraTokenAttention(
                 num_heads=num_heads,
                 embed_size=self.embed_size,
                 out_dim=out_dim,
@@ -197,6 +210,8 @@ class TransformerLit(pl.LightningModule):
         self.losses_test = deepcopy(self.masks_test)
         self.accs_test = deepcopy(self.masks_test)
 
+        assert not (self.token_pool and self.agg_pool), "Cant have both agg and token pool"
+
     def _get_loss_acc(self: Self, batch):
         x, y = batch
         attn_matrices = []
@@ -230,15 +245,19 @@ class TransformerLit(pl.LightningModule):
             x_attn, attn = layer(x_attn)
             attn_matrices.append(attn)
 
-        if self.agg_pool:
-            y_hat, attn = self.out(x_attn)
+        if self.agg_pool or self.token_pool:
+            y_hat, agg_attn = self.out(x_attn)
         else:
             y_hat = self.out(x_attn.max(dim=1)[0])
 
         loss = self.loss(y_hat, y)
         acc = self.accuracy(y_hat, y)
+
         path_matrix = self._compute_thresh_path(attn_matrices)
-        return loss, acc, path_matrix  # (b, l, h, h)
+        if self.agg_pool or self.token_pool:
+            path_matrix = torch.bmm(agg_attn, path_matrix)
+
+        return loss, acc, path_matrix  # (b, h, h)
 
     def training_step(self, batch, batch_idx):
         if self.noisy_bern:  # NOTE: doesnt work
