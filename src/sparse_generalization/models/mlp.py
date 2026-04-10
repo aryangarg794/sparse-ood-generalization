@@ -72,6 +72,7 @@ class BasicMLPLit(pl.LightningModule):
         inp_size: int = 10,
     ):
         super().__init__()
+        self.save_hyperparameters()
         self.loss = loss()
         self.lr = lr
         self.wd = wd
@@ -101,6 +102,10 @@ class BasicMLPLit(pl.LightningModule):
 
         self.losses_test = {i: [] for i in val_to_name.values()}
         self.accs_test = {i: [] for i in val_to_name.values()}
+
+
+    def forward(self, x: Tensor):
+        return self.model(x)
 
     def _get_loss_acc(self: Self, batch):
         x, y = batch

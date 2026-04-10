@@ -130,10 +130,7 @@ def main(cfg: DictConfig):
                 model, train_dataloaders=train_loader, val_dataloaders=val_loaders
             )
             if cfg.save:
-                torch.save(
-                    model.model.state_dict(),
-                    f"checkpoints/{cfg.run_name}_{timestamp}.pt",
-                )
+                trainer.save_checkpoint(f"checkpoints/{cfg.run_name}_{timestamp}.ckpt")
 
             for i, name in enumerate(cfg.data.val_to_name.values()):
                 model.test_name = name

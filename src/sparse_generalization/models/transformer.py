@@ -125,22 +125,7 @@ class TransformerLit(pl.LightningModule):
         self.sinusoidal = sinusoidal
 
         self.layers = nn.ModuleList()
-
-        self.layers.append(
-            MHABlock(
-                embed_size=self.embed_size,
-                out_dim=self.embed_size,
-                residual=residual,
-                hidden_dims=hidden_dims,
-                act=act,
-                dropout=dropout,
-                mha_layer=mha_layer,
-                num_heads=num_heads,
-                layernorm=layernorm,
-            )
-        )
-
-        num_layers = num_layers - 1 
+        
         for _ in range(num_layers):
             self.layers.append(
                 MHABlock(

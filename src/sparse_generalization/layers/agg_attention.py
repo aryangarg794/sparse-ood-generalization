@@ -189,7 +189,7 @@ class ExtraTokenAttention(nn.Module):
         self.use_mask = use_mask
         self.temp = temp
 
-        self.clf_token = nn.Parameter(torch.rand((1, embed_size), device=device))
+        self.clf_token = nn.Parameter(torch.zeros((1, embed_size), device=device))
 
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
@@ -259,7 +259,7 @@ class ExtraTokenAttention(nn.Module):
 
         out = self.mlp(attention_repr[:, -1, :])
 
-        return out, attention_probs[:, -1, -1]
+        return out, attention_probs[:, -1, :-1].unsqueeze(1)
 
     def _attention(
         self: Self,
