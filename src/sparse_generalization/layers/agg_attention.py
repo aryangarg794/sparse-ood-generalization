@@ -87,7 +87,7 @@ class AggregationAttention(nn.Module):
         values_split = self._split_heads(values)
 
         if self.separate_mask:
-            queries_mask = self.queries_mask(self.queries_mask.repeat(batch_size, 1, 1))
+            queries_mask = self.queries_mask(self.query_mask.repeat(batch_size, 1, 1))
             queries_mask_split = self._split_heads(queries_mask)
             keys_mask = self.keys_mask(x)
             keys_mask_split = self._split_heads(keys_mask)
