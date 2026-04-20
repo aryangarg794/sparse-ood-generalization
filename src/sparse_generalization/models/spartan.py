@@ -36,8 +36,9 @@ class SPARTAN(nn.Module):
         include_sparsity: bool = False,
         path_sparsity: bool = True,
         alpha_res: bool = False,
+        alpha: float = 0.1, 
+        token_pool: bool = False,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
-        l1_weight: float = 0.1,
         lagrangian: bool = False,
         target_loss: float = 0.05,
         start_lambda: float = 1e7,
@@ -47,7 +48,7 @@ class SPARTAN(nn.Module):
         sinusoidal: bool = True,
         embedding_inp: bool = True,
         lr: float = 1e-3,
-        dropout: float = 0.1,
+        dropout: float = 0.1, 
         layernorm: bool = True,
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
@@ -67,6 +68,7 @@ class SPARTAN(nn.Module):
         self.num_heads = num_heads
         self.num_layers = num_layers
         self.agg_pool = agg_pool
+        self.token_pool = token_pool
 
         if not embedding_inp:
             self.feature_map = nn.Sequential(
@@ -139,6 +141,9 @@ class SPARTAN(nn.Module):
                 dropout=dropout,
                 layernorm=layernorm,
             )
+        elif self.token_pool:
+            self.cls = nn.Parameter(torch.rand(1, self.embed_size, device=self.device))
+            self.out = nn.Linear(self.embed_size, out_dim)
         else:
             self.out = nn.Linear(self.embed_size, out_dim)
 
@@ -153,9 +158,9 @@ class SPARTAN(nn.Module):
         self.sparse_loss = L1SparsityAdjacency()
         self.path_sparsity = path_sparsity
         self.lagrangian = lagrangian
+        self.alpha = alpha
         self.include_sparsity = include_sparsity if not self.lagrangian else True
         self.max_paths = None
-        self.l1_weight = l1_weight
         self.lambd = start_lambda
         self.target_loss = target_loss
         self.step_size = step_size
@@ -164,6 +169,10 @@ class SPARTAN(nn.Module):
         self.alpha_res = alpha_res
         self.val_to_name = val_to_name
         self.args = locals()
+
+    def _enforce_sparsity(self, attns):
+        num_edges = attns.sum(dim=(1, 2)) / self.max_paths
+        return (self.alpha - num_edges).pow(2).mean()
 
     def forward(self, x: Tensor):
         attn_matrices = []
@@ -201,9 +210,17 @@ class SPARTAN(nn.Module):
                 x_attn = torch.cat([x_features, coords], dim=-1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
 
+        if self.token_pool:
+            clses = self.cls.repeat(batch_size, 1, 1)
+            x_attn = torch.cat([x_attn, clses], dim=1)
+
         for layer in self.layers:
             x_attn, mask, attn = layer(x_attn)
             attn_matrices.append(attn)
+
+            if self.token_pool: 
+                mask = mask[:, :-1, :-1]
+
             if self.path_sparsity:
                 masks = torch.bmm(mask, masks)
             else:
@@ -211,13 +228,15 @@ class SPARTAN(nn.Module):
 
         if self.agg_pool:
             out, agg_attn = self.out(x_attn)
+        elif self.token_pool:
+            out = self.out(x_attn[:, -1, :])
         else:
             out = self.out(x_attn.max(dim=1)[0])
 
         if self.agg_pool:
-            path_matrix = torch.bmm(agg_attn, attn_matrices)
+            masks = torch.bmm(agg_attn, masks)
 
-        return out, masks, path_matrix  # (b, k, l, l)
+        return out, masks, attn_matrices  # (b, k, l, l)
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []
@@ -264,11 +283,7 @@ class SPARTAN(nn.Module):
                         sparse_loss = self.sparse_loss(path_matrix)
                         loss = rec_loss + sparse_loss / self.lambd
                     else:
-                        sparse_loss = (
-                            self.l1_weight
-                            * self.sparse_loss(path_matrix)
-                            / self.max_paths
-                        )
+                        sparse_loss = self._enforce_sparsity(path_matrix)
                         loss = rec_loss + sparse_loss
 
                     epoch_sparse += sparse_loss.item()
@@ -428,7 +443,7 @@ class SPARTAN(nn.Module):
 
     def _compute_max_paths(self, seq_len: int):
         paths = torch.ones((seq_len, seq_len)) * self.num_heads
-        for l in range(self.num_layers):
+        for l in range(self.num_layers-1):
             multiplier = torch.ones((seq_len, seq_len)) * self.num_heads
             paths = paths @ multiplier
 

@@ -61,7 +61,7 @@ class BasicCNN(nn.Module):
 
         self.layers.extend(
             [
-                nn.MaxPool2d(kernel_size=3, stride=1),
+                nn.MaxPool2d(kernel_size=2, stride=2),
                 act(),
             ]
         )

@@ -254,6 +254,287 @@ def generate_grid_row(size=6, label_A=False, mode="train"):
 
     return grid
 
+def generate_grid_same_row(size=6, label_A=False, mode="train"):
+    assert size <= 8, "Only have enough shapes for 8x8"
+    rows, cols = size, size
+    grid = np.empty((rows, cols), dtype=object)
+    remaining = SHAPES.copy()[: (size**2)]
+
+    positions = np.zeros((size, size), dtype=np.bool)
+    coords = [(x, y) for x in range(size) for y in range(size)]
+
+    if label_A:
+        if mode == "train":
+            for shape in ["heart", "star", "circle", "square"]:
+                remaining.remove(shape)
+
+            chosen_row = random.randint(0, size - 1)
+            for shapeA, shapeB in [("heart", "star"), ("circle", "square")]:
+                yA = random.randint(0, size - 1)
+                posA = (chosen_row, yA)
+                while positions[*posA]:
+                    yA = random.randint(0, size - 1)
+                    posA = (chosen_row, yA)
+                positions[*posA] = True
+                coords.remove(posA)
+
+                new_y = random.randint(0, size - 1)
+                posB = (chosen_row, new_y)
+                while positions[*posB]:
+                    new_y = random.randint(0, size - 1)
+                    posB = (chosen_row, new_y)
+
+                positions[*posB] = True
+                coords.remove(posB)
+
+                grid[*posA] = shapeA
+                grid[*posB] = shapeB
+
+            assert is_same_row(grid, "heart", "star")
+            assert is_same_row(grid, "circle", "square")
+
+        elif mode == "test_a":
+            for shape in ["heart", "star", "circle", "square"]:
+                remaining.remove(shape)
+
+            posA = random.choice(coords)
+            positions[*posA] = True
+            coords.remove(posA)
+
+            new_y = random.randint(0, size - 1)
+            posB = (posA[0], new_y)
+            while positions[*posB]:
+                new_y = random.randint(0, size - 1)
+                posB = (posA[0], new_y)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = "heart"
+            grid[*posB] = "star"
+
+            posA = random.choice(coords)
+            coords.remove(posA)
+            positions[*posA] = True
+
+            posB = random.choice(coords)
+            while posA[0] == posB[0]:
+                posB = random.choice(coords)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = "circle"
+            grid[*posB] = "square"
+
+            assert is_same_row(grid, "heart", "star")
+            assert not is_same_row(grid, "circle", "square")
+
+        elif mode == "test_b":
+            for shape in ["heart", "star", "circle", "square"]:
+                remaining.remove(shape)
+
+            posA = random.choice(coords)
+            positions[*posA] = True
+            coords.remove(posA)
+
+            new_y = random.randint(0, size - 1)
+            posB = (posA[0], new_y)
+            while positions[*posB]:
+                new_y = random.randint(0, size - 1)
+                posB = (posA[0], new_y)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = "circle"
+            grid[*posB] = "square"
+
+            posA = random.choice(coords)
+            coords.remove(posA)
+            positions[*posA] = True
+
+            posB = random.choice(coords)
+            while posA[0] == posB[0]:
+                posB = random.choice(coords)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = "heart"
+            grid[*posB] = "star"
+
+            assert is_same_row(grid, "circle", "square")
+            assert not is_same_row(grid, "heart", "star")
+    else:
+        for shape in ["heart", "star", "circle", "square"]:
+            remaining.remove(shape)
+
+        for shapeA, shapeB in [("heart", "star"), ("circle", "square")]:
+            posA = random.choice(coords)
+            positions[*posA] = True
+            coords.remove(posA)
+
+            posB = random.choice(coords)
+            while posA[0] == posB[0]:
+                posB = random.choice(coords)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = shapeA
+            grid[*posB] = shapeB
+
+        assert not is_same_row(grid, "heart", "star")
+        assert not is_same_row(grid, "circle", "square")
+
+    random.shuffle(remaining)
+    idx = 0
+    for x, y in coords:
+        grid[x, y] = remaining[idx]
+        idx += 1
+
+    return grid
+
+def generate_grid_row_col(size=6, label_A=False, mode="train"):
+    assert size <= 8, "Only have enough shapes for 8x8"
+    rows, cols = size, size
+    grid = np.empty((rows, cols), dtype=object)
+    remaining = SHAPES.copy()[: (size**2)]
+
+    positions = np.zeros((size, size), dtype=np.bool)
+    coords = [(x, y) for x in range(size) for y in range(size)]
+
+    if label_A:
+        if mode == "train":
+            for shape in ["heart", "star", "circle", "square"]:
+                remaining.remove(shape)
+
+            r = random.randint(0, size - 1)
+            c1, c2 = random.sample(range(size), 2)
+            
+            grid[r, c1] = "circle"
+            grid[r, c2] = "square"
+            positions[r, c1] = True
+            positions[r, c2] = True
+            coords.remove((r, c1))
+            coords.remove((r, c2))
+
+            r2 = random.randint(0, size - 1)
+            while r2 == r:
+                r2 = random.randint(0, size - 1)
+            
+            grid[r2, c1] = "heart"
+            grid[r2, c2] = "star"
+            positions[r2, c1] = True
+            positions[r2, c2] = True
+            coords.remove((r2, c1))
+            coords.remove((r2, c2))
+
+            assert is_same_row(grid, "circle", "square")
+            assert is_same_row(grid, "heart", "star")
+
+        elif mode == "test_a":
+            for shape in ["heart", "star", "circle", "square"]:
+                remaining.remove(shape)
+
+            posA = random.choice(coords)
+            positions[*posA] = True
+            coords.remove(posA)
+
+            new_y = random.randint(0, size - 1)
+            posB = (posA[0], new_y)
+            while positions[*posB]:
+                new_y = random.randint(0, size - 1)
+                posB = (posA[0], new_y)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = "heart"
+            grid[*posB] = "star"
+
+            posA = random.choice(coords)
+            coords.remove(posA)
+            positions[*posA] = True
+
+            posB = random.choice(coords)
+            while posA[0] == posB[0]:
+                posB = random.choice(coords)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = "circle"
+            grid[*posB] = "square"
+
+            assert is_same_row(grid, "heart", "star")
+            assert not is_same_row(grid, "circle", "square")
+
+        elif mode == "test_b":
+            for shape in ["heart", "star", "circle", "square"]:
+                remaining.remove(shape)
+
+            posA = random.choice(coords)
+            positions[*posA] = True
+            coords.remove(posA)
+
+            new_y = random.randint(0, size - 1)
+            posB = (posA[0], new_y)
+            while positions[*posB]:
+                new_y = random.randint(0, size - 1)
+                posB = (posA[0], new_y)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = "circle"
+            grid[*posB] = "square"
+
+            posA = random.choice(coords)
+            coords.remove(posA)
+            positions[*posA] = True
+
+            posB = random.choice(coords)
+            while posA[0] == posB[0]:
+                posB = random.choice(coords)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = "heart"
+            grid[*posB] = "star"
+
+            assert is_same_row(grid, "circle", "square")
+            assert not is_same_row(grid, "heart", "star")
+    else:
+        for shape in ["heart", "star", "circle", "square"]:
+            remaining.remove(shape)
+
+        for shapeA, shapeB in [("heart", "star"), ("circle", "square")]:
+            posA = random.choice(coords)
+            positions[*posA] = True
+            coords.remove(posA)
+
+            posB = random.choice(coords)
+            while posA[0] == posB[0]:
+                posB = random.choice(coords)
+
+            positions[*posB] = True
+            coords.remove(posB)
+
+            grid[*posA] = shapeA
+            grid[*posB] = shapeB
+
+    random.shuffle(remaining)
+    idx = 0
+    for x, y in coords:
+        grid[x, y] = remaining[idx]
+        idx += 1
+
+    return grid
+
+
 
 def generate_dataset(
     num_samples: int = 500,
@@ -271,7 +552,16 @@ def generate_dataset(
     # train
     samples = []
     labels = []
-    data_func = generate_grid_row if func == "row" else generate_grid_adjacent
+    match func:
+        case "row":
+            data_func = generate_grid_row
+        case "row_col":
+            data_func = generate_grid_row_col
+        case "same_row":
+            data_func = generate_grid_same_row
+        case "adj": 
+            data_func = generate_grid_adjacent
+
     for label in [True, False]:
         for _ in range(half_samples):
             grid = data_func(size=size, label_A=label, mode=mode)

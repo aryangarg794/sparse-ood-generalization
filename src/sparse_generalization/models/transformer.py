@@ -17,7 +17,8 @@ from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
 from sparse_generalization.losses.sparse_loss import L1SparsityWeights
 from sparse_generalization.utils.util_funcs import noise_scheduler
 from sparse_generalization.models.blocks import MHABlock
-from sparse_generalization.layers.agg_attention import AggregationAttention, ExtraTokenAttention
+from sparse_generalization.layers.agg_attention import AggregationAttention
+from sparse_generalization.models.mlp import BasicMLP
 from sparse_generalization.utils.util_funcs import positionalencoding2d
 
 
@@ -153,16 +154,8 @@ class TransformerLit(pl.LightningModule):
                 layernorm=layernorm,
             )
         elif self.token_pool:
-            self.out = ExtraTokenAttention(
-                num_heads=num_heads,
-                embed_size=self.embed_size,
-                out_dim=out_dim,
-                residual=residual,
-                hidden_dims=hidden_dims,
-                act=act,
-                dropout=dropout,
-                layernorm=layernorm,
-            )
+            self.cls = nn.Parameter(torch.rand(1, self.embed_size, device=self.device))
+            self.out = nn.Linear(self.embed_size, out_dim)
         else:
             self.out = nn.Linear(self.embed_size, out_dim)
 
@@ -226,12 +219,20 @@ class TransformerLit(pl.LightningModule):
                 x_attn = torch.cat([x_features, coords], dim=-1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
 
+        if self.token_pool:
+            clses = self.cls.repeat(batch_size, 1, 1)
+            x_attn = torch.cat([x_attn, clses], dim=1)
+
         for layer in self.layers:
             x_attn, attn = layer(x_attn)
+            if self.token_pool: 
+                attn = attn[:, :-1, :-1]
             attn_matrices.append(attn)
 
-        if self.agg_pool or self.token_pool:
+        if self.agg_pool:
             y_hat, agg_attn = self.out(x_attn)
+        elif self.token_pool:
+            y_hat = self.out(x_attn[:, -1, :])
         else:
             y_hat = self.out(x_attn.max(dim=1)[0])
 
@@ -239,7 +240,7 @@ class TransformerLit(pl.LightningModule):
         acc = self.accuracy(y_hat, y)
 
         path_matrix = self._compute_thresh_path(attn_matrices)
-        if self.agg_pool or self.token_pool:
+        if self.agg_pool:
             path_matrix = torch.bmm(agg_attn, path_matrix)
 
         return loss, acc, path_matrix  # (b, h, h)
@@ -463,7 +464,8 @@ class TransformerLit(pl.LightningModule):
         self.test_attn_matrices.clear()
 
     def _compute_thresh_path(self: Self, attn_list: List):
-        thresh_list = [(attn > 0.01).float() for attn in attn_list]
+        seq_len = attn_list[0].size(0)
+        thresh_list = [(attn > 1/seq_len).float() for attn in attn_list]
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
         for attn in reversed(thresh_list):

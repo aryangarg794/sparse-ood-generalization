@@ -13,7 +13,8 @@ num_heads: 1
 num_layers: 1
 include_sparsity: false
 lr: 5e-4
-l1_weight: 1e-3
+token_pool: false
+alpha: 0.1
 residual: true
 pe: true
 sinusoidal: false
