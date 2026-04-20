@@ -43,6 +43,7 @@ class SPARTAN(nn.Module):
         target_loss: float = 0.05,
         start_lambda: float = 1e7,
         step_size: float = 1e-1,
+        zeros: bool = False, 
         cma: float = 0.9,
         pe: bool = True,
         sinusoidal: bool = True,
@@ -105,6 +106,7 @@ class SPARTAN(nn.Module):
                 embed_size=self.embed_size,
                 layernorm=layernorm,
                 num_heads=num_heads,
+                zeros=zeros,
                 hidden_dims=hidden_dims_ffn,
                 residual=residual,
                 dropout=dropout,
@@ -121,6 +123,7 @@ class SPARTAN(nn.Module):
                     embed_size=self.embed_size,
                     layernorm=layernorm,
                     num_heads=num_heads,
+                    zeros=zeros,
                     hidden_dims=hidden_dims_ffn,
                     residual=residual,
                     dropout=dropout,
@@ -138,6 +141,8 @@ class SPARTAN(nn.Module):
                 residual=residual,
                 hidden_dims=hidden_dims_ffn,
                 act=act,
+                use_mask=True, 
+                separate_mask=separate_mask, 
                 dropout=dropout,
                 layernorm=layernorm,
             )
@@ -227,14 +232,15 @@ class SPARTAN(nn.Module):
                 masks.append(mask)
 
         if self.agg_pool:
-            out, agg_attn = self.out(x_attn)
+            out, final_mask, agg_attn = self.out(x_attn)
         elif self.token_pool:
             out = self.out(x_attn[:, -1, :])
         else:
             out = self.out(x_attn.max(dim=1)[0])
 
         if self.agg_pool:
-            masks = torch.bmm(agg_attn, masks)
+            attn_matrices.append(agg_attn)
+            masks = torch.bmm(final_mask, masks)
 
         return out, masks, attn_matrices  # (b, k, l, l)
 
@@ -433,8 +439,8 @@ class SPARTAN(nn.Module):
         ]  # list of (b, l, l)
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
-        for attn in reversed(thresh_list):
-            path = path @ attn
+        for attn in thresh_list:
+            path = attn @ path
 
         return path.sum(dim=(1, 2)).mean().item()
 
@@ -446,6 +452,10 @@ class SPARTAN(nn.Module):
         for l in range(self.num_layers-1):
             multiplier = torch.ones((seq_len, seq_len)) * self.num_heads
             paths = paths @ multiplier
+
+        if self.agg_pool:
+            multiplier = torch.ones((1, seq_len)) * self.num_heads
+            paths = multiplier @ paths
 
         return paths.sum().item()
 

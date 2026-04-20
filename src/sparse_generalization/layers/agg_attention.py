@@ -92,7 +92,7 @@ class AggregationAttention(nn.Module):
             keys_mask = self.keys_mask(x)
             keys_mask_split = self._split_heads(keys_mask)
 
-        attention_repr, attention_probs = self._attention(
+        attention_repr, masks, attention_probs = self._attention(
             queries_split,
             keys_split,
             values_split,
@@ -103,6 +103,7 @@ class AggregationAttention(nn.Module):
         attention_repr = self._merge_heads(attention_repr)  # (b, 1, d)
 
         if sum_heads:
+            masks = masks.sum(dim=1)
             attention_probs = attention_probs.sum(dim=1)
 
         if self.layernorm:
@@ -110,7 +111,7 @@ class AggregationAttention(nn.Module):
 
         out = self.mlp(attention_repr.squeeze(dim=1))
 
-        return out, attention_probs
+        return out, masks, attention_probs
 
     def _attention(
         self: Self,
@@ -126,6 +127,7 @@ class AggregationAttention(nn.Module):
         )  # (bh, 1, dk) @ (bh, dk, l)
 
         attention_probs = softmax(attention_logits, dim=-1)
+        A = torch.zeros((batch_heads, seq_len, seq_len))
 
         if self.use_mask:
             if self.separate_mask:
@@ -151,6 +153,6 @@ class AggregationAttention(nn.Module):
         # (bh, 1, l)
         hidden_repr = torch.bmm(attention_probs, value)  # (bh, 1, l) @ (bh, l, dk)
 
-        return hidden_repr.view(-1, self.heads, 1, self.dk), attention_probs.view(
+        return hidden_repr.view(-1, self.heads, 1, self.dk), A.view(-1, self.heads, 1, seq_len), attention_probs.view(
             -1, self.heads, 1, seq_len
         )

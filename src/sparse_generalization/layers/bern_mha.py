@@ -24,6 +24,7 @@ class MultiHeadAttentionBern(nn.Module):
         batch_first: bool = True,
         temp: float = 1.0,
         hard: bool = True,
+        zeros: bool = False, 
         residual: bool = False,
         separate_mask: bool = False,
         mask_residuals: bool = False,
@@ -44,6 +45,7 @@ class MultiHeadAttentionBern(nn.Module):
         self.temp = temp
         self.hard = hard
         self.residual = residual
+        self.zeros = zeros
 
         self.queries = nn.Linear(embed_size, embed_size, bias=bias)
         self.keys = nn.Linear(embed_size, embed_size, bias=bias)
@@ -126,7 +128,9 @@ class MultiHeadAttentionBern(nn.Module):
         )  # (b*h, l, l)
 
         attention_probs = softmax(attention_logits, dim=-1)
-        if self.separate_mask:
+        if self.zeros:
+            A = torch.zeros((batch_heads, seq_len, seq_len), device=query.device)
+        elif self.separate_mask:
             mask_logits = torch.bmm(query_mask, keys_mask.transpose(1, 2)) / np.sqrt(
                 self.dk
             )

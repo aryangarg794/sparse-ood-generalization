@@ -3,10 +3,10 @@ _partial_: true
 
 inp_dim: 25
 out_dim: 1 
-hidden_dims_ffn: [128, 128]
+hidden_dims_ffn: [64]
 layernorm: true
 agg_pool: false
-model_dim: 30
+model_dim: 32
 embedding_inp: false
 num_feature_layers: 3
 num_heads: 1
@@ -16,8 +16,9 @@ lr: 5e-4
 token_pool: false
 alpha: 0.1
 residual: true
+zeros: false
 pe: true
-sinusoidal: false
+sinusoidal: true
 path_sparsity: true
 lagrangian: false
 start_lambda: 1e15

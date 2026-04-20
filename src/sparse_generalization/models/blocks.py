@@ -89,6 +89,7 @@ class MHABlockBern(nn.Module):
         dropout: int,
         layernorm: bool,
         residual: bool,
+        zeros: bool, 
         separate_mask: bool = False,
         alpha_res: bool = False,
         *args,
@@ -106,6 +107,7 @@ class MHABlockBern(nn.Module):
             embed_size,
             num_heads=num_heads,
             dropout=dropout,
+            zeros=zeros, 
             separate_mask=separate_mask,
             residual=residual,
         )
