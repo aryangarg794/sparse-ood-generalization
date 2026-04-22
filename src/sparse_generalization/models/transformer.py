@@ -131,9 +131,7 @@ class TransformerLit(pl.LightningModule):
             self.layers.append(
                 MHABlock(
                     embed_size=self.embed_size,
-                    out_dim=self.embed_size,
                     residual=residual,
-                    hidden_dims=hidden_dims,
                     act=act,
                     dropout=dropout,
                     mha_layer=mha_layer,

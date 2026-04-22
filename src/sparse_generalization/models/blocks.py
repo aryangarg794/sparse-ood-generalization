@@ -15,8 +15,6 @@ class MHABlock(nn.Module):
     def __init__(
         self: Self,
         embed_size: int,
-        out_dim: int,
-        hidden_dims: List,
         act: nn.Module,
         dropout: int,
         residual: bool,
@@ -35,13 +33,12 @@ class MHABlock(nn.Module):
         )  # (b, 3, 1) or (b, 3, 2) with pe
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
-        self.mlp = BasicMLP(
-            input_dim=embed_size,
-            out_dim=out_dim,
-            hidden_dims=hidden_dims,
-            act=act,
-            dropout=dropout,
-        )  # (b, 3)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_size, 4*embed_size), 
+            nn.Dropout(dropout),
+            act(), 
+            nn.Linear(4*embed_size, embed_size)
+        )
 
     def forward(self: Self, x: Tensor):
         return self._forward_image(x)
@@ -84,7 +81,6 @@ class MHABlockBern(nn.Module):
         self: Self,
         embed_size: int,
         num_heads: int,  # for the toy example just keep it one
-        hidden_dims: list,
         act: nn.Module,
         dropout: int,
         layernorm: bool,
@@ -118,12 +114,11 @@ class MHABlockBern(nn.Module):
         )
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
-        self.mlp = BasicMLP(
-            input_dim=embed_size,
-            out_dim=embed_size,
-            hidden_dims=hidden_dims,
-            act=act,
-            dropout=dropout,
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_size, 4*embed_size), 
+            nn.Dropout(dropout),
+            act(), 
+            nn.Linear(4*embed_size, embed_size)
         )
 
     def forward(self: Self, x: Tensor):

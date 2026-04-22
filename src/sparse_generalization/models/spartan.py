@@ -102,23 +102,7 @@ class SPARTAN(nn.Module):
         self.embedding_inp = embedding_inp
 
         self.layers = nn.ModuleList()
-        self.layers.append(
-            MHABlockBern(
-                embed_size=self.embed_size,
-                layernorm=layernorm,
-                num_heads=num_heads,
-                zeros=zeros,
-                hidden_dims=hidden_dims_ffn,
-                residual=residual,
-                dropout=dropout,
-                mask_res=mask_res,
-                separate_mask=separate_mask,
-                act=act,
-                alpha_res=alpha_res,
-            )
-        )
 
-        num_layers = num_layers - 1
         for _ in range(num_layers):
             self.layers.append(
                 MHABlockBern(
@@ -126,7 +110,6 @@ class SPARTAN(nn.Module):
                     layernorm=layernorm,
                     num_heads=num_heads,
                     zeros=zeros,
-                    hidden_dims=hidden_dims_ffn,
                     residual=residual,
                     dropout=dropout,
                     mask_res=mask_res, 
