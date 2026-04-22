@@ -3,7 +3,7 @@ _partial_: true
 
 inp_dim: 25
 out_dim: 1 
-hidden_dims_ffn: [64]
+hidden_dims_ffn: [128, 128]
 layernorm: true
 agg_pool: false
 model_dim: 32
@@ -16,6 +16,7 @@ lr: 5e-4
 token_pool: false
 alpha: 0.1
 residual: true
+mask_res: false
 zeros: false
 pe: true
 sinusoidal: true

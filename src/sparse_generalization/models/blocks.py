@@ -88,8 +88,9 @@ class MHABlockBern(nn.Module):
         act: nn.Module,
         dropout: int,
         layernorm: bool,
-        residual: bool,
+        residual: bool, 
         zeros: bool, 
+        mask_res: bool = False,
         separate_mask: bool = False,
         alpha_res: bool = False,
         *args,
@@ -98,6 +99,9 @@ class MHABlockBern(nn.Module):
         super(MHABlockBern, self).__init__(*args, **kwargs)
         self.residual = residual
         self.layernorm = layernorm
+        self.mask_res = mask_res
+        if mask_res:
+            assert num_heads == 1, "heads needs to be 1 else residual doesnt make sense"
 
         if alpha_res:
             self.alpha = nn.Parameter(torch.tensor(0.0, dtype=torch.float))
@@ -108,6 +112,7 @@ class MHABlockBern(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             zeros=zeros, 
+            mask_res=mask_res, 
             separate_mask=separate_mask,
             residual=residual,
         )
@@ -126,6 +131,10 @@ class MHABlockBern(nn.Module):
 
     def _forward_image(self: Self, x: Tensor):
         attn_out, attn_masks, attn_scores = self.mha(x, x, x)
+        
+        if self.mask_res:
+            diags = attn_masks.diagonal(dim1=-2, dim2=-1)
+            x = x * diags.unsqueeze(dim=-1) # (B, L, L) * (B, L, D)
         if self.layernorm:
             if self.residual:
                 attn_out = self.ln1(attn_out + x)

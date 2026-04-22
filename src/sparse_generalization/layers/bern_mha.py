@@ -22,6 +22,7 @@ class MultiHeadAttentionBern(nn.Module):
         bias: int = True,
         dropout: float = 0.0,
         batch_first: bool = True,
+        mask_res: bool = False, 
         temp: float = 1.0,
         hard: bool = True,
         zeros: bool = False, 
@@ -46,6 +47,7 @@ class MultiHeadAttentionBern(nn.Module):
         self.hard = hard
         self.residual = residual
         self.zeros = zeros
+        self.mask_res = mask_res
 
         self.queries = nn.Linear(embed_size, embed_size, bias=bias)
         self.keys = nn.Linear(embed_size, embed_size, bias=bias)
@@ -156,7 +158,7 @@ class MultiHeadAttentionBern(nn.Module):
         masked_attention_probs = A * attention_probs  # (b*h, l, l)
 
         hidden_repr = torch.bmm(masked_attention_probs, value)  # (b*h, l, d)
-        if self.residual:
+        if self.residual and not self.mask_res:
             A = A + torch.eye(A.size(1), device=A.device).unsqueeze(0).repeat(
                 batch_heads, 1, 1
             )
