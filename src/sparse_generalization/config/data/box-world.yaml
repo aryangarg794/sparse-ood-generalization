@@ -14,3 +14,4 @@ val_to_name:
   4: comb
 
 batch_size: 157
+example_input_shape: [16, 10, 10, 3]

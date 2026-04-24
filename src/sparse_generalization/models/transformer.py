@@ -98,22 +98,29 @@ class TransformerLit(pl.LightningModule):
         self.residual = residual
         self.model_dim = model_dim
 
-        if not embedding_inp:
-            self.feature_map = nn.Sequential(
-                nn.Conv2d(in_channels=inp_dim, out_channels=model_dim, kernel_size=1),
-                act(),
+        self.feature_map = nn.Sequential()
+        if embedding_inp:
+            self.embed_layer = nn.Embedding(num_embeddings, 4*model_dim)
+
+        self.feature_map.extend(
+            [nn.Conv2d(in_channels=4*model_dim if embedding_inp else inp_dim, 
+                       out_channels=model_dim, kernel_size=1),
+            act()]
+        )
+
+        for _ in range(num_feature_layers-2):
+            self.feature_map.extend(
+                [
+                    nn.Conv2d(
+                        in_channels=model_dim, out_channels=model_dim, kernel_size=1
+                    ),
+                    act(),
+                ]
             )
-            for _ in range(num_feature_layers):
-                self.feature_map.extend(
-                    [
-                        nn.Conv2d(
-                            in_channels=model_dim, out_channels=model_dim, kernel_size=1
-                        ),
-                        act(),
-                    ]
-                )
-        else:
-            self.feature_map = nn.Embedding(num_embeddings, model_dim)
+
+        self.feature_map.append(
+            nn.Conv2d(in_channels=model_dim, out_channels=model_dim, kernel_size=1)
+        )
 
         if positional_encoding:
             if sinusoidal:
@@ -146,9 +153,9 @@ class TransformerLit(pl.LightningModule):
                 embed_size=self.embed_size,
                 out_dim=out_dim,
                 residual=residual,
-                hidden_dims=hidden_dims,
                 act=act,
                 dropout=dropout,
+                device=self.device,
                 layernorm=layernorm,
             )
         elif self.token_pool:
@@ -195,10 +202,10 @@ class TransformerLit(pl.LightningModule):
         batch_size, width, height, _ = x.size()
         if self.embedding_inp:
             assert x.size(3) == 1, "channels is not 1 for shapes input"
-            x_features = self.feature_map(x.squeeze(3).int())  # (b, w, h, e)
-        else:
-            x_features = self.feature_map(x.permute(0, 3, 1, 2))  # (b, 3, w, h)
-            x_features = x_features.permute(0, 2, 3, 1)
+            x = self.embed_layer(x.squeeze(3).int())  # (b, w, h, e)
+
+        x_features = self.feature_map(x.permute(0, 3, 1, 2))  # (b, e, w, h)
+        x_features = x_features.permute(0, 2, 3, 1)
 
         if self.pe:
             device = x.device
@@ -466,20 +473,13 @@ class TransformerLit(pl.LightningModule):
         thresh_list = [(attn > 1/seq_len).float() for attn in attn_list]
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
-        for attn in reversed(thresh_list):
-            path = path @ attn
+        for attn in thresh_list:
+            path = torch.bmm(attn, path)
 
         return path
 
     def _compute_attn_mean(self: Self, all_attn: Tensor):
-        if (
-            self.l1_loss is None
-            or isinstance(self.layers[0].mha, MultiHeadAttentionThresh)
-            or isinstance(self.layers[0].mha, torch.nn.MultiheadAttention)
-        ):
-            return all_attn.float().sum(dim=(1, 2)).mean().item()
-        else:
-            return all_attn.sum(dim=(1, 2)).mean().item()
+        return all_attn.sum(dim=(1, 2)).mean().item()
 
     def configure_optimizers(self: Self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, betas=self.betas)

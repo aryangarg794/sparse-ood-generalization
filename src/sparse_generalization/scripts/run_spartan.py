@@ -13,6 +13,7 @@ from hydra.utils import instantiate, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.utilities.model_summary.model_summary import ModelSummary
 from torch.utils.data import DataLoader
 from torchsummary import summary
 
@@ -119,7 +120,7 @@ def main(cfg: DictConfig):
             model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
             model = model.to(cfg.model.device)
             model.logger = logger
-            # print(summary(model, (10, 10, 3), device=cfg.model.device))
+            # print(ModelSummary(model, max_depth=-1))
             (
                 losses,
                 accs,

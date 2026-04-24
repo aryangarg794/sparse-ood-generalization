@@ -16,14 +16,14 @@ class AggregationAttention(nn.Module):
         num_heads: int,
         embed_size: int,
         out_dim: int,
-        dropout: float,
-        residual: bool,
-        hidden_dims: list,
+        dropout: float = 0.0,
+        residual: bool = True,
         act: nn.Module = nn.ReLU,
         device: str = "cuda",
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
+        bias: float = 0.5, 
         temp: float = 1.0,
         *args,
         **kwargs,
@@ -41,8 +41,10 @@ class AggregationAttention(nn.Module):
         self.layernorm = layernorm
         self.use_mask = use_mask
         self.temp = temp
+        self.bias = bias
 
         self.query = nn.Parameter(torch.rand((1, embed_size), device=device))
+        nn.init.xavier_uniform_(self.query)
 
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
@@ -56,8 +58,11 @@ class AggregationAttention(nn.Module):
 
         self.ln = nn.LayerNorm(embed_size)
 
-        self.mlp = BasicMLP(
-            embed_size, out_dim, hidden_dims=hidden_dims, act=act, dropout=dropout
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_size, 4*embed_size), 
+            nn.Dropout(dropout), 
+            act(),
+            nn.Linear(4*embed_size, out_dim)
         )
 
     def _split_heads(self: Self, x: Tensor):
@@ -136,7 +141,7 @@ class AggregationAttention(nn.Module):
                 ) / np.sqrt(self.dk)
                 mask_logits = mask_logits.view(batch_heads, -1)
                 edges_logit = torch.stack(
-                    [torch.zeros_like(mask_logits), mask_logits], dim=-1
+                    [torch.zeros_like(mask_logits), mask_logits + self.bias], dim=-1
                 )
                 A = gumbel_softmax(edges_logit, tau=self.temp, hard=True)
                 A = A[:, :, -1].reshape(batch_heads, 1, seq_len)

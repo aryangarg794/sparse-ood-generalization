@@ -4,7 +4,7 @@ data_func:
   size: 5000
   grid_size: 5
   data_dir: data/shapes
-  one_hot: true
+  one_hot: false
 
 val_to_name:
   0: id
@@ -12,3 +12,4 @@ val_to_name:
   2: b
 
 batch_size: 157
+example_input_shape: [16, 5, 5, 1]

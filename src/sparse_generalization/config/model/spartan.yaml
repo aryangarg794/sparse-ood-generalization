@@ -3,11 +3,10 @@ _partial_: true
 
 inp_dim: 25
 out_dim: 1 
-hidden_dims_ffn: [128, 128]
 layernorm: true
 agg_pool: false
 model_dim: 32
-embedding_inp: false
+embedding_inp: true
 num_feature_layers: 3
 num_heads: 1
 num_layers: 1

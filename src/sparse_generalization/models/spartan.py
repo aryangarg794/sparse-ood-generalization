@@ -1,10 +1,5 @@
-import matplotlib.pyplot as plt
-import numpy as np
-import seaborn as sns
 import torch
 import torch.nn as nn
-import torch.nn.utils as utils
-import wandb
 
 from copy import deepcopy
 from lightning.pytorch.loggers import WandbLogger
@@ -26,7 +21,6 @@ class SPARTAN(nn.Module):
         self,
         inp_dim: int = 3,
         out_dim: int = 1,
-        hidden_dims_ffn: list = list([128, 128]),
         model_dim: int = 64,
         num_feature_layers: int = 3,
         num_heads: int = 1,
@@ -72,22 +66,29 @@ class SPARTAN(nn.Module):
         self.agg_pool = agg_pool
         self.token_pool = token_pool
 
-        if not embedding_inp:
-            self.feature_map = nn.Sequential(
-                nn.Conv2d(in_channels=inp_dim, out_channels=model_dim, kernel_size=1),
-                act(),
+        self.feature_map = nn.Sequential()
+        if embedding_inp:
+            self.embed_layer = nn.Embedding(num_embeddings, 4*model_dim)
+
+        self.feature_map.extend(
+            [nn.Conv2d(in_channels=4*model_dim if embedding_inp else inp_dim, 
+                       out_channels=model_dim, kernel_size=1),
+            act()]
+        )
+        
+        for _ in range(num_feature_layers-2):
+            self.feature_map.extend(
+                [
+                    nn.Conv2d(
+                        in_channels=model_dim, out_channels=model_dim, kernel_size=1
+                    ),
+                    act(),
+                ]
             )
-            for _ in range(num_feature_layers):
-                self.feature_map.extend(
-                    [
-                        nn.Conv2d(
-                            in_channels=model_dim, out_channels=model_dim, kernel_size=1
-                        ),
-                        act(),
-                    ]
-                )
-        else:
-            self.feature_map = nn.Embedding(num_embeddings, model_dim)
+
+        self.feature_map.append(
+            nn.Conv2d(in_channels=model_dim, out_channels=model_dim, kernel_size=1)
+        )
 
         if pe:
             if sinusoidal:
@@ -125,9 +126,9 @@ class SPARTAN(nn.Module):
                 embed_size=self.embed_size,
                 out_dim=out_dim,
                 residual=residual,
-                hidden_dims=hidden_dims_ffn,
                 act=act,
                 use_mask=True, 
+                device=device, 
                 separate_mask=separate_mask, 
                 dropout=dropout,
                 layernorm=layernorm,
@@ -173,10 +174,10 @@ class SPARTAN(nn.Module):
 
         if self.embedding_inp:
             assert x.size(3) == 1, "channels is not 1 for shapes input"
-            x_features = self.feature_map(x.squeeze(3).int())  # (b, w, h, e)
-        else:
-            x_features = self.feature_map(x.permute(0, 3, 1, 2))  # (b, 3, w, h)
-            x_features = x_features.permute(0, 2, 3, 1)
+            x = self.embed_layer(x.squeeze(3).int())  # (b, w, h, e)
+
+        x_features = self.feature_map(x.permute(0, 3, 1, 2))  # (b, e, w, h)
+        x_features = x_features.permute(0, 2, 3, 1)
 
         masks = (
             torch.eye(width * height, device=self.device).repeat(batch_size, 1, 1)

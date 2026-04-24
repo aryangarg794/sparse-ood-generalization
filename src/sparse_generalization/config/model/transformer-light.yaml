@@ -4,7 +4,7 @@ _partial_: true
 inp_dim: 25
 out_dim: 1 
 layernorm: true
-embedding_inp: false
+embedding_inp: true
 agg_pool: false
 token_pool: false
 model_dim: 32
