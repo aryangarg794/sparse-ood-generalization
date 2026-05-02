@@ -28,7 +28,6 @@ class MultiHeadAttentionBern(nn.Module):
         zeros: bool = False, 
         residual: bool = False,
         separate_mask: bool = False,
-        mask_residuals: bool = False,
         *args,
         **kwargs,
     ):

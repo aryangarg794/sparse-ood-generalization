@@ -4,7 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 import torch
+from copy import deepcopy
 
+from tqdm import tqdm
 from matplotlib.backends.backend_pdf import PdfPages
 from sparse_generalization.data.shapes.constants import (
     SHAPE_MAP,
@@ -534,7 +536,21 @@ def generate_grid_row_col(size=6, label_A=False, mode="train"):
 
     return grid
 
+def replace_expl(grid, fro=("heart", "star"), to=("circle", "square")):
+    grid = deepcopy(grid)
+    coords_s1 = np.where(grid == fro[0])
+    coords_s2 = np.where(grid == fro[1])
 
+    coords_s3 = np.where(grid == to[0])
+    coords_s4 = np.where(grid == to[1])
+
+    grid[coords_s1[0], coords_s1[1]] = "circle"
+    grid[coords_s2[0], coords_s2[1]] = "square"
+
+    grid[coords_s3[0], coords_s3[1]] = "heart"
+    grid[coords_s4[0], coords_s4[1]] = "star"
+
+    return grid
 
 def generate_dataset(
     num_samples: int = 500,
@@ -549,31 +565,65 @@ def generate_dataset(
     name = mode
     mode = "train" if mode == "test" or mode == "val" else mode
 
-    # train
-    samples = []
-    labels = []
-    match func:
-        case "row":
-            data_func = generate_grid_row
-        case "row_col":
-            data_func = generate_grid_row_col
-        case "same_row":
-            data_func = generate_grid_same_row
-        case "adj": 
-            data_func = generate_grid_adjacent
+    if mode == "anti":
+        samples = []
+        labels = []
+        match func:
+            case "row":
+                data_func = generate_grid_row
+            case "row_col":
+                data_func = generate_grid_row_col
+            case "same_row":
+                data_func = generate_grid_same_row
+            case "adj": 
+                data_func = generate_grid_adjacent
 
-    for label in [True, False]:
-        for _ in range(half_samples):
-            grid = data_func(size=size, label_A=label, mode=mode)
+        for _ in tqdm(range(half_samples)):
+            grid = data_func(size=size, label_A=True, mode='test_a')
+            inp_tensor = torch.zeros((size, size, 1), dtype=torch.int64)
+            samples.append(grid)
+            labels.append(torch.tensor([int(1)], dtype=torch.int64))
+
+        for idx in tqdm(range(half_samples)):
+            grid = replace_expl(samples[idx])
+            samples.append(grid)
+            labels.append(torch.tensor([int(1)], dtype=torch.int64))
+        
+        tensors = []
+        for grid in tqdm(samples):
             inp_tensor = torch.zeros((size, size, 1), dtype=torch.int64)
             for x in range(size):
                 for y in range(size):
                     inp_tensor[x, y] = SHAPES_TO_IDX[grid[x, y]]
-            samples.append(inp_tensor)
-            labels.append(torch.tensor([int(label)], dtype=torch.int64))
+            tensors.append(inp_tensor)
 
-    dataset[f"X_{mode}"] = torch.stack(samples, dim=0)
-    dataset[f"Y_{mode}"] = torch.stack(labels, dim=0)
+        dataset[f"X_{mode}"] = torch.stack(tensors, dim=0)
+        dataset[f"Y_{mode}"] = torch.stack(labels, dim=0)
+    else:
+        samples = []
+        labels = []
+        match func:
+            case "row":
+                data_func = generate_grid_row
+            case "row_col":
+                data_func = generate_grid_row_col
+            case "same_row":
+                data_func = generate_grid_same_row
+            case "adj": 
+                data_func = generate_grid_adjacent
+
+        for label in [True, False]:
+            for _ in range(half_samples):
+                grid = data_func(size=size, label_A=label, mode=mode)
+                inp_tensor = torch.zeros((size, size, 1), dtype=torch.int64)
+                for x in range(size):
+                    for y in range(size):
+                        inp_tensor[x, y] = SHAPES_TO_IDX[grid[x, y]]
+                samples.append(inp_tensor)
+                labels.append(torch.tensor([int(label)], dtype=torch.int64))
+
+        dataset[f"X_{mode}"] = torch.stack(samples, dim=0)
+        dataset[f"Y_{mode}"] = torch.stack(labels, dim=0)
 
     print("Saving")
     file_path = file_path + f"_{name}_{num_samples}_size{size}.pl"

@@ -348,16 +348,18 @@ class SPARTAN(nn.Module):
                 {f"train/mask_edges_train": mask_running}, step=self.global_step
             )
 
-            postfix["edges"] = mask_running
-
-            pbar.set_postfix(postfix)
-
             for loader, name in zip(testloaders, self.val_to_name.values()):
                 test_metrics = self.test(name, loader, folder="val")
+                if 'id' in name:
+                    postfix['val_id'] = test_metrics["acc"]
                 masks_test[name].append(test_metrics["mask"])
                 attn_test[name].append(test_metrics["attn"])
                 losses_test[name].append(test_metrics["loss"])
                 accs_test[name].append(test_metrics["acc"])
+
+            postfix["edges"] = mask_running
+
+            pbar.set_postfix(postfix)
 
         return (
             losses,

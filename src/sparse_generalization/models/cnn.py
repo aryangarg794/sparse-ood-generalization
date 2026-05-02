@@ -25,7 +25,6 @@ class BasicCNN(nn.Module):
         hidden_dims: List,
         act: nn.Module,
         dropout: float,
-        num_embeddings: int = 64,
         model_dim: int = 32,
         inp_size: int = 10,
         *args,
@@ -34,7 +33,7 @@ class BasicCNN(nn.Module):
         super(BasicCNN, self).__init__(*args, **kwargs)
         self.embedding_inp = embedding_inp
         if embedding_inp:
-            self.feature_map = nn.Embedding(num_embeddings, model_dim)
+            self.feature_map = nn.Embedding(inp_size**2, model_dim)
 
         self.layers = nn.Sequential()
         self.layers.extend(

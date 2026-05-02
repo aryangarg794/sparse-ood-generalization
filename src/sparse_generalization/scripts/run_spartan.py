@@ -15,7 +15,7 @@ from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.utilities.model_summary.model_summary import ModelSummary
 from torch.utils.data import DataLoader
-from torchsummary import summary
+from torchinfo import summary
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 warnings.filterwarnings(
@@ -120,7 +120,7 @@ def main(cfg: DictConfig):
             model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
             model = model.to(cfg.model.device)
             model.logger = logger
-            # print(ModelSummary(model, max_depth=-1))
+            print(summary(model, input_size=(16, 5, 5, 1), depth=1))
             (
                 losses,
                 accs,
