@@ -2,7 +2,7 @@ data_func:
   _target_: sparse_generalization.utils.dataloading.get_shapes_datasets
   _partial_: true
   size: 20000
-  grid_size: 6
+  grid_size: 5
   data_dir: data/shapes
   one_hot: false
 

@@ -24,7 +24,7 @@ class BasicDataset(Dataset):
 
 class ShapesDataset(Dataset):
     def __init__(
-        self: Self, x: Tensor, y: Tensor, one_hot: bool = False, size: int = 5
+        self: Self, x: Tensor, y: Tensor, one_hot: bool = False, size: int = 5, mask: bool = False, 
     ):
         super().__init__()
         self.x = x.float()

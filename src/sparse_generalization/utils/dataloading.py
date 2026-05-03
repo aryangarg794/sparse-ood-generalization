@@ -64,17 +64,23 @@ def get_shapes_datasets(size: int, data_dir: str, grid_size: int, one_hot: bool)
         val_b = dill.load(file)
         file.close()
 
+    anti_path = os.path.join(data_dir, f"shapes_anti_size{grid_size}.pl")
+    with open(anti_path, "rb") as file:
+        anti = dill.load(file)
+        file.close()
+
     val_dataset_id = data_cls(X_val, Y_val)
     val_dataset_a = data_cls(val_a["X_test_a"], val_a["Y_test_a"])
     val_dataset_b = data_cls(val_b["X_test_b"], val_b["Y_test_b"])
     test_dataset_id = data_cls(X_test, Y_test)
     test_dataset_a = data_cls(test_a["X_test_a"], test_a["Y_test_a"])
     test_dataset_b = data_cls(test_b["X_test_b"], test_b["Y_test_b"])
+    anti_dataset = data_cls(anti["X_anti"], anti["Y_anti"])
 
     val_sets = [val_dataset_id, val_dataset_a, val_dataset_b]
     test_sets = [test_dataset_id, test_dataset_a, test_dataset_b]
 
-    return dataset, val_sets, test_sets
+    return dataset, val_sets, test_sets, anti_dataset
 
 
 def get_boxworld_datasets(
@@ -189,4 +195,4 @@ def get_boxworld_datasets(
         test_dataset_comb,
     ]
 
-    return dataset, val_sets, test_sets
+    return dataset, val_sets, test_sets, None

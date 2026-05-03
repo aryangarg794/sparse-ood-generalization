@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from copy import deepcopy
 from lightning.pytorch.loggers import WandbLogger
@@ -45,6 +46,7 @@ class SPARTAN(nn.Module):
         embedding_inp: bool = True,
         lr: float = 1e-3,
         dropout: float = 0.1, 
+        compute_mask: bool = False, 
         layernorm: bool = True,
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
@@ -421,6 +423,42 @@ class SPARTAN(nn.Module):
             "attn": attn_running,
             "mask": mask_running,
         }
+    
+    @torch.no_grad()
+    def test_anti(self, anti_dataset: DataLoader): 
+        # total acc, acc a, acc b, conf a, conf b
+        results = {}
+        labels = []
+        true_labels = []
+        for batch_idx, (x, y) in enumerate(anti_dataset):
+            x = x.to(self.device)
+            y = y.to(self.device)
+            out, mask, attn = self(x)
+            probs = F.sigmoid(out)
+            labels.append(probs)
+            true_labels.append(y)
+
+        preds = torch.cat(labels, dim=0)
+        trues = torch.cat(true_labels, dim=0)
+        size = preds.size(0)
+        midpoint = size // 2 
+
+
+        total_acc = self.accuracy(preds, trues)
+        results["total_acc"] = total_acc.item()
+
+        acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
+        acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
+        conf_a = preds[:midpoint].mean()
+        conf_b = preds[:midpoint].mean()
+        
+        results["acc_a"] = acc_a.item()
+        results["acc_b"] = acc_b.item()
+        results["conf_a"] = conf_a.item()
+        results["conf_b"] = conf_b.item()
+
+
+        return results
 
     def _compute_attn_mean(self, all_attn: Tensor):
         thresh_list = [

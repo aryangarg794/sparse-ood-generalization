@@ -1,10 +1,12 @@
 import lightning as pl
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from torch import Tensor
 from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
+from torch.utils.data import DataLoader
 
 from sparse_generalization.models.cnn import BasicCNN
 
@@ -201,3 +203,37 @@ class BasicMLPLit(pl.LightningModule):
             self.model.parameters(), lr=self.lr, weight_decay=self.wd
         )
         return optimizer
+    
+    @torch.no_grad()
+    def test_anti(self, anti_dataset: DataLoader): 
+        results = {}
+        labels = []
+        true_labels = []
+        for batch_idx, (x, y) in enumerate(anti_dataset):
+            x = x.to(self.device)
+            y = y.to(self.device)
+            out = self.model(x)
+            probs = F.sigmoid(out)
+            labels.append(probs)
+            true_labels.append(y)
+
+        preds = torch.cat(labels, dim=0)
+        trues = torch.cat(true_labels, dim=0)
+        size = preds.size(0)
+        midpoint = size // 2 
+
+
+        total_acc = self.accuracy(preds, trues)
+        results["total_acc"] = total_acc.item()
+        acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
+        acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
+        conf_a = preds[:midpoint].mean()
+        conf_b = preds[:midpoint].mean()
+        
+        results["acc_a"] = acc_a.item()
+        results["acc_b"] = acc_b.item()
+        results["conf_a"] = conf_a.item()
+        results["conf_b"] = conf_b.item()
+
+
+        return results

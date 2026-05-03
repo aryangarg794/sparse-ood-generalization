@@ -35,7 +35,7 @@ def main(cfg: DictConfig):
     """
     timestamp = datetime.now().strftime("%d_%b_%Y__%Hh%Mm")
 
-    dataset, val_sets, test_sets = instantiate(cfg.data.data_func)()
+    dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)()
 
     print(OmegaConf.to_yaml(cfg, resolve=True))
     group_name = cfg.run_name + "_" + timestamp
@@ -122,6 +122,8 @@ def main(cfg: DictConfig):
             for test_dataset in test_sets:
                 test_loaders.append(DataLoader(test_dataset, 1024))
 
+            anti_loader = DataLoader(anti_dataset, 1024)
+
             model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
             trainer = Trainer(**cfg.trainer, logger=logger)
             model.num_train_batches = len(train_loader)
@@ -147,6 +149,9 @@ def main(cfg: DictConfig):
 
             results[seed]["val_losses"] = model.losses_test
             results[seed]["val_accs"] = model.accs_test
+
+            results_anti = model.test_anti(anti_loader)
+            results[seed]["anti_results"] = results_anti
 
             # table = wandb.Table(columns=['Dataset', 'Loss', 'Acc'])
             # table.add_data('Test set ID', test_metrics_1[0]['test_loss_id'], test_metrics_1[0]['test_acc_id'])
