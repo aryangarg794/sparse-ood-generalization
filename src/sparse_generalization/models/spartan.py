@@ -67,6 +67,7 @@ class SPARTAN(nn.Module):
         self.num_layers = num_layers
         self.agg_pool = agg_pool
         self.token_pool = token_pool
+        self.compute_mask = compute_mask
 
         self.feature_map = nn.Sequential()
         if embedding_inp:
@@ -214,8 +215,7 @@ class SPARTAN(nn.Module):
 
             if self.token_pool: 
                 mask = mask[:, :-1, :-1]
-
-            if self.path_sparsity:
+            if self.path_sparsity:  
                 masks = torch.bmm(mask, masks)
             else:
                 masks.append(mask)
@@ -252,16 +252,28 @@ class SPARTAN(nn.Module):
             epoch_sparse = 0.0
             attn_running = 0.0
             mask_running = 0.0
+            epoch_masks = []
+            epochs_trues = []
 
-            for batch_idx, (x, y) in enumerate(dataloader):
+            for batch_idx, batch in enumerate(dataloader):
+                if self.compute_mask:
+                    x, y, mask = batch
+                    mask = mask.to(self.device)
+                else:
+                    x, y = batch
                 x = x.to(self.device)
                 y = y.to(self.device)
                 out, masks, attns = self(x)  # list of (b, l, l)
                 rec_loss = self.loss(out, y)
+
                 if self.path_sparsity:
                     path_matrix = masks
                 else:
                     path_matrix = torch.stack(masks, dim=1).mean(dim=1)
+
+                if self.compute_mask:
+                    epoch_masks.append(path_matrix)
+                    epochs_trues.append(mask)
 
                 if self.include_sparsity:
                     if self.lagrangian:
@@ -320,7 +332,15 @@ class SPARTAN(nn.Module):
                 "loss": epoch_loss,
                 "acc": epoch_acc,
             }
+
             pbar.set_description(f"Epoch: {step}")
+
+            if self.compute_mask:
+                epoch_masks = torch.cat(epoch_masks, dim=0)
+                epochs_trues = torch.cat(epochs_trues, dim=0)
+                mask_score = self._mask_score(epochs_trues, epoch_masks).item()
+                postfix["mask_score"] = mask_score
+                self.logger.log_metrics({"train/mask_score": mask_score}, step=step)
 
             self.logger.log_metrics({"train/loss_epoch": epoch_loss}, step=step)
 
@@ -381,23 +401,41 @@ class SPARTAN(nn.Module):
         mask_running = 0.0
         epoch_acc = 0.0
         epoch_loss = 0.0
-        for batch_idx, (x, y) in enumerate(dataloader):
+        epoch_masks = []
+        epochs_trues = []
+
+        for batch_idx, batch in enumerate(dataloader):
+            if self.compute_mask:
+                x, y, mask = batch
+                mask = mask.to(self.device)
+            else:
+                x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
-            out, mask, attn = self(x)
+            out, masks, attn = self(x)
             loss = self.loss(out, y)
+
+            if self.compute_mask:
+                epoch_masks.append(masks)
+                epochs_trues.append(mask)
 
             epoch_loss += loss.item()
             with torch.no_grad():
                 acc = self.accuracy(out, y)
                 epoch_acc += acc.item()
                 attn_running += self._compute_attn_mean(attn)
-                mask_running += self._compute_mask_mean(mask)
+                mask_running += self._compute_mask_mean(masks)
 
         epoch_loss /= len(dataloader)
         epoch_acc /= len(dataloader)
         attn_running /= len(dataloader)
         mask_running /= len(dataloader)
+
+        if self.compute_mask:
+            epoch_masks = torch.cat(epoch_masks, dim=0)
+            epochs_trues = torch.cat(epochs_trues, dim=0)
+            mask_score = self._mask_score(epochs_trues, epoch_masks).item()
+            self.logger.log_metrics({f"{folder}/mask_score_{name}": mask_score}, step=self.global_step)
 
         self.logger.log_metrics(
             {f"{folder}/loss_epoch_{name}": epoch_loss}, step=self.global_step
@@ -485,6 +523,15 @@ class SPARTAN(nn.Module):
             paths = multiplier @ paths
 
         return paths.sum().item()
+    
+    def _mask_score(self, masks, paths):
+        paths_bool = (paths.squeeze() > 1).int()
+        masks = masks.view(-1, paths.size(-1)) 
+
+        mask1 = (paths_bool == 1)
+        mask2 = (masks == 1) 
+        batch_result = (mask1 | ~mask2).all(dim=1).float()
+        return batch_result.mean()
 
     @classmethod
     def load(self, path: str):

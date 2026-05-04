@@ -1,7 +1,7 @@
 data_func: 
   _target_: sparse_generalization.utils.dataloading.get_shapes_datasets
   _partial_: true
-  size: 20000
+  size: 5000
   grid_size: 5
   data_dir: data/shapes
   one_hot: false
@@ -11,5 +11,5 @@ val_to_name:
   1: a
   2: b
 
-batch_size: 640
+batch_size: 256
 example_input_shape: [16, 5, 5, 1]

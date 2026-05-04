@@ -33,7 +33,7 @@ def main(cfg: DictConfig):
     timestamp = datetime.now().strftime("%d_%b_%Y__%Hh%Mm")
     group_name = cfg.run_name + "_" + timestamp
 
-    dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)()
+    dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)(compute_mask=cfg.model.compute_mask)
 
     print(OmegaConf.to_yaml(cfg, resolve=True))
 
@@ -117,7 +117,7 @@ def main(cfg: DictConfig):
             for test_dataset in test_sets:
                 test_loaders.append(DataLoader(test_dataset, 1024))
 
-            anti_loader = DataLoader(test_dataset, 1024)
+            anti_loader = DataLoader(anti_dataset, 1024)
 
             model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
             model = model.to(cfg.model.device)
