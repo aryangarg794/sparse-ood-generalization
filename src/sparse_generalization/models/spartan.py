@@ -79,19 +79,26 @@ class SPARTAN(nn.Module):
             act()]
         )
         
-        for _ in range(num_feature_layers-2):
-            self.feature_map.extend(
-                [
-                    nn.Conv2d(
-                        in_channels=model_dim, out_channels=model_dim, kernel_size=1
-                    ),
-                    act(),
-                ]
-            )
+        for i in range(num_feature_layers-1):
+            if i == num_feature_layers-1:
+                self.feature_map.extend(
+                    [
+                        nn.Conv2d(
+                            in_channels=model_dim, out_channels=model_dim, kernel_size=1
+                        ),
+                    ]
+                )
+            else:
+                self.feature_map.extend(
+                    [
+                        nn.Conv2d(
+                            in_channels=model_dim, out_channels=model_dim, kernel_size=1
+                        ),
+                        act(),
+                    ]
+                )
 
-        self.feature_map.append(
-            nn.Conv2d(in_channels=model_dim, out_channels=model_dim, kernel_size=1)
-        )
+    
 
         if pe:
             if sinusoidal:

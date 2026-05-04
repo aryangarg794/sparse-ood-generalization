@@ -35,7 +35,7 @@ def main(cfg: DictConfig):
     """
     timestamp = datetime.now().strftime("%d_%b_%Y__%Hh%Mm")
 
-    dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)()
+    dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)(compute_mask=False)
 
     print(OmegaConf.to_yaml(cfg, resolve=True))
     group_name = cfg.run_name + "_" + timestamp

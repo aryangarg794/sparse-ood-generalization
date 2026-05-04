@@ -5,6 +5,7 @@ import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.nn.utils as utils
+import torch.nn.functional as F
 import wandb
 
 from copy import deepcopy
@@ -12,6 +13,7 @@ from hydra.utils import instantiate
 from torch import Tensor
 from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
+from torch.utils.data import DataLoader
 
 from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
 from sparse_generalization.losses.sparse_loss import L1SparsityWeights
@@ -195,8 +197,7 @@ class TransformerLit(pl.LightningModule):
 
         assert not (self.token_pool and self.agg_pool), "Cant have both agg and token pool"
 
-    def _get_loss_acc(self: Self, batch):
-        x, y = batch
+    def forward(self: Self, x):
         attn_matrices = []
 
         batch_size, width, height, _ = x.size()
@@ -241,14 +242,17 @@ class TransformerLit(pl.LightningModule):
         else:
             y_hat = self.out(x_attn.max(dim=1)[0])
 
-        loss = self.loss(y_hat, y)
-        acc = self.accuracy(y_hat, y)
-
         path_matrix = self._compute_thresh_path(attn_matrices)
         if self.agg_pool:
             path_matrix = torch.bmm(agg_attn, path_matrix)
 
-        return loss, acc, path_matrix  # (b, h, h)
+        return y_hat, path_matrix
+    def _get_loss_acc(self: Self, batch):
+        x, y = batch
+        y_hat, path_matrix = self(x)
+        loss = self.loss(y_hat, y)
+        acc = self.accuracy(y_hat, y)
+        return loss, acc, path_matrix
 
     def training_step(self, batch, batch_idx):
         if self.noisy_bern:  # NOTE: doesnt work
@@ -445,6 +449,40 @@ class TransformerLit(pl.LightningModule):
             self.running_acc_test[idx] = 0.0
             self.masks_test[name].append(num_attn_id)
             self.val_attn_matrices[idx].clear()
+
+    @torch.no_grad()
+    def test_anti(self, anti_dataset: DataLoader): 
+        results = {}
+        labels = []
+        true_labels = []
+        for batch_idx, (x, y) in enumerate(anti_dataset):
+            x = x.to(self.device)
+            y = y.to(self.device)
+            out, _ = self(x)
+            probs = F.sigmoid(out)
+            labels.append(probs)
+            true_labels.append(y)
+
+        preds = torch.cat(labels, dim=0)
+        trues = torch.cat(true_labels, dim=0)
+        size = preds.size(0)
+        midpoint = size // 2 
+
+
+        total_acc = self.accuracy(preds, trues)
+        results["total_acc"] = total_acc.item()
+        acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
+        acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
+        conf_a = preds[:midpoint].mean()
+        conf_b = preds[:midpoint].mean()
+        
+        results["acc_a"] = acc_a.item()
+        results["acc_b"] = acc_b.item()
+        results["conf_a"] = conf_a.item()
+        results["conf_b"] = conf_b.item()
+
+
+        return results
 
     def on_test_epoch_end(self):
         all_attn = torch.cat(self.test_attn_matrices, dim=0)
