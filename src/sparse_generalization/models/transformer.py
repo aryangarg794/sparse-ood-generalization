@@ -37,7 +37,6 @@ class TransformerLit(pl.LightningModule):
         model_dim: int = 64,
         out_dim: int = 1,
         num_heads: int = 1,  # for the toy example just keep it one
-        hidden_dims: List = list([128, 128]),
         agg_pool: bool = False,
         token_pool: bool = False,
         layernorm: bool = True,
@@ -110,19 +109,24 @@ class TransformerLit(pl.LightningModule):
             act()]
         )
 
-        for _ in range(num_feature_layers-2):
-            self.feature_map.extend(
-                [
-                    nn.Conv2d(
-                        in_channels=model_dim, out_channels=model_dim, kernel_size=1
-                    ),
-                    act(),
-                ]
-            )
-
-        self.feature_map.append(
-            nn.Conv2d(in_channels=model_dim, out_channels=model_dim, kernel_size=1)
-        )
+        for i in range(num_feature_layers-1):
+            if i == num_feature_layers-1:
+                self.feature_map.extend(
+                    [
+                        nn.Conv2d(
+                            in_channels=model_dim, out_channels=model_dim, kernel_size=1
+                        ),
+                    ]
+                )
+            else:
+                self.feature_map.extend(
+                    [
+                        nn.Conv2d(
+                            in_channels=model_dim, out_channels=model_dim, kernel_size=1
+                        ),
+                        act(),
+                    ]
+                )
 
         if positional_encoding:
             if sinusoidal:
