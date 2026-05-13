@@ -98,8 +98,6 @@ class SPARTAN(nn.Module):
                     ]
                 )
 
-    
-
         if pe:
             if sinusoidal:
                 model_dim = model_dim
@@ -135,7 +133,7 @@ class SPARTAN(nn.Module):
                 num_heads=num_heads,
                 embed_size=self.embed_size,
                 out_dim=out_dim,
-                residual=residual,
+                residual=False,
                 act=act,
                 use_mask=True, 
                 device=device, 
@@ -387,6 +385,10 @@ class SPARTAN(nn.Module):
                 accs_test[name].append(test_metrics["acc"])
 
             postfix["edges"] = mask_running
+
+            # if self.agg_pool:
+            #     self.out.temp_decay(step, num_epochs)
+            #     postfix["temp"] = self.out.temp
 
             pbar.set_postfix(postfix)
 

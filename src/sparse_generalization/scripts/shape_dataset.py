@@ -557,6 +557,7 @@ def generate_dataset(
     mode: str = "train",
     func: str = "row",
     visualize: bool = True,
+    corruption: float = 0.0, 
     size: int = 8,
     file_path: str = "data/shapes/shapes",
 ):
@@ -625,6 +626,12 @@ def generate_dataset(
         dataset[f"X_{mode}"] = torch.stack(samples, dim=0)
         dataset[f"Y_{mode}"] = torch.stack(labels, dim=0)
 
+        if corruption > 0.0 and mode == 'train':
+            train_size = (dataset[f"Y_{mode}"].size(0) - 6000)
+            num_corr = int(corruption * train_size)
+            corr_idxs = torch.randperm(train_size)[:num_corr]
+            dataset[f"Y_{mode}"][corr_idxs] = 1 - dataset[f"Y_{mode}"][corr_idxs]
+
     print("Saving")
     file_path = file_path + f"_{name}_{num_samples}_size{size}.pl"
     with open(file_path, "wb") as f:
@@ -637,8 +644,9 @@ if __name__ == "__main__":
         "-n", "--num_samples", type=int, default=250, help="numnber of samples"
     )
     parser.add_argument("-s", "--size", type=int, default=8, help="size")
+    parser.add_argument("-c", "--corr", type=float, default=0.0, help="corruption noise")
     parser.add_argument("-m", "--mode", type=str, default="train", help="mode name")
     parser.add_argument("-f", "--func", type=str, default="row", help="mode name")
 
     args = parser.parse_args()
-    generate_dataset(num_samples=args.num_samples, size=args.size, mode=args.mode)
+    generate_dataset(num_samples=args.num_samples, size=args.size, mode=args.mode, corruption=args.corr)

@@ -1,12 +1,12 @@
 _target_: sparse_generalization.models.spartan.SPARTAN
 _partial_: true
 
-inp_dim: 25
+inp_dim: 1
 out_dim: 1 
 layernorm: false
 agg_pool: false 
 model_dim: 32
-embedding_inp: true
+embedding_inp: false
 num_feature_layers: 3
 num_heads: 1
 num_layers: 1
@@ -27,7 +27,7 @@ start_lambda: 1e15
 target_loss: 0.115
 cma: 0.9
 step_size: 5e-1
-dropout: 0.00
+dropout: 0.0
 device: cuda
 alpha_res: false
 separate_mask: false

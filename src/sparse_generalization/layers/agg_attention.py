@@ -43,8 +43,8 @@ class AggregationAttention(nn.Module):
         self.temp = temp
         self.bias = bias
 
-        self.query = nn.Parameter(torch.rand((1, embed_size), device=device))
-        nn.init.xavier_uniform_(self.query)
+        self.query = nn.Parameter(torch.zeros((1, embed_size), device=device))
+        # nn.init.trunc_normal_(self.query, std=0.02)
 
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
@@ -111,6 +111,10 @@ class AggregationAttention(nn.Module):
             masks = masks.sum(dim=1)
             attention_probs = attention_probs.sum(dim=1)
 
+        if self.residual:
+            pooled_x = x.max(dim=1, keepdim=True)[0]
+            out = pooled_x + attention_repr
+
         if self.layernorm:
             attention_repr = self.ln(attention_repr)
 
@@ -161,3 +165,12 @@ class AggregationAttention(nn.Module):
         return hidden_repr.view(-1, self.heads, 1, self.dk), A.view(-1, self.heads, 1, seq_len), attention_probs.view(
             -1, self.heads, 1, seq_len
         )
+    
+    def temp_decay(self, step, total_steps, start_temp=3.0, end_temp=0.1):
+        if step >= total_steps:
+            return end_temp
+        
+        temp_range = start_temp - end_temp
+        current_temp = start_temp - (step / total_steps) * temp_range
+        
+        self.temp = max(current_temp, end_temp) 
