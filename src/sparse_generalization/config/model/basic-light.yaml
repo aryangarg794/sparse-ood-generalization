@@ -1,10 +1,10 @@
 _target_: sparse_generalization.models.mlp.BasicMLPLit
 _partial_: true
 
-input_dim: 25
+input_dim: 1
 out_dim: 1 
 hidden_dims: [32, 40]
-embedding_inp: true
+embedding_inp: false
 model_dim: 32
 inp_size: 5 
 

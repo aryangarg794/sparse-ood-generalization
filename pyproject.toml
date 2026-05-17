@@ -29,6 +29,7 @@ dependencies = [
     "torchvision>=0.24.1",
     "typing>=3.10.0.0",
     "wandb>=0.23.0",
+    "zuko>=1.6.0",
 ]
 
 [project.scripts]
