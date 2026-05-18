@@ -38,8 +38,13 @@ def compute_masks(xs):
     return torch.stack(masks, dim=0)
 
 
-def get_shapes_datasets(size: int, data_dir: str, grid_size: int, one_hot: bool, compute_mask: bool):
-    data_path = os.path.join(data_dir, f"shapes_train_size{grid_size}.pl")
+def get_shapes_datasets(size: int, data_dir: str, grid_size: int, one_hot: bool, compute_mask: bool, corr: bool):
+    if corr:
+        corr = f"_corr"
+    else:
+        corr = ""
+
+    data_path = os.path.join(data_dir, f"shapes_train{corr}_size{grid_size}.pl")
     data_path = to_absolute_path(data_path)
     data_cls = partial(ShapesDataset, one_hot=one_hot, size=grid_size)
 
