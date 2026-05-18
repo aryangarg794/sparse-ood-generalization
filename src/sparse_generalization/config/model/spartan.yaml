@@ -11,9 +11,9 @@ num_feature_layers: 3
 num_heads: 1
 num_layers: 1
 include_sparsity: false
-lr: 1e-3
+lr: 5e-4
 token_pool: false
-alpha: 0.1
+alpha: 0.05
 compute_mask: false
 residual: true
 mask_res: false

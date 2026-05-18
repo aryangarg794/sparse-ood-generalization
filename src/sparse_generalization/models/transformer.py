@@ -158,10 +158,11 @@ class TransformerLit(pl.LightningModule):
                 num_heads=num_heads,
                 embed_size=self.embed_size,
                 out_dim=out_dim,
-                residual=residual,
+                residual=False,
                 act=act,
                 dropout=dropout,
                 device=self.device,
+                use_mask=False, 
                 layernorm=layernorm,
             )
         elif self.token_pool:
