@@ -111,9 +111,9 @@ class AggregationAttention(nn.Module):
             masks = masks.sum(dim=1)
             attention_probs = attention_probs.sum(dim=1)
 
-        if self.residual:
-            pooled_x = x.max(dim=1, keepdim=True)[0]
-            out = pooled_x + attention_repr
+        # if self.residual:
+        #     pooled_x = x.max(dim=1, keepdim=True)[0]
+        #     out = pooled_x + attention_repr
 
         if self.layernorm:
             attention_repr = self.ln(attention_repr)
