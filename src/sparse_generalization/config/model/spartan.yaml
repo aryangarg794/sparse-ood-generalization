@@ -13,7 +13,7 @@ num_layers: 1
 include_sparsity: false
 lr: 3e-4
 token_pool: false
-alpha: 0.1
+alpha: 0.05
 compute_mask: false
 residual: true
 mask_res: false
@@ -31,6 +31,6 @@ dropout: 0.0
 device: cuda
 alpha_res: false
 separate_mask: false
-beta1: 0.9
+beta1: 0.99
 beta2: 0.999
 
