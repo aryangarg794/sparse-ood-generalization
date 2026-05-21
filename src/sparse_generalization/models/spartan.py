@@ -23,7 +23,6 @@ class SPARTAN(nn.Module):
         inp_dim: int = 3,
         out_dim: int = 1,
         model_dim: int = 64,
-        num_feature_layers: int = 3,
         num_heads: int = 1,
         num_layers: int = 4,
         agg_pool: bool = False,
@@ -69,34 +68,19 @@ class SPARTAN(nn.Module):
         self.token_pool = token_pool
         self.compute_mask = compute_mask
 
-        self.feature_map = nn.Sequential()
-        if embedding_inp:
-            self.embed_layer = nn.Embedding(num_embeddings, 4*model_dim)
-
-        self.feature_map.extend(
-            [nn.Conv2d(in_channels=4*model_dim if embedding_inp else inp_dim, 
-                       out_channels=model_dim, kernel_size=1),
-            act()]
-        )
         
-        for i in range(num_feature_layers-1):
-            if i == num_feature_layers-1:
-                self.feature_map.extend(
-                    [
-                        nn.Conv2d(
-                            in_channels=model_dim, out_channels=model_dim, kernel_size=1
-                        ),
-                    ]
-                )
-            else:
-                self.feature_map.extend(
-                    [
-                        nn.Conv2d(
-                            in_channels=model_dim, out_channels=model_dim, kernel_size=1
-                        ),
-                        act(),
-                    ]
-                )
+        if embedding_inp:
+            self.embed_layer = nn.Embedding(num_embeddings, model_dim)
+        
+        bottleneck = model_dim // 2 
+        self.feature_map = nn.Sequential(
+            # nn.Linear(4*model_dim if embedding_inp else inp_dim, bottleneck),
+            # act(),
+            # nn.Linear(bottleneck, bottleneck),
+            # act(),
+            # nn.Linear(bottleneck, model_dim)
+            nn.Identity()
+        )
 
         if pe:
             if sinusoidal:
@@ -184,8 +168,7 @@ class SPARTAN(nn.Module):
             assert x.size(3) == 1, "channels is not 1 for shapes input"
             x = self.embed_layer(x.squeeze(3).int())  # (b, w, h, e)
 
-        x_features = self.feature_map(x.permute(0, 3, 1, 2))  # (b, e, w, h)
-        x_features = x_features.permute(0, 2, 3, 1)
+        x_features = self.feature_map(x)  # (b, e, w, h)
 
         masks = (
             torch.eye(width * height, device=self.device).repeat(batch_size, 1, 1)
@@ -196,10 +179,7 @@ class SPARTAN(nn.Module):
         if self.pe:
             device = x.device
             if self.sinusoidal:
-                embeddings = positionalencoding2d(self.embed_size, width, height)
-                embeddings = embeddings.view(width, height, -1).to(
-                    device=device
-                )  # (w, h, e)
+                embeddings = positionalencoding2d(self.embed_size, width, height).permute(1, 2, 0).to(device)
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
             else:

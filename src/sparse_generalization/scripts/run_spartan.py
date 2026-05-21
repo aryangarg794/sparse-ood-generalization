@@ -122,7 +122,7 @@ def main(cfg: DictConfig):
             model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
             model = model.to(cfg.model.device)
             model.logger = logger
-            print(summary(model, input_size=(16, 5, 5, 1), depth=1))
+            print(summary(model, input_size=(16, 5, 5, cfg.model.inp_dim), depth=1))
             (
                 losses,
                 accs,

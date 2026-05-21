@@ -4,11 +4,10 @@ _partial_: true
 inp_dim: 1
 out_dim: 1 
 layernorm: true
-embedding_inp: false
+embedding_inp: true
 agg_pool: false
 token_pool: false
 model_dim: 32
-num_feature_layers: 3
 num_layers: 1
 num_heads: 1
 include_sparsity: false
