@@ -10,6 +10,8 @@ from torch import Tensor
 from torch.nn.functional import softmax
 from typing import Self
 
+from sparse_generalization.utils.util_funcs import vae_log_prob, reparametrize
+
 class AttentionFlowLatent(nn.Module):
 
     def __init__(
@@ -82,14 +84,6 @@ class AttentionFlowLatent(nn.Module):
             hidden_features=flow_params['hidden_features']
         )
         self.normalizing_flow = Flow(base_flow.transform.inv, base_flow.base)
-    
-    def reparametrize(self, mu: Tensor, sig: Tensor):
-        std = torch.exp(0.5*sig)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-    
-    def vae_log_prob(self, x: Tensor, mu: Tensor, sig: Tensor):
-        return (-0.5 * math.log(2 * math.pi) - 0.5 * sig - ((x - mu) ** 2) / (2 * torch.exp(sig))).sum(-1)
 
     def forward(
         self: Self,
@@ -100,7 +94,7 @@ class AttentionFlowLatent(nn.Module):
         avg_mask: bool = True,
     ):
         x = queries.clone()
-        queries = self.queries(queries)  # (b, l, d)
+        queries = self.queries(queries)  
         keys = self.keys(keys)
         values = self.values(values)
 
@@ -110,8 +104,8 @@ class AttentionFlowLatent(nn.Module):
 
         # encoder
         out, _ = self.encoder_lstm(x) # assume self-attn (b, k)
-        mu, sig = torch.chunk(self.encoder(out[:, -1:, :]), chunks=2, dim=-1) 
-        encoding = self.reparametrize(mu, sig)
+        mu, sig = torch.chunk(self.encoder(out[:, -1, :]), chunks=2, dim=-1) 
+        encoding = reparametrize(mu, sig)
 
         attention_repr, mask_per_head, attn_per_head, ladj, prior = self._attention(
             queries_split,
@@ -120,7 +114,7 @@ class AttentionFlowLatent(nn.Module):
             encoding
         )
 
-        attention_repr = self._merge_heads(attention_repr)  # (b, l, d)
+        attention_repr = self._merge_heads(attention_repr)  
         attention_repr = self.projection(attention_repr)
 
         if avg_attn_heads:
@@ -130,7 +124,7 @@ class AttentionFlowLatent(nn.Module):
             mask = mask_per_head.sum(dim=1)
 
         if self.training:
-            mha_loss = prior - self.vae_log_prob(encoding, mu, sig) + ladj
+            mha_loss = prior - vae_log_prob(encoding, mu, sig) + ladj
             return attention_repr, mask, adjacency, mha_loss
         else:
             return attention_repr, mask, adjacency
@@ -176,7 +170,7 @@ class AttentionFlowLatent(nn.Module):
         g = self.decoder(latent_nf).squeeze()
         v = self.v.repeat(batch_heads, 1, 1)
         v_dir = F.normalize(v, dim=-1)
-        mask_weights_raw = g.unsqueeze(-1) * v_dir
+        mask_weights_raw = g.view(-1, seq_len, 1) * v_dir
         mask_weights = F.sigmoid(mask_weights_raw)
         hard_mask = (mask_weights >= 0.5).float()
         A = hard_mask - mask_weights.detach() + mask_weights

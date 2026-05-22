@@ -8,14 +8,16 @@ import torch
 import warnings
 import wandb
 
+
 from datetime import datetime
 from hydra.utils import instantiate, to_absolute_path
+from functools import partial
 from omegaconf import DictConfig, OmegaConf
-from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.utilities.model_summary.model_summary import ModelSummary
 from torch.utils.data import DataLoader
 from torchinfo import summary
+
+from sparse_generalization.models.generative import FlowSpartan
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 warnings.filterwarnings(
@@ -33,9 +35,13 @@ def main(cfg: DictConfig):
     timestamp = datetime.now().strftime("%d_%b_%Y__%Hh%Mm")
     group_name = cfg.run_name + "_" + timestamp
 
-    dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)(compute_mask=cfg.model.compute_mask)
+    test_model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
+    flow_model = isinstance(test_model, FlowSpartan)
+    del test_model
+    dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)(compute_mask=cfg.model.compute_mask if not flow_model else False)
 
     print(OmegaConf.to_yaml(cfg, resolve=True))
+    
 
     if cfg.seeds is None:
         print(f"\n{'='*60}")
@@ -81,6 +87,7 @@ def main(cfg: DictConfig):
         torch.backends.cudnn.benchmark = False
 
         results = {}
+        gen = None
         for seed in cfg.seeds:
             results[seed] = {}
 
@@ -122,22 +129,40 @@ def main(cfg: DictConfig):
             model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
             model = model.to(cfg.model.device)
             model.logger = logger
-            print(summary(model, input_size=(16, 5, 5, cfg.model.inp_dim), depth=1))
-            (
-                losses,
-                accs,
-                sparses,
-                mask_edges,
-                attn_edges,
-                losses_test,
-                accs_test,
-                attn_test,
-                masks_test,
-            ) = model.fit(
-                dataloader=train_loader,
-                num_epochs=cfg.trainer.max_epochs,
-                testloaders=val_loaders,
-            )
+            # print(summary(model, input_size=(16, 5, 5, cfg.model.inp_dim), depth=1))
+            if flow_model:
+                (
+                    losses,
+                    accs,
+                    sparses,
+                    gens, 
+                    mask_edges,
+                    attn_edges,
+                    losses_test,
+                    accs_test,
+                    attn_test,
+                    masks_test,
+                ) = model.fit(
+                    dataloader=train_loader,
+                    num_epochs=cfg.trainer.max_epochs,
+                    testloaders=val_loaders,
+                )
+            else:
+                (
+                    losses,
+                    accs,
+                    sparses,
+                    mask_edges,
+                    attn_edges,
+                    losses_test,
+                    accs_test,
+                    attn_test,
+                    masks_test,
+                ) = model.fit(
+                    dataloader=train_loader,
+                    num_epochs=cfg.trainer.max_epochs,
+                    testloaders=val_loaders,
+                )
 
             if cfg.save:
                 torch.save(
@@ -150,6 +175,7 @@ def main(cfg: DictConfig):
             results[seed]["train_sparse"] = sparses
             results[seed]["train_masks"] = mask_edges
             results[seed]["train_attns"] = attn_edges
+            results[seed]["train_gen"] = gens
 
             results[seed]["val_losses"] = losses_test
             results[seed]["val_accs"] = accs_test

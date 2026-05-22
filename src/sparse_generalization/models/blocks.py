@@ -206,7 +206,10 @@ class MHABlockGen(nn.Module):
         return self._forward_image(x)
 
     def _forward_image(self: Self, x: Tensor):
-        attn_out, attn_masks, attn_scores, gen_loss = self.mha(x, x, x)
+        if self.training:
+            attn_out, attn_masks, attn_scores, gen_loss = self.mha(x, x, x)
+        else:
+            attn_out, attn_masks, attn_scores = self.mha(x, x, x)
         
         if self.layernorm:
             if self.residual:
