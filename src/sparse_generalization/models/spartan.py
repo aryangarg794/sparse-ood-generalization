@@ -72,14 +72,13 @@ class SPARTAN(nn.Module):
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
         
-        bottleneck = model_dim // 2 
+        bottleneck = 128
         self.feature_map = nn.Sequential(
-            # nn.Linear(4*model_dim if embedding_inp else inp_dim, bottleneck),
-            # act(),
-            # nn.Linear(bottleneck, bottleneck),
-            # act(),
-            # nn.Linear(bottleneck, model_dim)
-            nn.Identity()
+            nn.Linear(model_dim if embedding_inp else inp_dim, bottleneck),
+            act(),
+            nn.Linear(bottleneck, model_dim),
+            nn.LayerNorm(model_dim)
+            # nn.Identity()
         )
 
         if pe:

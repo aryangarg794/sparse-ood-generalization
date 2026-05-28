@@ -87,7 +87,7 @@ def main(cfg: DictConfig):
         torch.backends.cudnn.benchmark = False
 
         results = {}
-        gen = None
+        gens = None
         for seed in cfg.seeds:
             results[seed] = {}
 
