@@ -1,4 +1,4 @@
 project: sparse-generalization 
 save_dir: wandb_logs
-offline: true # keep true for the cluster
+offline: false # keep true for the cluster
 log_model: false

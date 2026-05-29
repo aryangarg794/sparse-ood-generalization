@@ -46,7 +46,7 @@ class AggregationAttention(nn.Module):
         self.bias = bias
 
         self.query = nn.Parameter(torch.zeros((1, embed_size), device=device))
-        nn.init.trunc_normal_(self.query, std=0.02)
+        nn.init.uniform_(self.query)
 
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)

@@ -101,14 +101,12 @@ class TransformerLit(pl.LightningModule):
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
 
-        bottleneck = model_dim // 2 
+        bottleneck = 128
         self.feature_map = nn.Sequential(
-            # nn.Linear(4*model_dim if embedding_inp else inp_dim, bottleneck),
-            # act(),
-            # nn.Linear(bottleneck, bottleneck),
-            # act(),
-            # nn.Linear(bottleneck, model_dim)
-            nn.Identity()
+            nn.Linear(4*model_dim if embedding_inp else inp_dim, bottleneck),
+            act(),
+            nn.Linear(bottleneck, model_dim),
+            # nn.Identity()
         )
 
         if positional_encoding:
