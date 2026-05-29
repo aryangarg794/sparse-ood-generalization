@@ -8,7 +8,7 @@ from typing import List, Self
 from sparse_generalization.models.mlp import BasicMLP
 from sparse_generalization.layers.bern_mha import MultiHeadAttentionBern
 from sparse_generalization.layers.oracle import MultiHeadAttentionOracle
-from sparse_generalization.layers.gen_mha import AttentionFlowLatent
+from sparse_generalization.layers.gen_mha import FlowMasking, QKVHyperNet
 
 
 class MHABlock(nn.Module):
@@ -161,14 +161,15 @@ class MHABlockGen(nn.Module):
     def __init__(
         self: Self,
         embed_size: int,
-        seq_len: int, 
         act: nn.Module,
+        seq_len: int, 
         latent_dim: int, 
         dropout: int,
         layernorm: bool,
         residual: bool, 
         lstm_layers: int = 1, 
         num_heads: int = 1,
+        mha_layer: nn.Module = FlowMasking, 
         bidirectional: bool = True, 
         flow_params: dict = {'n_flows' : 2, 'hidden_features' : (128, 128)},
         prior_params: dict = {'n_flows' : 3, 'hidden_features' : (256, 256)},
@@ -180,9 +181,9 @@ class MHABlockGen(nn.Module):
         self.residual = residual
         self.layernorm = layernorm
 
-        self.mha = AttentionFlowLatent(
+        self.mha = mha_layer(
             embed_size,
-            seq_len,
+            seq_len=seq_len, 
             latent_dim=latent_dim, 
             num_heads=num_heads,
             dropout=dropout,
