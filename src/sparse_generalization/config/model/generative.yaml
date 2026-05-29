@@ -6,6 +6,7 @@ out_dim: 1
 layernorm: false
 agg_pool: false 
 model_dim: 32
+seq_len: 25
 embedding_inp: true
 num_heads: 1
 num_layers: 1
@@ -17,7 +18,7 @@ flow_params:
   hidden_features: [128, 128]
 prior_params:
   n_flows: 2
-  hidden_features: [256, 256]
+  hidden_features: [128, 128]
 nf_prior: true
 include_sparsity: false
 lr: 1e-3
@@ -31,4 +32,9 @@ dropout: 0.0
 device: cuda
 beta1: 0.99
 beta2: 0.999
+
+mha_layer:
+  _partial_: true
+  _target_: sparse_generalization.layers.gen_mha.QKVHyperNet
+  
 

@@ -11,6 +11,7 @@ from tqdm import tqdm
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockGen
+from sparse_generalization.layers.gen_mha import FlowMasking
 from sparse_generalization.layers.agg_attention import AggregationFlow
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
 from sparse_generalization.utils.util_funcs import positionalencoding2d, compute_attn_mean, compute_mask_mean, compute_max_paths
@@ -33,13 +34,14 @@ class FlowSpartan(nn.Module):
         include_sparsity: bool = False,
         alpha: float = 0.1, 
         token_pool: bool = False,
+        mha_layer: nn.Module = FlowMasking, 
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
         step_size: float = 1e-1,
         pe: bool = True,
         sinusoidal: bool = True,
         bidirectional: bool = True, 
         flow_params: dict = {'n_flows' : 2, 'hidden_features' : (128, 128)},
-        prior_params: dict = {'n_flows' : 3, 'hidden_features' : (256, 256)},
+        prior_params: dict = {'n_flows' : 3, 'hidden_features' : (128, 128)},
         nf_prior: bool = True, 
         embedding_inp: bool = True,
         lr: float = 1e-3,
@@ -96,6 +98,7 @@ class FlowSpartan(nn.Module):
                 MHABlockGen(
                     embed_size,
                     seq_len,
+                    mha_layer=mha_layer, 
                     latent_dim=latent_dim, 
                     num_heads=num_heads,
                     dropout=dropout,
