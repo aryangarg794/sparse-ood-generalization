@@ -12,13 +12,13 @@ num_heads: 1
 num_layers: 1
 latent_dim: 16
 lstm_layers: 1
-bidirectional: true
+bidirectional: false
 flow_params:
   n_flows: 2
-  hidden_features: [128, 128]
+  hidden_features: [32, 32]
 prior_params:
   n_flows: 2
-  hidden_features: [128, 128]
+  hidden_features: [32, 32]
 nf_prior: true
 include_sparsity: false
 lr: 1e-3
@@ -30,11 +30,10 @@ pe: true
 sinusoidal: true
 dropout: 0.0
 device: cuda
-beta1: 0.99
+beta1: 0.9
 beta2: 0.999
 
 mha_layer:
   _partial_: true
   _target_: sparse_generalization.layers.gen_mha.QKVHyperNet
   
-

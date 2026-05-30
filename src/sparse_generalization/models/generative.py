@@ -11,8 +11,8 @@ from tqdm import tqdm
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockGen
-from sparse_generalization.layers.gen_mha import FlowMasking
-from sparse_generalization.layers.agg_attention import AggregationFlow
+from sparse_generalization.layers.gen_mha import FlowMasking, QKVHyperNet
+from sparse_generalization.layers.agg_attention import AggregationFlow, AggregationQKV
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
 from sparse_generalization.utils.util_funcs import positionalencoding2d, compute_attn_mean, compute_mask_mean, compute_max_paths
 
@@ -97,7 +97,7 @@ class FlowSpartan(nn.Module):
             self.layers.append(
                 MHABlockGen(
                     embed_size,
-                    seq_len,
+                    seq_len=seq_len,
                     mha_layer=mha_layer, 
                     latent_dim=latent_dim, 
                     num_heads=num_heads,
@@ -114,7 +114,12 @@ class FlowSpartan(nn.Module):
             )
 
         if self.agg_pool:
-            self.out = AggregationFlow(
+            if mha_layer.func == QKVHyperNet:
+                agg_layer = AggregationQKV
+            else:
+                agg_layer = AggregationFlow
+
+            self.out = agg_layer(
                 out_dim=out_dim,
                 act=act,
                 dropout=dropout,
@@ -205,8 +210,11 @@ class FlowSpartan(nn.Module):
             masks = torch.bmm(mask, masks)
 
         if self.agg_pool:
-            out, final_mask, agg_attn, layer_gen_loss = self.out(x_attn)
-            gen_loss += layer_gen_loss
+            if self.training:
+                out, final_mask, agg_attn, layer_gen_loss = self.out(x_attn)
+                gen_loss += layer_gen_loss
+            else:
+                out, final_mask, agg_attn = self.out(x_attn)
         elif self.token_pool:
             out = self.out(x_attn[:, -1, :])
         else:

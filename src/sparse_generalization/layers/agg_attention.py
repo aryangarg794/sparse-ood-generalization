@@ -285,7 +285,10 @@ class AggregationFlow(nn.Module):
         values_split = self._split_heads(values)
 
         out, _ = self.encoder_lstm(x) # assume self-attn (b, k)
-        mu, sig = torch.chunk(self.encoder(out[:, -1, :]), chunks=2, dim=-1) 
+        lstm_encoding = self.encoder(out[:, -1, :]).view(batch_size, 2, self.heads, -1)
+        mu, sig = torch.chunk(lstm_encoding, chunks=2, dim=1) # (b, k*h)
+        mu = mu.permute(0, 2, 1, 3).squeeze().reshape(batch_size * self.heads, -1)
+        sig = sig.permute(0, 2, 1, 3).squeeze().reshape(batch_size * self.heads, -1)
         encoding = reparametrize(mu, sig)
 
         attention_repr, masks, attention_probs, ladj, prior = self._attention(
@@ -383,6 +386,7 @@ class AggregationQKV(nn.Module):
         self.layernorm = layernorm
 
         self.query = nn.Parameter(torch.zeros((1, embed_size)))
+        nn.init.uniform_(self.query)
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
         self.values = nn.Linear(embed_size, embed_size)
@@ -448,26 +452,17 @@ class AggregationQKV(nn.Module):
 
     def forward(self, x: Tensor, sum_heads: bool = True):
         batch_size, seq_len, _ = x.size()
-        queries = self.queries(self.query.repeat(batch_size, 1, 1))  # (b, 1, d)
-        keys = self.keys(x)  # (b, l, d)
-        values = self.values(x)  # (b, l, d)
-
-        queries_split = self._split_heads(queries)  # (b * h, 1, d_k)
-        keys_split = self._split_heads(keys)
-        values_split = self._split_heads(values)
 
         out, _ = self.encoder_lstm(x) # assume self-attn (b, k)
         mu, sig = torch.chunk(self.encoder(out[:, -1, :]), chunks=2, dim=-1) 
         encoding = reparametrize(mu, sig)
 
         attention_repr, masks, attention_probs, ladj, prior = self._attention(
-            queries_split,
-            keys_split,
-            values_split,
+            self.query.repeat(batch_size, 1, 1),
+            x,
+            x,
             encoding
         )
-
-        attention_repr = self._merge_heads(attention_repr)  # (b, 1, d)
 
         if sum_heads:
             masks = masks.sum(dim=1)
@@ -487,13 +482,7 @@ class AggregationQKV(nn.Module):
         value: Tensor,
         encoding: Tensor,
     ):
-        batch_heads, seq_len, _ = key.size()
-        attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(
-            self.dk
-        )  # (bh, 1, dk) @ (bh, dk, s)
-
-        attention_probs = softmax(attention_logits, dim=-1)
-        
+        batch_size, seq_len, _ = key.size()
         transform = self.normalizing_flow().transform
         
         if self.training:
@@ -501,20 +490,47 @@ class AggregationQKV(nn.Module):
             prior = self.prior().log_prob(latent_nf)
         else:
             latent_nf = transform(encoding)
-            
-        g = self.decoder(latent_nf).squeeze()
-        v = self.v.repeat(batch_heads, 1, 1)
-        v_dir = F.normalize(v, dim=-1)
-        mask_weights_raw = g.view(-1, 1, 1) * v_dir
-        mask_weights = F.sigmoid(mask_weights_raw)
-        hard_mask = (mask_weights >= 0.5).float()
-        A = hard_mask - mask_weights.detach() + mask_weights
-            
-        attention_probs = A * attention_probs
 
-        # (bh, 1, l)
-        hidden_repr = torch.bmm(attention_probs, value)  # (bh, 1, l) @ (bh, l, dk)
+        gq, gk, gv, go = torch.chunk(self.decoder(latent_nf).squeeze(), chunks=4, dim=-1)
+        vq_dir = F.normalize(self.Wq, dim=-1)
+        vk_dir = F.normalize(self.Wk, dim=-1)
+        vv_dir = F.normalize(self.Wv, dim=-1)
+        vo_dir = F.normalize(self.Wo, dim=-1)
 
-        return hidden_repr.view(-1, self.heads, 1, self.dk), A.view(-1, self.heads, 1, seq_len), attention_probs.view(
-            -1, self.heads, 1, seq_len
-        ), ladj if self.training else None, prior if self.training else None
+        Wq = gq.view(-1, self.embed_size, 1) * vq_dir
+        Wk = gk.view(-1, self.embed_size, 1) * vk_dir
+        Wv = gv.view(-1, self.embed_size, 1) * vv_dir
+        Wo = go.view(-1, self.embed_size, 1) * vo_dir
+
+        queries = torch.bmm(query, Wq) # (b, l, k) @ (b, k, k)
+        keys = torch.bmm(key, Wk)
+        values = torch.bmm(value, Wv)
+
+        queries_split = self._split_heads(queries)  # (b * h, l, d_k)
+        keys_split = self._split_heads(keys)
+        values_split = self._split_heads(values) 
+        batch_heads = queries_split.size(0)
+
+        attention_logits = torch.bmm(queries_split, keys_split.transpose(1, 2)) / np.sqrt(
+            self.dk
+        )  # (b*h, l, l)
+
+        attention_probs = softmax(attention_logits, dim=-1)
+        mask_probs = F.sigmoid(attention_logits) 
+        hard_mask = (mask_probs >= 0.5).float()
+        A = hard_mask - mask_probs.detach() + mask_probs
+        
+
+        masked_attention_probs = A * attention_probs
+        hidden_repr = torch.bmm(masked_attention_probs, values_split)
+
+        attention_repr = self._merge_heads(hidden_repr.view(-1, self.heads, 1, self.dk))  
+        attention_repr = torch.bmm(hidden_repr, Wo)
+
+        return (
+            attention_repr,
+            A.view(-1, self.heads, 1, seq_len),
+            masked_attention_probs.view(-1, self.heads, 1, seq_len),
+            ladj if self.training else None,
+            prior if self.training else None
+        )
