@@ -21,11 +21,11 @@ class MultiHeadAttentionBern(nn.Module):
         num_heads: int,
         dropout: float = 0.0,
         batch_first: bool = True,
-        mask_res: bool = False, 
+        mask_res: bool = False,
         temp: float = 1.0,
         hard: bool = True,
-        bias: float = 0.5, 
-        zeros: bool = False, 
+        bias: float = 0.5,
+        zeros: bool = False,
         residual: bool = False,
         separate_mask: bool = False,
         *args,
@@ -81,7 +81,7 @@ class MultiHeadAttentionBern(nn.Module):
             keys_mask = self.keys_mask(keys)
             keys_mask_split = self._split_heads(keys_mask)
 
-        attention_repr, mask_per_head, attn_per_head = self._attention(
+        attention_repr, mask_per_head, mask_attn_per_head, attn_per_head = self._attention(
             queries_split,
             keys_split,
             values_split,
@@ -93,12 +93,13 @@ class MultiHeadAttentionBern(nn.Module):
         attention_repr = self.projection(attention_repr)
 
         if avg_attn_heads:
+            mask_attn_per_head = mask_attn_per_head.sum(dim=1)
             adjacency = attn_per_head.sum(dim=1)
 
-        if avg_mask:
+        if avg_mask: 
             mask = mask_per_head.sum(dim=1)
 
-        return attention_repr, mask, adjacency
+        return attention_repr, mask, mask_attn_per_head, adjacency
 
     def _split_heads(self: Self, x: Tensor):
         batch_size, seq_len, _ = x.size()
@@ -114,7 +115,7 @@ class MultiHeadAttentionBern(nn.Module):
             x.reshape(batch_size, self.heads, seq_len, self.dk)
             .transpose(1, 2)
             .reshape(batch_size, seq_len, self.dk * self.heads)
-        )
+        )  
 
     def _attention(
         self: Self,
@@ -138,7 +139,7 @@ class MultiHeadAttentionBern(nn.Module):
             )
             mask_logits = mask_logits.view(batch_heads, -1)
             edges_logit = torch.stack(
-                [torch.zeros_like(mask_logits), mask_logits+self.bias], dim=-1
+                [torch.zeros_like(mask_logits), mask_logits + self.bias], dim=-1
             )
             A = gumbel_softmax(
                 edges_logit, tau=self.temp, hard=self.hard
@@ -147,7 +148,7 @@ class MultiHeadAttentionBern(nn.Module):
         else:
             edges_logit = attention_logits.view(batch_heads, -1)  # (b*h, l*l)
             edges_logit = torch.stack(
-                [torch.zeros_like(edges_logit), edges_logit+self.bias], dim=-1
+                [torch.zeros_like(edges_logit), edges_logit + self.bias], dim=-1
             )
             A = gumbel_softmax(
                 edges_logit, tau=self.temp, hard=self.hard
@@ -167,6 +168,7 @@ class MultiHeadAttentionBern(nn.Module):
             hidden_repr.view(-1, self.heads, seq_len, self.dk),
             A.view(-1, self.heads, seq_len, seq_len),
             masked_attention_probs.view(-1, self.heads, seq_len, seq_len),
+            attention_probs.view(-1, self.heads, seq_len, seq_len),
         )
 
     # def noise_scheduler(self: Self, step: int, k: float = 1e-3):

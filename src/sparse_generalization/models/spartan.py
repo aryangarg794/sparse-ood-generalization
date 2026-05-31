@@ -28,24 +28,23 @@ class SPARTAN(nn.Module):
         agg_pool: bool = False,
         residual: bool = True,
         include_sparsity: bool = False,
-        path_sparsity: bool = True,
         alpha_res: bool = False,
-        alpha: float = 0.1, 
-        mask_res: bool = False, 
+        alpha: float = 0.1,
+        mask_res: bool = False,
         token_pool: bool = False,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
         lagrangian: bool = False,
         target_loss: float = 0.05,
         start_lambda: float = 1e7,
         step_size: float = 1e-1,
-        zeros: bool = False, 
+        zeros: bool = False,
         cma: float = 0.9,
         pe: bool = True,
         sinusoidal: bool = True,
         embedding_inp: bool = True,
         lr: float = 1e-3,
-        dropout: float = 0.1, 
-        compute_mask: bool = False, 
+        dropout: float = 0.1,
+        compute_mask: bool = False,
         layernorm: bool = True,
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
@@ -67,11 +66,11 @@ class SPARTAN(nn.Module):
         self.agg_pool = agg_pool
         self.token_pool = token_pool
         self.compute_mask = compute_mask
+        self.residual = residual
 
-        
         if embedding_inp:
-            self.embed_layer = nn.Embedding(num_embeddings, model_dim, max_norm=1.0)
-        
+            self.embed_layer = nn.Embedding(num_embeddings, model_dim)
+
         bottleneck = 128
         self.feature_map = nn.Sequential(
             # nn.Linear(model_dim if embedding_inp else inp_dim, bottleneck),
@@ -104,7 +103,7 @@ class SPARTAN(nn.Module):
                     zeros=zeros,
                     residual=residual,
                     dropout=dropout,
-                    mask_res=mask_res, 
+                    mask_res=mask_res,
                     separate_mask=separate_mask,
                     act=act,
                     alpha_res=alpha_res,
@@ -118,9 +117,9 @@ class SPARTAN(nn.Module):
                 out_dim=out_dim,
                 residual=False,
                 act=act,
-                use_mask=True, 
-                device=device, 
-                separate_mask=separate_mask, 
+                use_mask=True,
+                device=device,
+                separate_mask=separate_mask,
                 dropout=dropout,
                 layernorm=layernorm,
             )
@@ -139,7 +138,6 @@ class SPARTAN(nn.Module):
         self.threshold = threshold
 
         self.sparse_loss = L1SparsityAdjacency()
-        self.path_sparsity = path_sparsity
         self.lagrangian = lagrangian
         self.alpha = alpha
         self.include_sparsity = include_sparsity if not self.lagrangian else True
@@ -159,6 +157,8 @@ class SPARTAN(nn.Module):
 
     def forward(self, x: Tensor):
         attn_matrices = []
+        mask_attn_matrices = []
+        mask_matrices = []
         batch_size, width, height, _ = x.size()
         if self.max_paths is None:
             self.max_paths = self._compute_max_paths(width * height)
@@ -169,16 +169,16 @@ class SPARTAN(nn.Module):
 
         x_features = self.feature_map(x)  # (b, e, w, h)
 
-        masks = (
-            torch.eye(width * height, device=self.device).repeat(batch_size, 1, 1)
-            if self.path_sparsity
-            else []
-        )
+        masks = torch.eye(width * height, device=self.device).repeat(batch_size, 1, 1)
 
         if self.pe:
             device = x.device
             if self.sinusoidal:
-                embeddings = positionalencoding2d(self.embed_size, width, height).permute(1, 2, 0).to(device)
+                embeddings = (
+                    positionalencoding2d(self.embed_size, width, height)
+                    .permute(1, 2, 0)
+                    .to(device)
+                )
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
             else:
@@ -194,28 +194,30 @@ class SPARTAN(nn.Module):
             x_attn = torch.cat([x_attn, clses], dim=1)
 
         for layer in self.layers:
-            x_attn, mask, attn = layer(x_attn)
-            attn_matrices.append(attn)
+            x_attn, mask, mask_attn, attn = layer(x_attn)
+            attn_matrices.append(attn.detach())
+            mask_attn_matrices.append(mask_attn.detach())
 
-            if self.token_pool: 
+            if self.token_pool:
                 mask = mask[:, :-1, :-1]
-            if self.path_sparsity:  
-                masks = torch.bmm(mask, masks)
-            else:
-                masks.append(mask)
+            masks = torch.bmm(mask, masks)
+            mask_matrices.append(mask.detach())
+
 
         if self.agg_pool:
-            out, final_mask, agg_attn = self.out(x_attn)
+            out, final_mask, mask_attn, agg_attn = self.out(x_attn)
         elif self.token_pool:
             out = self.out(x_attn[:, -1, :])
         else:
             out = self.out(x_attn.max(dim=1)[0])
 
         if self.agg_pool:
-            attn_matrices.append(agg_attn)
+            attn_matrices.append(agg_attn.detach())
+            mask_attn_matrices.append(mask_attn.detach())
             masks = torch.bmm(final_mask, masks)
+            mask_matrices.append(final_mask.detach())
 
-        return out, masks, attn_matrices  # (b, k, l, l)
+        return out, masks, mask_attn_matrices, attn_matrices, mask_matrices  # (b, k, l, l)
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []
@@ -247,13 +249,10 @@ class SPARTAN(nn.Module):
                     x, y = batch
                 x = x.to(self.device)
                 y = y.to(self.device)
-                out, masks, attns = self(x)  # list of (b, l, l)
+                out, masks, attns, _, _ = self(x)  # list of (b, l, l)
                 rec_loss = self.loss(out, y)
 
-                if self.path_sparsity:
-                    path_matrix = masks
-                else:
-                    path_matrix = torch.stack(masks, dim=1).mean(dim=1)
+                path_matrix = masks
 
                 if self.compute_mask:
                     epoch_masks.append(path_matrix)
@@ -356,8 +355,8 @@ class SPARTAN(nn.Module):
 
             for loader, name in zip(testloaders, self.val_to_name.values()):
                 test_metrics = self.test(name, loader, folder="val")
-                if 'id' in name:
-                    postfix['val_id'] = test_metrics["acc"]
+                if "id" in name:
+                    postfix["val_id"] = test_metrics["acc"]
                 masks_test[name].append(test_metrics["mask"])
                 attn_test[name].append(test_metrics["attn"])
                 losses_test[name].append(test_metrics["loss"])
@@ -423,7 +422,9 @@ class SPARTAN(nn.Module):
             epoch_masks = torch.cat(epoch_masks, dim=0)
             epochs_trues = torch.cat(epochs_trues, dim=0)
             mask_score = self._mask_score(epochs_trues, epoch_masks).item()
-            self.logger.log_metrics({f"{folder}/mask_score_{name}": mask_score}, step=self.global_step)
+            self.logger.log_metrics(
+                {f"{folder}/mask_score_{name}": mask_score}, step=self.global_step
+            )
 
         self.logger.log_metrics(
             {f"{folder}/loss_epoch_{name}": epoch_loss}, step=self.global_step
@@ -449,9 +450,9 @@ class SPARTAN(nn.Module):
             "attn": attn_running,
             "mask": mask_running,
         }
-    
+
     @torch.no_grad()
-    def test_anti(self, anti_dataset: DataLoader): 
+    def test_anti(self, anti_dataset: DataLoader):
         # total acc, acc a, acc b, conf a, conf b
         results = {}
         labels = []
@@ -467,8 +468,7 @@ class SPARTAN(nn.Module):
         preds = torch.cat(labels, dim=0)
         trues = torch.cat(true_labels, dim=0)
         size = preds.size(0)
-        midpoint = size // 2 
-
+        midpoint = size // 2
 
         total_acc = self.accuracy(preds, trues)
         results["total_acc"] = total_acc.item()
@@ -477,12 +477,11 @@ class SPARTAN(nn.Module):
         acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
         conf_a = preds[:midpoint].mean()
         conf_b = preds[:midpoint].mean()
-        
+
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()
         results["conf_a"] = conf_a.item()
         results["conf_b"] = conf_b.item()
-
 
         return results
 
@@ -501,9 +500,11 @@ class SPARTAN(nn.Module):
         return all_masks.sum(dim=(1, 2)).mean().item()
 
     def _compute_max_paths(self, seq_len: int):
-        paths = torch.ones((seq_len, seq_len)) * self.num_heads
-        for l in range(self.num_layers-1):
-            multiplier = torch.ones((seq_len, seq_len)) * self.num_heads
+        paths = torch.ones((seq_len, seq_len)) * self.num_heads 
+        paths = paths + torch.eye(16) if self.residual else paths
+        for l in range(self.num_layers - 1):
+            multiplier = torch.ones((seq_len, seq_len)) * self.num_heads 
+            multiplier = multiplier + torch.eye(16) if self.residual else multiplier
             paths = paths @ multiplier
 
         if self.agg_pool:
@@ -511,13 +512,13 @@ class SPARTAN(nn.Module):
             paths = multiplier @ paths
 
         return paths.sum().item()
-    
+
     def _mask_score(self, masks, paths):
         paths_bool = (paths.squeeze() > 1).int()
-        masks = masks.view(-1, paths.size(-1)) 
+        masks = masks.view(-1, paths.size(-1))
 
-        mask1 = (paths_bool == 1)
-        mask2 = (masks == 1) 
+        mask1 = paths_bool == 1
+        mask2 = masks == 1
         batch_result = (mask1 | ~mask2).all(dim=1).float()
         return batch_result.mean()
 

@@ -38,10 +38,11 @@ def main(cfg: DictConfig):
     test_model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
     flow_model = isinstance(test_model, FlowSpartan)
     del test_model
-    dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)(compute_mask=cfg.model.compute_mask if not flow_model else False)
+    dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)(
+        compute_mask=cfg.model.compute_mask if not flow_model else False
+    )
 
     print(OmegaConf.to_yaml(cfg, resolve=True))
-    
 
     if cfg.seeds is None:
         print(f"\n{'='*60}")
@@ -135,7 +136,7 @@ def main(cfg: DictConfig):
                     losses,
                     accs,
                     sparses,
-                    gens, 
+                    gens,
                     mask_edges,
                     attn_edges,
                     losses_test,

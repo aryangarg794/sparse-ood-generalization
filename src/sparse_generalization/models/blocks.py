@@ -35,10 +35,10 @@ class MHABlock(nn.Module):
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4*embed_size), 
+            nn.Linear(embed_size, 4 * embed_size),
             nn.Dropout(dropout),
-            act(), 
-            nn.Linear(4*embed_size, embed_size)
+            act(),
+            nn.Linear(4 * embed_size, embed_size),
         )
 
     def forward(self: Self, x: Tensor):
@@ -85,8 +85,8 @@ class MHABlockBern(nn.Module):
         act: nn.Module,
         dropout: int,
         layernorm: bool,
-        residual: bool, 
-        zeros: bool, 
+        residual: bool,
+        zeros: bool,
         mask_res: bool = False,
         separate_mask: bool = False,
         alpha_res: bool = False,
@@ -108,29 +108,29 @@ class MHABlockBern(nn.Module):
             embed_size,
             num_heads=num_heads,
             dropout=dropout,
-            zeros=zeros, 
-            mask_res=mask_res, 
+            zeros=zeros,
+            mask_res=mask_res,
             separate_mask=separate_mask,
             residual=residual,
         )
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4*embed_size), 
+            nn.Linear(embed_size, 4 * embed_size),
             nn.Dropout(dropout),
-            act(), 
-            nn.Linear(4*embed_size, embed_size)
+            act(),
+            nn.Linear(4 * embed_size, embed_size),
         )
 
     def forward(self: Self, x: Tensor):
         return self._forward_image(x)
 
     def _forward_image(self: Self, x: Tensor):
-        attn_out, attn_masks, attn_scores = self.mha(x, x, x)
-        
+        attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(x, x, x)
+
         if self.mask_res:
             diags = attn_masks.diagonal(dim1=-2, dim2=-1)
-            x = x * diags.unsqueeze(dim=-1) # (B, L, L) * (B, L, D)
+            x = x * diags.unsqueeze(dim=-1)  # (B, L, L) * (B, L, D)
         if self.layernorm:
             if self.residual:
                 attn_out = self.ln1(attn_out + x)
@@ -146,7 +146,7 @@ class MHABlockBern(nn.Module):
             else:
                 out = self.mlp(attn_out)
 
-        return out, attn_masks, attn_scores
+        return out, attn_masks, masked_attn_scores, attn_scores
 
     def mha_parameters(self: Self):
         return (
@@ -162,18 +162,18 @@ class MHABlockGen(nn.Module):
         self: Self,
         embed_size: int,
         act: nn.Module,
-        seq_len: int, 
-        latent_dim: int, 
+        seq_len: int,
+        latent_dim: int,
         dropout: int,
         layernorm: bool,
-        residual: bool, 
-        lstm_layers: int = 1, 
+        residual: bool,
+        lstm_layers: int = 1,
         num_heads: int = 1,
-        mha_layer: nn.Module = FlowMasking, 
-        bidirectional: bool = True, 
-        flow_params: dict = {'n_flows' : 2, 'hidden_features' : (128, 128)},
-        prior_params: dict = {'n_flows' : 3, 'hidden_features' : (256, 256)},
-        nf_prior: bool = True, 
+        mha_layer: nn.Module = FlowMasking,
+        bidirectional: bool = True,
+        flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
+        prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
+        nf_prior: bool = True,
         *args,
         **kwargs,
     ):
@@ -183,24 +183,24 @@ class MHABlockGen(nn.Module):
 
         self.mha = mha_layer(
             embed_size,
-            seq_len=seq_len, 
-            latent_dim=latent_dim, 
+            seq_len=seq_len,
+            latent_dim=latent_dim,
             num_heads=num_heads,
             dropout=dropout,
-            lstm_layers=lstm_layers, 
-            bidirectional=bidirectional, 
+            lstm_layers=lstm_layers,
+            bidirectional=bidirectional,
             prior_params=prior_params,
             flow_params=flow_params,
-            nf_prior=nf_prior, 
+            nf_prior=nf_prior,
         )
 
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4*embed_size), 
+            nn.Linear(embed_size, 4 * embed_size),
             nn.Dropout(dropout),
-            act(), 
-            nn.Linear(4*embed_size, embed_size)
+            act(),
+            nn.Linear(4 * embed_size, embed_size),
         )
 
     def forward(self: Self, x: Tensor):
@@ -211,7 +211,7 @@ class MHABlockGen(nn.Module):
             attn_out, attn_masks, attn_scores, gen_loss = self.mha(x, x, x)
         else:
             attn_out, attn_masks, attn_scores = self.mha(x, x, x)
-        
+
         if self.layernorm:
             if self.residual:
                 attn_out = self.ln1(attn_out + x)
@@ -230,7 +230,12 @@ class MHABlockGen(nn.Module):
         if self.training:
             return out, attn_masks, attn_scores, gen_loss
         else:
-            return out, attn_masks, attn_scores, 
+            return (
+                out,
+                attn_masks,
+                attn_scores,
+            )
+
 
 class MHABlockOracle(MHABlockBern):
 

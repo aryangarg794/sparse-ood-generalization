@@ -4,6 +4,7 @@ import math
 
 from torch import Tensor
 
+
 # https://github.com/wzlxjtu/PositionalEncoding2D/blob/master/positionalembedding2d.py
 def positionalencoding2d(d_model, height, width):
     if d_model % 4 != 0:
@@ -38,17 +39,21 @@ def noise_scheduler(start_eta: float, step: int, gamma: float = 0.55):
 
 
 def reparametrize(mu: Tensor, sig: Tensor):
-        std = torch.exp(0.5*sig)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-    
-def vae_log_prob(x: Tensor, mu: Tensor, sig: Tensor):
-    return (-0.5 * math.log(2 * math.pi) - 0.5 * sig - ((x - mu) ** 2) / (2 * torch.exp(sig))).sum(-1)
+    std = torch.exp(0.5 * sig)
+    eps = torch.randn_like(std)
+    return mu + eps * std
 
-def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str = 'cuda'):
-    thresh_list = [
-        (attn > threshold).float() for attn in all_attn
-    ]  # list of (b, l, l)
+
+def vae_log_prob(x: Tensor, mu: Tensor, sig: Tensor):
+    return (
+        -0.5 * math.log(2 * math.pi)
+        - 0.5 * sig
+        - ((x - mu) ** 2) / (2 * torch.exp(sig))
+    ).sum(-1)
+
+
+def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str = "cuda"):
+    thresh_list = [(attn > threshold).float() for attn in all_attn]  # list of (b, l, l)
     batch_size, seq_len, _ = thresh_list[0].size()
     path = torch.eye(seq_len, device=device).repeat(batch_size, 1, 1)
     for attn in thresh_list:
@@ -56,12 +61,16 @@ def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str = '
 
     return path.sum(dim=(1, 2)).mean().item()
 
+
 def compute_mask_mean(all_masks: Tensor):
     return all_masks.sum(dim=(1, 2)).mean().item()
 
-def compute_max_paths(seq_len: int, num_heads: int = 1, num_layers: int = 1, agg_pool: bool = True):
+
+def compute_max_paths(
+    seq_len: int, num_heads: int = 1, num_layers: int = 1, agg_pool: bool = True
+):
     paths = torch.ones((seq_len, seq_len)) * num_heads
-    for l in range(num_layers-1):
+    for l in range(num_layers - 1):
         multiplier = torch.ones((seq_len, seq_len)) * num_heads
         paths = paths @ multiplier
 
@@ -71,11 +80,12 @@ def compute_max_paths(seq_len: int, num_heads: int = 1, num_layers: int = 1, agg
 
     return paths.sum().item()
 
+
 def mask_score(masks, paths):
     paths_bool = (paths.squeeze() > 1).int()
-    masks = masks.view(-1, paths.size(-1)) 
+    masks = masks.view(-1, paths.size(-1))
 
-    mask1 = (paths_bool == 1)
-    mask2 = (masks == 1) 
+    mask1 = paths_bool == 1
+    mask2 = masks == 1
     batch_result = (mask1 | ~mask2).all(dim=1).float()
     return batch_result.mean()

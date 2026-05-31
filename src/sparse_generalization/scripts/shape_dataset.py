@@ -256,6 +256,7 @@ def generate_grid_row(size=6, label_A=False, mode="train"):
 
     return grid
 
+
 def generate_grid_same_row(size=6, label_A=False, mode="train"):
     assert size <= 8, "Only have enough shapes for 8x8"
     rows, cols = size, size
@@ -398,6 +399,7 @@ def generate_grid_same_row(size=6, label_A=False, mode="train"):
 
     return grid
 
+
 def generate_grid_row_col(size=6, label_A=False, mode="train"):
     assert size <= 8, "Only have enough shapes for 8x8"
     rows, cols = size, size
@@ -414,7 +416,7 @@ def generate_grid_row_col(size=6, label_A=False, mode="train"):
 
             r = random.randint(0, size - 1)
             c1, c2 = random.sample(range(size), 2)
-            
+
             grid[r, c1] = "circle"
             grid[r, c2] = "square"
             positions[r, c1] = True
@@ -425,7 +427,7 @@ def generate_grid_row_col(size=6, label_A=False, mode="train"):
             r2 = random.randint(0, size - 1)
             while r2 == r:
                 r2 = random.randint(0, size - 1)
-            
+
             grid[r2, c1] = "heart"
             grid[r2, c2] = "star"
             positions[r2, c1] = True
@@ -536,6 +538,7 @@ def generate_grid_row_col(size=6, label_A=False, mode="train"):
 
     return grid
 
+
 def replace_expl(grid, fro=("heart", "star"), to=("circle", "square")):
     grid = deepcopy(grid)
     coords_s1 = np.where(grid == fro[0])
@@ -552,12 +555,13 @@ def replace_expl(grid, fro=("heart", "star"), to=("circle", "square")):
 
     return grid
 
+
 def generate_dataset(
     num_samples: int = 500,
     mode: str = "train",
     func: str = "row",
     visualize: bool = True,
-    corruption: float = 0.0, 
+    corruption: float = 0.0,
     size: int = 8,
     file_path: str = "data/shapes/shapes",
 ):
@@ -576,11 +580,11 @@ def generate_dataset(
                 data_func = generate_grid_row_col
             case "same_row":
                 data_func = generate_grid_same_row
-            case "adj": 
+            case "adj":
                 data_func = generate_grid_adjacent
 
         for _ in tqdm(range(half_samples)):
-            grid = data_func(size=size, label_A=True, mode='test_a')
+            grid = data_func(size=size, label_A=True, mode="test_a")
             inp_tensor = torch.zeros((size, size, 1), dtype=torch.int64)
             samples.append(grid)
             labels.append(torch.tensor([int(1)], dtype=torch.int64))
@@ -589,7 +593,7 @@ def generate_dataset(
             grid = replace_expl(samples[idx])
             samples.append(grid)
             labels.append(torch.tensor([int(1)], dtype=torch.int64))
-        
+
         tensors = []
         for grid in tqdm(samples):
             inp_tensor = torch.zeros((size, size, 1), dtype=torch.int64)
@@ -610,7 +614,7 @@ def generate_dataset(
                 data_func = generate_grid_row_col
             case "same_row":
                 data_func = generate_grid_same_row
-            case "adj": 
+            case "adj":
                 data_func = generate_grid_adjacent
 
         for label in [True, False]:
@@ -626,8 +630,8 @@ def generate_dataset(
         dataset[f"X_{mode}"] = torch.stack(samples, dim=0)
         dataset[f"Y_{mode}"] = torch.stack(labels, dim=0)
 
-        if corruption > 0.0 and mode == 'train':
-            train_size = (dataset[f"Y_{mode}"].size(0) - 6000)
+        if corruption > 0.0 and mode == "train":
+            train_size = dataset[f"Y_{mode}"].size(0) - 6000
             num_corr = int(corruption * train_size)
             corr_idxs = torch.randperm(train_size)[:num_corr]
             dataset[f"Y_{mode}"][corr_idxs] = 1 - dataset[f"Y_{mode}"][corr_idxs]
@@ -644,9 +648,16 @@ if __name__ == "__main__":
         "-n", "--num_samples", type=int, default=250, help="numnber of samples"
     )
     parser.add_argument("-s", "--size", type=int, default=8, help="size")
-    parser.add_argument("-c", "--corr", type=float, default=0.0, help="corruption noise")
+    parser.add_argument(
+        "-c", "--corr", type=float, default=0.0, help="corruption noise"
+    )
     parser.add_argument("-m", "--mode", type=str, default="train", help="mode name")
     parser.add_argument("-f", "--func", type=str, default="row", help="mode name")
 
     args = parser.parse_args()
-    generate_dataset(num_samples=args.num_samples, size=args.size, mode=args.mode, corruption=args.corr)
+    generate_dataset(
+        num_samples=args.num_samples,
+        size=args.size,
+        mode=args.mode,
+        corruption=args.corr,
+    )

@@ -103,7 +103,7 @@ class TransformerLit(pl.LightningModule):
 
         bottleneck = 128
         self.feature_map = nn.Sequential(
-            nn.Linear(4*model_dim if embedding_inp else inp_dim, bottleneck),
+            nn.Linear(4 * model_dim if embedding_inp else inp_dim, bottleneck),
             act(),
             nn.Linear(bottleneck, model_dim),
             # nn.Identity()
@@ -120,7 +120,7 @@ class TransformerLit(pl.LightningModule):
         self.sinusoidal = sinusoidal
 
         self.layers = nn.ModuleList()
-        
+
         for _ in range(num_layers):
             self.layers.append(
                 MHABlock(
@@ -143,7 +143,7 @@ class TransformerLit(pl.LightningModule):
                 act=act,
                 dropout=dropout,
                 device=self.device,
-                use_mask=False, 
+                use_mask=False,
                 layernorm=layernorm,
             )
         elif self.token_pool:
@@ -181,7 +181,9 @@ class TransformerLit(pl.LightningModule):
         self.losses_test = deepcopy(self.masks_test)
         self.accs_test = deepcopy(self.masks_test)
 
-        assert not (self.token_pool and self.agg_pool), "Cant have both agg and token pool"
+        assert not (
+            self.token_pool and self.agg_pool
+        ), "Cant have both agg and token pool"
 
     def forward(self: Self, x):
         attn_matrices = []
@@ -196,7 +198,11 @@ class TransformerLit(pl.LightningModule):
         if self.pe:
             device = x.device
             if self.sinusoidal:
-                embeddings = positionalencoding2d(self.embed_size, width, height).permute(1, 2, 0).to(device)
+                embeddings = (
+                    positionalencoding2d(self.embed_size, width, height)
+                    .permute(1, 2, 0)
+                    .to(device)
+                )
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
             else:
@@ -213,7 +219,7 @@ class TransformerLit(pl.LightningModule):
 
         for layer in self.layers:
             x_attn, attn = layer(x_attn)
-            if self.token_pool: 
+            if self.token_pool:
                 attn = attn[:, :-1, :-1]
             attn_matrices.append(attn)
 
@@ -229,6 +235,7 @@ class TransformerLit(pl.LightningModule):
             path_matrix = torch.bmm(agg_attn, path_matrix)
 
         return y_hat, path_matrix
+
     def _get_loss_acc(self: Self, batch):
         x, y = batch
         y_hat, path_matrix = self(x)
@@ -433,7 +440,7 @@ class TransformerLit(pl.LightningModule):
             self.val_attn_matrices[idx].clear()
 
     @torch.no_grad()
-    def test_anti(self, anti_dataset: DataLoader): 
+    def test_anti(self, anti_dataset: DataLoader):
         results = {}
         labels = []
         true_labels = []
@@ -448,8 +455,7 @@ class TransformerLit(pl.LightningModule):
         preds = torch.cat(labels, dim=0)
         trues = torch.cat(true_labels, dim=0)
         size = preds.size(0)
-        midpoint = size // 2 
-
+        midpoint = size // 2
 
         total_acc = self.accuracy(preds, trues)
         results["total_acc"] = total_acc.item()
@@ -457,12 +463,11 @@ class TransformerLit(pl.LightningModule):
         acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
         conf_a = preds[:midpoint].mean()
         conf_b = preds[:midpoint].mean()
-        
+
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()
         results["conf_a"] = conf_a.item()
         results["conf_b"] = conf_b.item()
-
 
         return results
 
@@ -490,7 +495,7 @@ class TransformerLit(pl.LightningModule):
 
     def _compute_thresh_path(self: Self, attn_list: List):
         seq_len = attn_list[0].size(0)
-        thresh_list = [(attn > 1/seq_len).float() for attn in attn_list]
+        thresh_list = [(attn > 1 / seq_len).float() for attn in attn_list]
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
         for attn in thresh_list:

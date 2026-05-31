@@ -103,7 +103,6 @@ class BasicMLPLit(pl.LightningModule):
         self.losses_test = {i: [] for i in val_to_name.values()}
         self.accs_test = {i: [] for i in val_to_name.values()}
 
-
     def forward(self, x: Tensor):
         return self.model(x)
 
@@ -203,9 +202,9 @@ class BasicMLPLit(pl.LightningModule):
             self.model.parameters(), lr=self.lr, weight_decay=self.wd
         )
         return optimizer
-    
+
     @torch.no_grad()
-    def test_anti(self, anti_dataset: DataLoader): 
+    def test_anti(self, anti_dataset: DataLoader):
         results = {}
         labels = []
         true_labels = []
@@ -220,8 +219,7 @@ class BasicMLPLit(pl.LightningModule):
         preds = torch.cat(labels, dim=0)
         trues = torch.cat(true_labels, dim=0)
         size = preds.size(0)
-        midpoint = size // 2 
-
+        midpoint = size // 2
 
         total_acc = self.accuracy(preds, trues)
         results["total_acc"] = total_acc.item()
@@ -229,11 +227,10 @@ class BasicMLPLit(pl.LightningModule):
         acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
         conf_a = preds[:midpoint].mean()
         conf_b = preds[:midpoint].mean()
-        
+
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()
         results["conf_a"] = conf_a.item()
         results["conf_b"] = conf_b.item()
-
 
         return results

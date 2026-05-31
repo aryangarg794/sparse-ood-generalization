@@ -6,6 +6,8 @@ from typing import Self
 from torch.nn.functional import one_hot
 
 from sparse_generalization.data.shapes.constants import SHAPES_TO_IDX
+
+
 class BasicDataset(Dataset):
     def __init__(self: Self, x: Tensor, y: Tensor):
         super().__init__()
@@ -24,7 +26,12 @@ class BasicDataset(Dataset):
 
 class ShapesDataset(Dataset):
     def __init__(
-        self: Self, x: Tensor, y: Tensor, one_hot: bool = False, size: int = 5, masks: Tensor = None, 
+        self: Self,
+        x: Tensor,
+        y: Tensor,
+        one_hot: bool = False,
+        size: int = 5,
+        masks: Tensor = None,
     ):
         super().__init__()
         self.x = x.float()
@@ -48,15 +55,15 @@ class ShapesDataset(Dataset):
             x = one_hot(self.x[index].squeeze().long(), self.size**2).float()
         else:
             x = self.x[index]
-        
+
         if self.mask:
-            return x, self.y[index], self.masks[index] 
+            return x, self.y[index], self.masks[index]
         else:
             return x, self.y[index]
 
     def get_flat_idx(self, x, y, height):
         return (x * height) + y
-    
+
     def get_mask_idxs(self, x):
         star_idx = SHAPES_TO_IDX["star"]
         heart_idx = SHAPES_TO_IDX["heart"]
@@ -72,6 +79,7 @@ class ShapesDataset(Dataset):
         # circle_idx = self.get_flat_idx(coords_circle[0], coords_circle[1], x.size(0))
         # square_idx = self.get_flat_idx(coords_square[0], coords_square[1], x.size(0))
         return coords_star, coords_heart, coords_circle, coords_square
+
 
 class OneHotBoxWorld(Dataset):
     def __init__(self: Self, x: Tensor, y: Tensor):

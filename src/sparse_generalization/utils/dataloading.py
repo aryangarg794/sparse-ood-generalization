@@ -12,6 +12,7 @@ from sparse_generalization.utils.datasets import (
 )
 from sparse_generalization.data.shapes.constants import SHAPES_TO_IDX
 
+
 def get_coords(x):
     star_idx = SHAPES_TO_IDX["star"]
     heart_idx = SHAPES_TO_IDX["heart"]
@@ -21,15 +22,18 @@ def get_coords(x):
     coords_heart = torch.where(x == heart_idx)
     coords_circle = torch.where(x == circle_idx)
     coords_square = torch.where(x == square_idx)
-    return coords_star, coords_heart, coords_circle, coords_square 
+    return coords_star, coords_heart, coords_circle, coords_square
+
 
 def compute_masks(xs):
     masks = []
     for x in xs:
-        coords_star, coords_heart, coords_circle, coords_square = get_coords(x.squeeze())
+        coords_star, coords_heart, coords_circle, coords_square = get_coords(
+            x.squeeze()
+        )
         mask = torch.zeros((x.size(1), x.size(1)))
 
-        mask[coords_star] = 1 
+        mask[coords_star] = 1
         mask[coords_heart] = 1
         mask[coords_circle] = 1
         mask[coords_square] = 1
@@ -38,7 +42,14 @@ def compute_masks(xs):
     return torch.stack(masks, dim=0)
 
 
-def get_shapes_datasets(size: int, data_dir: str, grid_size: int, one_hot: bool, compute_mask: bool, corr: bool):
+def get_shapes_datasets(
+    size: int,
+    data_dir: str,
+    grid_size: int,
+    one_hot: bool,
+    compute_mask: bool,
+    corr: bool,
+):
     if corr:
         corr = f"_corr"
     else:
@@ -101,7 +112,6 @@ def get_shapes_datasets(size: int, data_dir: str, grid_size: int, one_hot: bool,
         anti = dill.load(file)
         file.close()
 
-
     val_id_masks = compute_masks(X_val) if compute_mask else None
     val_dataset_id = data_cls(X_val, Y_val, masks=val_id_masks)
 
@@ -115,10 +125,14 @@ def get_shapes_datasets(size: int, data_dir: str, grid_size: int, one_hot: bool,
     test_dataset_id = data_cls(X_test, Y_test, masks=test_id_masks)
 
     test_a_masks = compute_masks(test_a["X_test_a"]) if compute_mask else None
-    test_dataset_a = data_cls(test_a["X_test_a"], test_a["Y_test_a"], masks=test_a_masks)
+    test_dataset_a = data_cls(
+        test_a["X_test_a"], test_a["Y_test_a"], masks=test_a_masks
+    )
 
     test_b_masks = compute_masks(test_b["X_test_b"]) if compute_mask else None
-    test_dataset_b = data_cls(test_b["X_test_b"], test_b["Y_test_b"], masks=test_b_masks)
+    test_dataset_b = data_cls(
+        test_b["X_test_b"], test_b["Y_test_b"], masks=test_b_masks
+    )
 
     anti_masks = compute_masks(anti["X_anti"]) if compute_mask else None
     anti_dataset = data_cls(anti["X_anti"], anti["Y_anti"], masks=anti_masks)

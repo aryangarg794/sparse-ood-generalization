@@ -14,7 +14,12 @@ from sparse_generalization.models.blocks import MHABlockGen
 from sparse_generalization.layers.gen_mha import FlowMasking, QKVHyperNet
 from sparse_generalization.layers.agg_attention import AggregationFlow, AggregationQKV
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
-from sparse_generalization.utils.util_funcs import positionalencoding2d, compute_attn_mean, compute_mask_mean, compute_max_paths
+from sparse_generalization.utils.util_funcs import (
+    positionalencoding2d,
+    compute_attn_mean,
+    compute_mask_mean,
+    compute_max_paths,
+)
 
 
 class FlowSpartan(nn.Module):
@@ -22,30 +27,30 @@ class FlowSpartan(nn.Module):
     def __init__(
         self,
         inp_dim: int = 3,
-        seq_len: int = 25, 
+        seq_len: int = 25,
         out_dim: int = 1,
         model_dim: int = 32,
-        latent_dim: int = 16, 
-        lstm_layers: int = 1, 
+        latent_dim: int = 16,
+        lstm_layers: int = 1,
         num_heads: int = 1,
         num_layers: int = 4,
         agg_pool: bool = False,
         residual: bool = True,
         include_sparsity: bool = False,
-        alpha: float = 0.1, 
+        alpha: float = 0.1,
         token_pool: bool = False,
-        mha_layer: nn.Module = FlowMasking, 
+        mha_layer: nn.Module = FlowMasking,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
         step_size: float = 1e-1,
         pe: bool = True,
         sinusoidal: bool = True,
-        bidirectional: bool = True, 
-        flow_params: dict = {'n_flows' : 2, 'hidden_features' : (128, 128)},
-        prior_params: dict = {'n_flows' : 3, 'hidden_features' : (128, 128)},
-        nf_prior: bool = True, 
+        bidirectional: bool = True,
+        flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
+        prior_params: dict = {"n_flows": 3, "hidden_features": (128, 128)},
+        nf_prior: bool = True,
         embedding_inp: bool = True,
         lr: float = 1e-3,
-        dropout: float = 0.1, 
+        dropout: float = 0.1,
         layernorm: bool = True,
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
@@ -69,7 +74,7 @@ class FlowSpartan(nn.Module):
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
 
-        bottleneck = model_dim // 2 
+        bottleneck = model_dim // 2
         self.feature_map = nn.Sequential(
             # nn.Linear(4*model_dim if embedding_inp else inp_dim, bottleneck),
             # act(),
@@ -98,18 +103,18 @@ class FlowSpartan(nn.Module):
                 MHABlockGen(
                     embed_size,
                     seq_len=seq_len,
-                    mha_layer=mha_layer, 
-                    latent_dim=latent_dim, 
+                    mha_layer=mha_layer,
+                    latent_dim=latent_dim,
                     num_heads=num_heads,
                     dropout=dropout,
-                    act=act, 
-                    lstm_layers=lstm_layers, 
-                    bidirectional=bidirectional, 
+                    act=act,
+                    lstm_layers=lstm_layers,
+                    bidirectional=bidirectional,
                     prior_params=prior_params,
                     flow_params=flow_params,
-                    nf_prior=nf_prior, 
-                    residual=residual, 
-                    layernorm=layernorm
+                    nf_prior=nf_prior,
+                    residual=residual,
+                    layernorm=layernorm,
                 )
             )
 
@@ -125,14 +130,14 @@ class FlowSpartan(nn.Module):
                 dropout=dropout,
                 embed_size=embed_size,
                 seq_len=seq_len,
-                latent_dim=latent_dim, 
+                latent_dim=latent_dim,
                 num_heads=num_heads,
-                lstm_layers=lstm_layers, 
-                bidirectional=bidirectional, 
+                lstm_layers=lstm_layers,
+                bidirectional=bidirectional,
                 prior_params=prior_params,
                 flow_params=flow_params,
-                nf_prior=nf_prior, 
-                residual=residual, 
+                nf_prior=nf_prior,
+                residual=residual,
                 layernorm=layernorm,
             )
         elif self.token_pool:
@@ -151,7 +156,7 @@ class FlowSpartan(nn.Module):
 
         self.sparse_loss = L1SparsityAdjacency()
         self.alpha = alpha
-        self.include_sparsity = include_sparsity 
+        self.include_sparsity = include_sparsity
         self.max_paths = None
         self.step_size = step_size
         self.val_to_name = val_to_name
@@ -166,22 +171,26 @@ class FlowSpartan(nn.Module):
         attn_matrices = []
         batch_size, width, height, _ = x.size()
         if self.max_paths is None:
-            self.max_paths = compute_max_paths(width * height, self.num_heads, self.num_layers, self.agg_pool)
+            self.max_paths = compute_max_paths(
+                width * height, self.num_heads, self.num_layers, self.agg_pool
+            )
 
         if self.embedding_inp:
             assert x.size(3) == 1, "channels is not 1 for shapes input"
             x = self.embed_layer(x.squeeze(3).int())  # (b, w, h, e)
 
-        x_features = self.feature_map(x) 
+        x_features = self.feature_map(x)
 
-        masks = (
-            torch.eye(width * height, device=self.device).repeat(batch_size, 1, 1)
-        )
+        masks = torch.eye(width * height, device=self.device).repeat(batch_size, 1, 1)
 
         if self.pe:
             device = x.device
             if self.sinusoidal:
-                embeddings = positionalencoding2d(self.embed_size, width, height).permute(1, 2, 0).to(device)
+                embeddings = (
+                    positionalencoding2d(self.embed_size, width, height)
+                    .permute(1, 2, 0)
+                    .to(device)
+                )
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
             else:
@@ -204,7 +213,7 @@ class FlowSpartan(nn.Module):
                 x_attn, mask, attn = layer(x_attn)
             attn_matrices.append(attn)
 
-            if self.token_pool: 
+            if self.token_pool:
                 mask = mask[:, :-1, :-1]
 
             masks = torch.bmm(mask, masks)
@@ -224,7 +233,7 @@ class FlowSpartan(nn.Module):
             attn_matrices.append(agg_attn)
             masks = torch.bmm(final_mask, masks)
 
-        return out, masks, attn_matrices, gen_loss.mean() if self.training else None  
+        return out, masks, attn_matrices, gen_loss.mean() if self.training else None
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []
@@ -251,7 +260,7 @@ class FlowSpartan(nn.Module):
             epochs_trues = []
 
             for batch_idx, batch in enumerate(dataloader):
-                x, y = batch  
+                x, y = batch
                 x = x.to(self.device)
                 y = y.to(self.device)
                 out, masks, attns, gen_loss = self(x)  # list of (b, l, l)
@@ -274,7 +283,9 @@ class FlowSpartan(nn.Module):
                     acc = self.accuracy(out, y)
                     epoch_acc += acc.item()
 
-                    attn_running += compute_attn_mean(attns, self.threshold, self.device)
+                    attn_running += compute_attn_mean(
+                        attns, self.threshold, self.device
+                    )
                     mask_running += compute_mask_mean(masks)
 
                 self.global_step += 1
@@ -293,11 +304,7 @@ class FlowSpartan(nn.Module):
             attn_edges.append(attn_running)
             mask_edges.append(mask_running)
 
-            postfix = {
-                "loss": epoch_loss,
-                "acc": epoch_acc,
-                "gen_loss": epoch_gen
-            }
+            postfix = {"loss": epoch_loss, "acc": epoch_acc, "gen_loss": epoch_gen}
 
             pbar.set_description(f"Epoch: {step}")
             self.logger.log_metrics({"train/loss_epoch": epoch_loss}, step=step)
@@ -317,8 +324,8 @@ class FlowSpartan(nn.Module):
 
             for loader, name in zip(testloaders, self.val_to_name.values()):
                 test_metrics = self.test(name, loader, folder="val")
-                if 'id' in name:
-                    postfix['val_id'] = test_metrics["acc"]
+                if "id" in name:
+                    postfix["val_id"] = test_metrics["acc"]
                 masks_test[name].append(test_metrics["mask"])
                 attn_test[name].append(test_metrics["attn"])
                 losses_test[name].append(test_metrics["loss"])
@@ -336,7 +343,7 @@ class FlowSpartan(nn.Module):
             losses,
             accs,
             sparses,
-            gens, 
+            gens,
             mask_edges,
             attn_edges,
             losses_test,
@@ -355,7 +362,7 @@ class FlowSpartan(nn.Module):
         epochs_trues = []
 
         for batch_idx, batch in enumerate(dataloader):
-            x, y = batch   
+            x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
             out, masks, attn, _ = self(x)
@@ -399,9 +406,9 @@ class FlowSpartan(nn.Module):
             "attn": attn_running,
             "mask": mask_running,
         }
-    
+
     @torch.no_grad()
-    def test_anti(self, anti_dataset: DataLoader): 
+    def test_anti(self, anti_dataset: DataLoader):
         self.eval()
         # total acc, acc a, acc b, conf a, conf b
         results = {}
@@ -418,7 +425,7 @@ class FlowSpartan(nn.Module):
         preds = torch.cat(labels, dim=0)
         trues = torch.cat(true_labels, dim=0)
         size = preds.size(0)
-        midpoint = size // 2 
+        midpoint = size // 2
 
         total_acc = self.accuracy(preds, trues)
         results["total_acc"] = total_acc.item()
@@ -427,7 +434,7 @@ class FlowSpartan(nn.Module):
         acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
         conf_a = preds[:midpoint].mean()
         conf_b = preds[:midpoint].mean()
-        
+
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()
         results["conf_a"] = conf_a.item()
