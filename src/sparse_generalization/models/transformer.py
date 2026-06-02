@@ -224,7 +224,7 @@ class TransformerLit(pl.LightningModule):
             attn_matrices.append(attn)
 
         if self.agg_pool:
-            y_hat, _, agg_attn = self.out(x_attn)
+            y_hat, _, _, agg_attn = self.out(x_attn)
         elif self.token_pool:
             y_hat = self.out(x_attn[:, -1, :])
         else:

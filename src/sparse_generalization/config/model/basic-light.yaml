@@ -4,7 +4,7 @@ _partial_: true
 input_dim: 25
 out_dim: 1 
 hidden_dims: [32, 40]
-embedding_inp: true
+embedding_inp: false
 model_dim: 32
 inp_size: 5 
 

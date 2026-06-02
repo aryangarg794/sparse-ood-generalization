@@ -14,7 +14,7 @@ include_sparsity: false
 l1_weight: 0.0001
 positional_encoding: true
 sinusoidal: true
-lr: 5e-4
+lr: 1e-3
 lagrangian: false
 start_lambda: 5e6
 target_loss: 0.15

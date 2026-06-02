@@ -10,7 +10,7 @@ embedding_inp: true
 num_heads: 1
 num_layers: 1
 include_sparsity: false
-lr: 3e-4
+lr: 1e-3
 token_pool: false
 alpha: 0.1
 compute_mask: false
@@ -20,7 +20,6 @@ zeros: false
 num_embeddings: 25
 pe: true
 sinusoidal: true
-path_sparsity: true
 lagrangian: false
 start_lambda: 1e15
 target_loss: 0.115

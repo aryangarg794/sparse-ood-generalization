@@ -399,7 +399,7 @@ class SPARTAN(nn.Module):
                 x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
-            out, masks, attn = self(x)
+            out, masks, attn, _, _ = self(x)
             loss = self.loss(out, y)
 
             if self.compute_mask:
@@ -460,7 +460,7 @@ class SPARTAN(nn.Module):
         for batch_idx, (x, y) in enumerate(anti_dataset):
             x = x.to(self.device)
             y = y.to(self.device)
-            out, mask, attn = self(x)
+            out, mask, attn, _, _ = self(x)
             probs = F.sigmoid(out)
             labels.append(probs)
             true_labels.append(y)
@@ -501,10 +501,10 @@ class SPARTAN(nn.Module):
 
     def _compute_max_paths(self, seq_len: int):
         paths = torch.ones((seq_len, seq_len)) * self.num_heads 
-        paths = paths + torch.eye(16) if self.residual else paths
+        paths = paths + torch.eye(seq_len) if self.residual else paths
         for l in range(self.num_layers - 1):
             multiplier = torch.ones((seq_len, seq_len)) * self.num_heads 
-            multiplier = multiplier + torch.eye(16) if self.residual else multiplier
+            multiplier = multiplier + torch.eye(seq_len) if self.residual else multiplier
             paths = paths @ multiplier
 
         if self.agg_pool:
