@@ -73,9 +73,9 @@ class SPARTAN(nn.Module):
 
         bottleneck = 128
         self.feature_map = nn.Sequential(
-            # nn.Linear(model_dim if embedding_inp else inp_dim, bottleneck),
-            # act(),
-            # nn.Linear(bottleneck, model_dim),
+            nn.Linear(model_dim if embedding_inp else inp_dim, bottleneck),
+            act(),
+            nn.Linear(bottleneck, model_dim),
             # nn.Identity()
         )
 
