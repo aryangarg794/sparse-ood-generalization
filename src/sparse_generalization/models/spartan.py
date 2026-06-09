@@ -76,8 +76,7 @@ class SPARTAN(nn.Module):
             # nn.Linear(model_dim if embedding_inp else inp_dim, bottleneck),
             # act(),
             # nn.Linear(bottleneck, model_dim),
-            # nn.LayerNorm(model_dim)
-            nn.Identity()
+            # nn.Identity()
         )
 
         if pe:
