@@ -66,6 +66,7 @@ class MultiHeadAttentionBern(nn.Module):
         values: Tensor,
         avg_attn_heads: bool = True,
         avg_mask: bool = True,
+        forced_expl: bool = False
     ):
         queries = self.queries(queries)  # (b, l, d)
         keys = self.keys(keys)
@@ -87,6 +88,7 @@ class MultiHeadAttentionBern(nn.Module):
             values_split,
             queries_mask_split if self.separate_mask else None,
             keys_mask_split if self.separate_mask else None,
+            forced_expl=forced_expl
         )
 
         attention_repr = self._merge_heads(attention_repr)  # (b, l, d)
@@ -124,6 +126,7 @@ class MultiHeadAttentionBern(nn.Module):
         value: Tensor,
         query_mask: Tensor,
         keys_mask: Tensor,
+        forced_expl: bool = False
     ):
         batch_heads, seq_len, _ = query.size()
         attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(
@@ -134,6 +137,8 @@ class MultiHeadAttentionBern(nn.Module):
         attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         if self.zeros:
             A = torch.zeros((batch_heads, seq_len, seq_len), device=query.device)
+        elif self.training and forced_expl:
+            A = torch.randint(0, 2, size=(batch_heads, seq_len, seq_len), device=query.device)
         elif self.separate_mask:
             mask_logits = torch.bmm(query_mask, keys_mask.transpose(1, 2)) / np.sqrt(
                 self.dk

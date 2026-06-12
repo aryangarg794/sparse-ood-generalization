@@ -13,6 +13,23 @@ from typing import Self
 from sparse_generalization.utils.util_funcs import vae_log_prob, reparametrize
 
 
+class LaplacePrior(zuko.lazy.LazyDistribution):
+
+    def __init__(
+            self, 
+            loc : float = 0.0, 
+            scale: float = 1.0, 
+            *args, 
+            **kwargs
+        ):
+        super().__init__(*args, **kwargs)
+        
+        self.loc = loc
+        self.scale = scale
+
+    def forward(self, c = None):
+        return torch.distributions.Laplace(loc=self.loc, scale=self.scale)
+
 class FlowMasking(nn.Module):
 
     def __init__(
@@ -27,6 +44,7 @@ class FlowMasking(nn.Module):
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
+        bias: float = 0.5,
         nf_prior: bool = True,
         *args,
         **kwargs,
@@ -76,6 +94,8 @@ class FlowMasking(nn.Module):
                 transforms=prior_params["n_flows"],
                 hidden_features=prior_params["hidden_features"],
             )
+        else:
+            self.prior = LaplacePrior()
 
         base_flow = zuko.flows.NSF(
             features=latent_dim,
@@ -83,6 +103,7 @@ class FlowMasking(nn.Module):
             hidden_features=flow_params["hidden_features"],
         )
         self.normalizing_flow = Flow(base_flow.transform.inv, base_flow.base)
+        self.bias = bias
 
     def forward(
         self: Self,
@@ -159,7 +180,8 @@ class FlowMasking(nn.Module):
 
         if self.training:
             latent_nf, ladj = transform.call_and_ladj(encoding)
-            prior = self.prior().log_prob(latent_nf)
+            if self.nf_prior:
+                prior = self.prior().log_prob(latent_nf)
         else:
             latent_nf = transform(encoding)
 
@@ -174,7 +196,10 @@ class FlowMasking(nn.Module):
         A = gumbel_softmax(
                 edges_logit, tau=1.0, hard=True
             )  
-        A = A[:, :, -1] 
+        A = A[:, :, -1].view(batch_heads, seq_len, seq_len) 
+
+        if not self.nf_prior:
+            prior = self.prior().log_prob(A.sum(dim=(1, 2)))
 
         masked_attention_probs = A * attention_probs
         hidden_repr = torch.bmm(masked_attention_probs, value)

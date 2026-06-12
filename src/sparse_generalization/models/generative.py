@@ -187,9 +187,8 @@ class FlowSpartan(nn.Module):
             device = x.device
             if self.sinusoidal:
                 embeddings = (
-                    positionalencoding2d(self.embed_size, width, height)
-                    .permute(1, 2, 0)
-                    .to(device)
+                    positionalencoding2d(self.embed_size, height=height, width=width, device=self.device) # returns (dim, h, w)
+                    .permute(2, 1, 0)
                 )
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)

@@ -84,7 +84,7 @@ class AggregationAttention(nn.Module):
             .reshape(batch_size, seq_len, self.dk * self.heads)
         )
 
-    def forward(self, x: Tensor, sum_heads: bool = True):
+    def forward(self, x: Tensor, sum_heads: bool = True, forced_expl: bool = True):
         batch_size, seq_len, _ = x.size()
         queries = self.queries(self.query.repeat(batch_size, 1, 1))  # (b, 1, d)
         keys = self.keys(x)  # (b, l, d)
@@ -106,6 +106,7 @@ class AggregationAttention(nn.Module):
             values_split,
             queries_mask_split if self.separate_mask else None,
             keys_mask_split if self.separate_mask else None,
+            forced_expl=forced_expl
         )
 
         attention_repr = self._merge_heads(attention_repr)  # (b, 1, d)
@@ -132,6 +133,7 @@ class AggregationAttention(nn.Module):
         value: Tensor,
         query_mask: Tensor,
         keys_mask: Tensor,
+        forced_expl: bool = False
     ):
         batch_heads, seq_len, _ = key.size()
         attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(
@@ -140,7 +142,6 @@ class AggregationAttention(nn.Module):
 
         attention_probs = softmax(attention_logits, dim=-1)
         attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
-        A = torch.zeros((batch_heads, seq_len, seq_len))
 
         if self.use_mask:
             if self.separate_mask:
@@ -153,6 +154,8 @@ class AggregationAttention(nn.Module):
                 )
                 A = gumbel_softmax(edges_logit, tau=self.temp, hard=True)
                 A = A[:, :, -1].reshape(batch_heads, 1, seq_len)
+            elif self.training and forced_expl:
+                A = torch.randint(0, 2, size=(batch_heads, 1, seq_len), device=query.device).float()
             else:
                 edges_logit = attention_logits.view(batch_heads, -1)  # (b*h, l*l)
                 edges_logit = torch.stack(

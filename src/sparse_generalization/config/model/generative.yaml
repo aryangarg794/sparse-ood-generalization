@@ -19,7 +19,7 @@ flow_params:
 prior_params:
   n_flows: 2
   hidden_features: [32, 32]
-nf_prior: true
+nf_prior: false
 include_sparsity: false
 lr: 1e-3
 token_pool: false
@@ -35,5 +35,5 @@ beta2: 0.999
 
 mha_layer:
   _partial_: true
-  _target_: sparse_generalization.layers.gen_mha.QKVHyperNet
+  _target_: sparse_generalization.layers.gen_mha.FlowMasking
   

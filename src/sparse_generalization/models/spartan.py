@@ -46,6 +46,9 @@ class SPARTAN(nn.Module):
         dropout: float = 0.0,
         compute_mask: bool = False,
         layernorm: bool = False,
+        epsilon_greedy: bool = False,
+        start_eps: float = 0.5,
+        end_eps: float = 0.05,  
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
         num_embeddings: int = 64,
@@ -145,6 +148,10 @@ class SPARTAN(nn.Module):
         self.target_loss = target_loss
         self.step_size = step_size
         self.ema_step = cma
+        self.epsilon_greedy = epsilon_greedy
+        self.start_eps = start_eps
+        self.end_eps = end_eps
+        self.eps = start_eps
 
         self.alpha_res = alpha_res
         self.val_to_name = val_to_name
@@ -154,7 +161,7 @@ class SPARTAN(nn.Module):
         num_edges = attns.sum(dim=(1, 2)) / self.max_paths
         return (self.alpha - num_edges).pow(2).mean()
 
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor, forced_expl: bool = False):
         attn_matrices = []
         mask_attn_matrices = []
         mask_matrices = []
@@ -192,7 +199,7 @@ class SPARTAN(nn.Module):
             x_attn = torch.cat([x_attn, clses], dim=1)
 
         for layer in self.layers:
-            x_attn, mask, mask_attn, attn = layer(x_attn)
+            x_attn, mask, mask_attn, attn = layer(x_attn, forced_expl=forced_expl)
             attn_matrices.append(attn.detach())
             mask_attn_matrices.append(mask_attn.detach())
 
@@ -203,7 +210,7 @@ class SPARTAN(nn.Module):
 
 
         if self.agg_pool:
-            out, final_mask, mask_attn, agg_attn = self.out(x_attn)
+            out, final_mask, mask_attn, agg_attn = self.out(x_attn, forced_expl=forced_expl)
         elif self.token_pool:
             out = self.out(x_attn[:, -1, :])
         else:
@@ -368,6 +375,7 @@ class SPARTAN(nn.Module):
             #     postfix["temp"] = self.out.temp
 
             pbar.set_postfix(postfix)
+            self.eps_decay(step, num_epochs)
 
         return (
             losses,
@@ -522,9 +530,10 @@ class SPARTAN(nn.Module):
         batch_result = (mask1 | ~mask2).all(dim=1).float()
         return batch_result.mean()
 
-    @classmethod
-    def load(self, path: str):
-        return
+    def eps_decay(self, ep, decay_episodes=200):
+        decay_rate = (self.start_eps - self.end_eps) / decay_episodes
+        eps = self.start_eps - (ep * decay_rate)
+        self.eps = max(self.end_eps, eps)
 
 
 class OracleTransformer(nn.Module):

@@ -123,14 +123,14 @@ class MHABlockBern(nn.Module):
             nn.Linear(4 * embed_size, embed_size),
         )
 
-    def forward(self: Self, x: Tensor):
-        return self._forward_image(x)
+    def forward(self: Self, x: Tensor, forced_expl: bool = False):
+        return self._forward_image(x, forced_expl)
 
-    def _forward_image(self: Self, x: Tensor):
+    def _forward_image(self: Self, x: Tensor, forced_expl: bool = False):
 
         if self.layernorm:
             x_ln = self.ln1(x)
-            attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(x_ln, x_ln, x_ln)
+            attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(x_ln, x_ln, x_ln, forced_expl=forced_expl)
             if self.mask_res:
                 diags = attn_masks.diagonal(dim1=-2, dim2=-1)
                 x = x * diags.unsqueeze(dim=-1)  # (B, L, L) * (B, L, D)
