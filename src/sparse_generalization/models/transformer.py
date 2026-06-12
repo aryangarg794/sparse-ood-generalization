@@ -43,7 +43,7 @@ class TransformerLit(pl.LightningModule):
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
         mha_layer: nn.Module = nn.MultiheadAttention,
         act: nn.Module = nn.ReLU,
-        dropout: int = 0.1,
+        dropout: float = 0.0,
         lr: float = 1e-3,
         embedding_inp: bool = True,
         residual: bool = True,
@@ -103,7 +103,7 @@ class TransformerLit(pl.LightningModule):
 
         bottleneck = 128
         self.feature_map = nn.Sequential(
-            nn.Linear(4 * model_dim if embedding_inp else inp_dim, bottleneck),
+            nn.Linear(model_dim if embedding_inp else inp_dim, bottleneck),
             act(),
             nn.Linear(bottleneck, model_dim),
             # nn.Identity()
@@ -199,9 +199,8 @@ class TransformerLit(pl.LightningModule):
             device = x.device
             if self.sinusoidal:
                 embeddings = (
-                    positionalencoding2d(self.embed_size, width, height)
-                    .permute(1, 2, 0)
-                    .to(device)
+                    positionalencoding2d(self.embed_size, height=height, width=width, device=self.device)
+                    .permute(2, 1, 0)
                 )
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
@@ -212,6 +211,8 @@ class TransformerLit(pl.LightningModule):
                 coords = coords.expand(batch_size, width, height, 2)
                 x_attn = torch.cat([x_features, coords], dim=-1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
+        else:
+            x_attn = x_features.view(-1, width * height, self.embed_size)
 
         if self.token_pool:
             clses = self.cls.repeat(batch_size, 1, 1)

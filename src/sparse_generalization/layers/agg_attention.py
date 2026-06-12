@@ -139,6 +139,7 @@ class AggregationAttention(nn.Module):
         )  # (bh, 1, dk) @ (bh, dk, l)
 
         attention_probs = softmax(attention_logits, dim=-1)
+        attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         A = torch.zeros((batch_heads, seq_len, seq_len))
 
         if self.use_mask:

@@ -43,7 +43,7 @@ class SPARTAN(nn.Module):
         sinusoidal: bool = True,
         embedding_inp: bool = True,
         lr: float = 1e-3,
-        dropout: float = 0.1,
+        dropout: float = 0.0,
         compute_mask: bool = False,
         layernorm: bool = True,
         act: nn.Module = nn.ReLU,
@@ -174,9 +174,8 @@ class SPARTAN(nn.Module):
             device = x.device
             if self.sinusoidal:
                 embeddings = (
-                    positionalencoding2d(self.embed_size, width, height)
-                    .permute(1, 2, 0)
-                    .to(device)
+                    positionalencoding2d(self.embed_size, height=height, width=width, device=self.device) # returns (dim, h, w)
+                    .permute(2, 1, 0)
                 )
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
@@ -361,7 +360,8 @@ class SPARTAN(nn.Module):
                 losses_test[name].append(test_metrics["loss"])
                 accs_test[name].append(test_metrics["acc"])
 
-            postfix["edges"] = mask_running
+            postfix["mask_edges"] = mask_running
+            postfix["attn_edges"] = attn_running
 
             # if self.agg_pool:
             #     self.out.temp_decay(step, num_epochs)
@@ -485,8 +485,9 @@ class SPARTAN(nn.Module):
         return results
 
     def _compute_attn_mean(self, all_attn: Tensor):
+        seq_len = all_attn[0].size(0)
         thresh_list = [
-            (attn > self.threshold).float() for attn in all_attn
+            (attn > 1/seq_len).float() for attn in all_attn
         ]  # list of (b, l, l)
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)

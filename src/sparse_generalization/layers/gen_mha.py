@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from zuko.flows import Flow
 from torch import Tensor
-from torch.nn.functional import softmax
+from torch.nn.functional import softmax, gumbel_softmax
 from typing import Self
 
 from sparse_generalization.utils.util_funcs import vae_log_prob, reparametrize
@@ -167,9 +167,14 @@ class FlowMasking(nn.Module):
         v = self.v.repeat(batch_heads, 1, 1)
         v_dir = F.normalize(v, dim=-1)
         mask_weights_raw = g.view(-1, seq_len, 1) * v_dir
-        mask_weights = F.sigmoid(mask_weights_raw)
-        hard_mask = (mask_weights >= 0.5).float()
-        A = hard_mask - mask_weights.detach() + mask_weights
+        edges_logit = mask_weights_raw.view(batch_heads, -1)
+        edges_logit = torch.stack(
+            [torch.zeros_like(edges_logit), edges_logit + self.bias], dim=-1
+        )
+        A = gumbel_softmax(
+                edges_logit, tau=1.0, hard=True
+            )  
+        A = A[:, :, -1] 
 
         masked_attention_probs = A * attention_probs
         hidden_repr = torch.bmm(masked_attention_probs, value)
@@ -214,9 +219,7 @@ class QKVHyperNet(nn.Module):
             )
 
         self.dk = embed_size // num_heads
-        self.heads = (
-            num_heads  # NOTE: has to 1 right now since idk how to do multiheaded
-        )
+        self.heads = num_heads
         self.embed_size = embed_size
         self.residual = residual
 

@@ -131,6 +131,7 @@ class MultiHeadAttentionBern(nn.Module):
         )  # (b*h, l, l)
 
         attention_probs = softmax(attention_logits, dim=-1)
+        attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         if self.zeros:
             A = torch.zeros((batch_heads, seq_len, seq_len), device=query.device)
         elif self.separate_mask:
@@ -156,6 +157,7 @@ class MultiHeadAttentionBern(nn.Module):
             A = A[:, :, -1]  # get the mask value for class 1 (if there is edge)
 
         A = A.view(-1, seq_len, seq_len)
+        
         masked_attention_probs = A * attention_probs  # (b*h, l, l)
 
         hidden_repr = torch.bmm(masked_attention_probs, value)  # (b*h, l, d)
