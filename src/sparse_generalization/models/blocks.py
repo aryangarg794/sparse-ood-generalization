@@ -45,17 +45,18 @@ class MHABlock(nn.Module):
         return self._forward_image(x)
 
     def _forward_image(self: Self, x: Tensor):
-        attn_out, attn_scores = self.mha(x, x, x)
+        
         if self.layernorm:
+            x_ln = self.ln1(x)
+            attn_out, attn_scores = self.mha(x_ln, x_ln, x_ln)
             if self.residual:
-                attn_out = self.ln1(attn_out + x)
-                out = self.mlp(attn_out)
-                out = self.ln2(out + attn_out)
+                attn_out = attn_out + x
+                out = self.mlp(self.ln2(attn_out))
+                out = out + attn_out
             else:
-                attn_out = self.ln1(attn_out)
-                out = self.mlp(attn_out)
-                out = self.ln2(out)
+                out = self.mlp(self.ln2(attn_out))
         else:
+            attn_out, attn_scores = self.mha(x, x, x)
             if self.residual:
                 out = self.mlp(attn_out + x)
             else:
@@ -126,21 +127,22 @@ class MHABlockBern(nn.Module):
         return self._forward_image(x)
 
     def _forward_image(self: Self, x: Tensor):
-        attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(x, x, x)
 
-        if self.mask_res:
-            diags = attn_masks.diagonal(dim1=-2, dim2=-1)
-            x = x * diags.unsqueeze(dim=-1)  # (B, L, L) * (B, L, D)
         if self.layernorm:
+            x_ln = self.ln1(x)
+            attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(x_ln, x_ln, x_ln)
+            if self.mask_res:
+                diags = attn_masks.diagonal(dim1=-2, dim2=-1)
+                x = x * diags.unsqueeze(dim=-1)  # (B, L, L) * (B, L, D)
+
             if self.residual:
-                attn_out = self.ln1(attn_out + x)
-                out = self.mlp(attn_out)
-                out = self.ln2(out + attn_out)
+                attn_out = attn_out + x
+                out = self.mlp(self.ln2(attn_out))
+                out = out + attn_out
             else:
-                attn_out = self.ln1(attn_out)
-                out = self.mlp(attn_out)
-                out = self.ln2(out)
+                out = self.mlp(self.ln2(attn_out))
         else:
+            attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(x, x, x)
             if self.residual:
                 out = self.mlp(attn_out + x)
             else:
@@ -207,21 +209,24 @@ class MHABlockGen(nn.Module):
         return self._forward_image(x)
 
     def _forward_image(self: Self, x: Tensor):
-        if self.training:
-            attn_out, attn_masks, attn_scores, gen_loss = self.mha(x, x, x)
-        else:
-            attn_out, attn_masks, attn_scores = self.mha(x, x, x)
-
+        
         if self.layernorm:
-            if self.residual:
-                attn_out = self.ln1(attn_out + x)
-                out = self.mlp(attn_out)
-                out = self.ln2(out + attn_out)
+            x_ln = self.ln1(x)
+            if self.training:
+                attn_out, attn_masks, attn_scores, gen_loss = self.mha(x_ln, x_ln, x_ln)
             else:
-                attn_out = self.ln1(attn_out)
-                out = self.mlp(attn_out)
-                out = self.ln2(out)
+                attn_out, attn_masks, attn_scores = self.mha(x_ln, x_ln, x_ln)
+            if self.residual:
+                attn_out = attn_out + x
+                out = self.mlp(self.ln2(attn_out))
+                out = out + attn_out
+            else:
+                out = self.mlp(self.ln2(attn_out))
         else:
+            if self.training:
+                attn_out, attn_masks, attn_scores, gen_loss = self.mha(x, x, x)
+            else:
+                attn_out, attn_masks, attn_scores = self.mha(x, x, x)
             if self.residual:
                 out = self.mlp(attn_out + x)
             else:

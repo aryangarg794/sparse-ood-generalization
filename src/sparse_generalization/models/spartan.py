@@ -45,7 +45,7 @@ class SPARTAN(nn.Module):
         lr: float = 1e-3,
         dropout: float = 0.0,
         compute_mask: bool = False,
-        layernorm: bool = True,
+        layernorm: bool = False,
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
         num_embeddings: int = 64,
