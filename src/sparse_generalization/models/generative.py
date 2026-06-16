@@ -49,6 +49,7 @@ class FlowSpartan(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (128, 128)},
         nf_prior: bool = True,
         embedding_inp: bool = True,
+        beta: float = 1.0, 
         lr: float = 1e-3,
         dropout: float = 0.1,
         layernorm: bool = True,
@@ -74,14 +75,12 @@ class FlowSpartan(nn.Module):
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
 
-        bottleneck = model_dim // 2
+        bottleneck = 128
         self.feature_map = nn.Sequential(
-            # nn.Linear(4*model_dim if embedding_inp else inp_dim, bottleneck),
-            # act(),
-            # nn.Linear(bottleneck, bottleneck),
-            # act(),
-            # nn.Linear(bottleneck, model_dim)
-            nn.Identity()
+            nn.Linear(model_dim if embedding_inp else inp_dim, bottleneck),
+            act(),
+            nn.Linear(bottleneck, model_dim),
+            # nn.Identity()
         )
 
         if pe:
@@ -160,6 +159,7 @@ class FlowSpartan(nn.Module):
         self.max_paths = None
         self.step_size = step_size
         self.val_to_name = val_to_name
+        self.beta = beta
         self.args = locals()
 
     def _enforce_sparsity(self, attns):
@@ -269,9 +269,9 @@ class FlowSpartan(nn.Module):
                 if self.include_sparsity:
                     sparse_loss = self._enforce_sparsity(masks)
                     epoch_sparse += sparse_loss.item()
-                    loss = rec_loss - gen_loss + sparse_loss
+                    loss = rec_loss - self.beta * gen_loss + sparse_loss
                 else:
-                    loss = rec_loss - gen_loss
+                    loss = rec_loss - self.beta * gen_loss
 
                 self.optimizer.zero_grad()
                 loss.backward()

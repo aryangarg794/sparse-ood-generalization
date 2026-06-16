@@ -10,7 +10,7 @@ embedding_inp: false
 num_heads: 1
 num_layers: 1
 include_sparsity: false
-lr: 1e-3
+lr: 5e-4
 token_pool: false
 alpha: 0.1
 compute_mask: false

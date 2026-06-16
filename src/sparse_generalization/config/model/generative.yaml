@@ -1,13 +1,13 @@
 _target_: sparse_generalization.models.generative.FlowSpartan
 _partial_: true
 
-inp_dim: 1
+inp_dim: 25
 out_dim: 1 
 layernorm: false
 agg_pool: false 
 model_dim: 32
 seq_len: 25
-embedding_inp: true
+embedding_inp: false
 num_heads: 1
 num_layers: 1
 latent_dim: 16
@@ -15,7 +15,7 @@ lstm_layers: 1
 bidirectional: false
 flow_params:
   n_flows: 2
-  hidden_features: [32, 32]
+  hidden_features: [128, 128]
 prior_params:
   n_flows: 2
   hidden_features: [32, 32]
@@ -27,6 +27,7 @@ alpha: 0.1
 residual: true
 num_embeddings: 25
 pe: true
+beta: 1.0
 sinusoidal: true
 dropout: 0.0
 device: cuda

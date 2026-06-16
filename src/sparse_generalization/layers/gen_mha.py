@@ -10,28 +10,10 @@ from torch import Tensor
 from torch.nn.functional import softmax, gumbel_softmax
 from typing import Self
 
+from sparse_generalization.layers.priors import LaplacePrior
 from sparse_generalization.utils.util_funcs import vae_log_prob, reparametrize
 
-
-class LaplacePrior(zuko.lazy.LazyDistribution):
-
-    def __init__(
-            self, 
-            loc : float = 0.0, 
-            scale: float = 1.0, 
-            *args, 
-            **kwargs
-        ):
-        super().__init__(*args, **kwargs)
-        
-        self.loc = loc
-        self.scale = scale
-
-    def forward(self, c = None):
-        return torch.distributions.Laplace(loc=self.loc, scale=self.scale)
-
 class FlowMasking(nn.Module):
-
     def __init__(
         self,
         embed_size: int,
@@ -49,7 +31,6 @@ class FlowMasking(nn.Module):
         *args,
         **kwargs,
     ):
-
         super(FlowMasking, self).__init__(*args, **kwargs)
 
         if embed_size % num_heads != 0:
@@ -58,18 +39,16 @@ class FlowMasking(nn.Module):
             )
 
         self.dk = embed_size // num_heads
-        self.heads = (
-            num_heads  # NOTE: has to 1 right now since idk how to do multiheaded
-        )
+        self.heads = num_heads
         self.embed_size = embed_size
         self.residual = residual
+        self.bias = bias
 
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
         self.values = nn.Linear(embed_size, embed_size)
         self.projection = nn.Linear(embed_size, embed_size)
 
-        # vae encoder-decoder
         self.encoder_lstm = nn.LSTM(
             embed_size,
             latent_dim // 2 if bidirectional else latent_dim,
@@ -89,6 +68,7 @@ class FlowMasking(nn.Module):
 
         self.nf_prior = nf_prior
         if self.nf_prior:
+            import zuko
             self.prior = zuko.flows.NSF(
                 features=latent_dim,
                 transforms=prior_params["n_flows"],
@@ -97,13 +77,13 @@ class FlowMasking(nn.Module):
         else:
             self.prior = LaplacePrior()
 
+        import zuko
         base_flow = zuko.flows.NSF(
             features=latent_dim,
             transforms=flow_params["n_flows"],
             hidden_features=flow_params["hidden_features"],
         )
         self.normalizing_flow = Flow(base_flow.transform.inv, base_flow.base)
-        self.bias = bias
 
     def forward(
         self: Self,
@@ -119,62 +99,48 @@ class FlowMasking(nn.Module):
         keys = self.keys(keys)
         values = self.values(values)
 
-        queries_split = self._split_heads(queries)  # (b * h, l, d_k)
-        keys_split = self._split_heads(keys)
-        values_split = self._split_heads(values)
+        queries_split = queries.view(batch_size, seq_len, self.heads, self.dk).permute(0, 2, 1, 3)
+        keys_split = keys.view(batch_size, seq_len, self.heads, self.dk).permute(0, 2, 1, 3)
+        values_split = values.view(batch_size, seq_len, self.heads, self.dk).permute(0, 2, 1, 3)
 
-        # encoder
-        out, _ = self.encoder_lstm(x)  # assume self-attn (b, k)
+        out, _ = self.encoder_lstm(x)
         lstm_encoding = self.encoder(out[:, -1, :]).view(batch_size, 2, self.heads, -1)
-        mu, sig = torch.chunk(lstm_encoding, chunks=2, dim=1)  # (b, k*h)
-        mu = mu.permute(0, 2, 1, 3).squeeze().reshape(batch_size * self.heads, -1)
-        sig = sig.permute(0, 2, 1, 3).squeeze().reshape(batch_size * self.heads, -1)
+        mu, sig = torch.chunk(lstm_encoding, chunks=2, dim=1)
+        
+        mu = mu.permute(0, 2, 1, 3).reshape(batch_size * self.heads, -1)
+        sig = sig.permute(0, 2, 1, 3).reshape(batch_size * self.heads, -1)
         encoding = reparametrize(mu, sig)
 
         attention_repr, mask_per_head, attn_per_head, ladj, prior = self._attention(
             queries_split, keys_split, values_split, encoding
         )
 
-        attention_repr = self._merge_heads(attention_repr)
+        attention_repr = attention_repr.permute(0, 2, 1, 3).reshape(batch_size, seq_len, self.embed_size)
         attention_repr = self.projection(attention_repr)
 
         if avg_attn_heads:
             adjacency = attn_per_head.sum(dim=1)
+        else:
+            adjacency = attn_per_head
 
         if avg_mask:
             mask = mask_per_head.sum(dim=1)
+        else:
+            mask = mask_per_head
 
         if self.training:
             mha_loss = prior - vae_log_prob(encoding, mu, sig) + ladj
             return attention_repr, mask, adjacency, mha_loss
-        else:
-            return attention_repr, mask, adjacency
-
-    def _split_heads(self: Self, x: Tensor):
-        batch_size, seq_len, _ = x.size()
-        return (
-            x.reshape(batch_size, seq_len, self.heads, self.dk)
-            .transpose(1, 2)
-            .reshape(batch_size * self.heads, seq_len, self.dk)
-        )
-
-    def _merge_heads(self: Self, x: Tensor):
-        batch_size, _, seq_len, _ = x.size()
-        return (
-            x.reshape(batch_size, self.heads, seq_len, self.dk)
-            .transpose(1, 2)
-            .reshape(batch_size, seq_len, self.dk * self.heads)
-        )
+        return attention_repr, mask, adjacency
 
     def _attention(
         self: Self, query: Tensor, key: Tensor, value: Tensor, encoding: Tensor
     ):
-        batch_heads, seq_len, _ = query.size()
-        attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(
-            self.dk
-        )  # (b*h, l, l)
+        batch_size, heads, seq_len, _ = query.size()
+        batch_heads = batch_size * heads
 
-        attention_probs = softmax(attention_logits, dim=-1)
+        attention_logits = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.dk)
+        attention_probs = F.softmax(attention_logits, dim=-1)
 
         transform = self.normalizing_flow().transform
 
@@ -184,39 +150,30 @@ class FlowMasking(nn.Module):
                 prior = self.prior().log_prob(latent_nf)
         else:
             latent_nf = transform(encoding)
+            ladj, prior = None, None
 
-        g = self.decoder(latent_nf).squeeze()
-        v = self.v.repeat(batch_heads, 1, 1)
-        v_dir = F.normalize(v, dim=-1)
+        g = self.decoder(latent_nf)
+        
+        v_dir = F.normalize(self.v, dim=-1).unsqueeze(0).expand(batch_heads, -1, -1)
         mask_weights_raw = g.view(-1, seq_len, 1) * v_dir
-        edges_logit = mask_weights_raw.view(batch_heads, -1)
-        edges_logit = torch.stack(
-            [torch.zeros_like(edges_logit), edges_logit + self.bias], dim=-1
-        )
-        A = gumbel_softmax(
-                edges_logit, tau=1.0, hard=True
-            )  
-        A = A[:, :, -1].view(batch_heads, seq_len, seq_len) 
+        edges_logit = mask_weights_raw.view(batch_heads, -1) + self.bias
+        
+        edges_logit = torch.stack([torch.zeros_like(edges_logit), edges_logit], dim=-1)
+        
+        A = gumbel_softmax(edges_logit, tau=1.0, hard=True)  
+        A = A[:, :, -1].view(batch_size, heads, seq_len, seq_len) 
 
-        if not self.nf_prior:
-            prior = self.prior().log_prob(A.sum(dim=(1, 2)))
+        if not self.nf_prior and self.training:
+            prior = self.prior().log_prob(A.sum(dim=(-2, -1)))
 
         masked_attention_probs = A * attention_probs
-        hidden_repr = torch.bmm(masked_attention_probs, value)
-        if self.residual and not self.mask_res:
-            A = A + torch.eye(A.size(1), device=A.device).unsqueeze(0).repeat(
-                batch_heads, 1, 1
-            )
+        hidden_repr = torch.matmul(masked_attention_probs, value)
+        
+        if self.residual and not getattr(self, 'mask_res', False):
+            eye = torch.eye(seq_len, device=A.device).view(1, 1, seq_len, seq_len)
+            A = A + eye
 
-        return (
-            hidden_repr.view(-1, self.heads, seq_len, self.dk),
-            A.view(-1, self.heads, seq_len, seq_len),
-            masked_attention_probs.view(-1, self.heads, seq_len, seq_len),
-            ladj if self.training else None,
-            prior if self.training else None,
-        )
-
-
+        return hidden_repr, A, masked_attention_probs, ladj, prior
 class QKVHyperNet(nn.Module):
 
     def __init__(

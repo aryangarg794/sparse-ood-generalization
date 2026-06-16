@@ -1,4 +1,5 @@
 import numpy as np
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,7 +11,7 @@ from typing import Self
 from zuko.flows import Flow
 
 from sparse_generalization.utils.util_funcs import vae_log_prob, reparametrize
-
+from sparse_generalization.layers.priors import LaplacePrior
 
 class AggregationAttention(nn.Module):
 
@@ -191,7 +192,6 @@ class AggregationAttention(nn.Module):
 
 
 class AggregationFlow(nn.Module):
-
     def __init__(
         self,
         embed_size: int,
@@ -248,12 +248,16 @@ class AggregationFlow(nn.Module):
 
         self.nf_prior = nf_prior
         if self.nf_prior:
+            import zuko
             self.prior = zuko.flows.NSF(
                 features=latent_dim,
                 transforms=prior_params["n_flows"],
                 hidden_features=prior_params["hidden_features"],
             )
+        else:
+            self.prior = LaplacePrior()
 
+        import zuko
         base_flow = zuko.flows.NSF(
             features=latent_dim,
             transforms=flow_params["n_flows"],
@@ -268,55 +272,42 @@ class AggregationFlow(nn.Module):
             nn.Linear(4 * embed_size, out_dim),
         )
 
-    def _split_heads(self: Self, x: Tensor):
-        batch_size, seq_len, _ = x.size()
-        return (
-            x.reshape(batch_size, seq_len, self.heads, self.dk)
-            .transpose(1, 2)
-            .reshape(batch_size * self.heads, seq_len, self.dk)
-        )
-
-    def _merge_heads(self: Self, x: Tensor):
-        batch_size, _, seq_len, _ = x.size()
-        return (
-            x.reshape(batch_size, self.heads, seq_len, self.dk)
-            .transpose(1, 2)
-            .reshape(batch_size, seq_len, self.dk * self.heads)
-        )
-
     def forward(self, x: Tensor, sum_heads: bool = True):
         batch_size, seq_len, _ = x.size()
-        queries = self.queries(self.query.repeat(batch_size, 1, 1))  # (b, 1, d)
-        keys = self.keys(x)  # (b, l, d)
-        values = self.values(x)  # (b, l, d)
+        
+        query_expanded = self.query.expand(batch_size, 1, -1)
+        queries = self.queries(query_expanded)  
+        keys = self.keys(x)  
+        values = self.values(x)  
 
-        queries_split = self._split_heads(queries)  # (b * h, 1, d_k)
-        keys_split = self._split_heads(keys)
-        values_split = self._split_heads(values)
+        queries_split = queries.view(batch_size, 1, self.heads, self.dk).permute(0, 2, 1, 3)
+        keys_split = keys.view(batch_size, seq_len, self.heads, self.dk).permute(0, 2, 1, 3)
+        values_split = values.view(batch_size, seq_len, self.heads, self.dk).permute(0, 2, 1, 3)
 
-        out, _ = self.encoder_lstm(x)  # assume self-attn (b, k)
+        out, _ = self.encoder_lstm(x)  
         lstm_encoding = self.encoder(out[:, -1, :]).view(batch_size, 2, self.heads, -1)
-        mu, sig = torch.chunk(lstm_encoding, chunks=2, dim=1)  # (b, k*h)
-        mu = mu.permute(0, 2, 1, 3).squeeze().reshape(batch_size * self.heads, -1)
-        sig = sig.permute(0, 2, 1, 3).squeeze().reshape(batch_size * self.heads, -1)
+        mu, sig = torch.chunk(lstm_encoding, chunks=2, dim=1)  
+        
+        mu = mu.permute(0, 2, 1, 3).reshape(batch_size * self.heads, -1)
+        sig = sig.permute(0, 2, 1, 3).reshape(batch_size * self.heads, -1)
         encoding = reparametrize(mu, sig)
 
         attention_repr, masks, attention_probs, ladj, prior = self._attention(
             queries_split, keys_split, values_split, encoding
         )
 
-        attention_repr = self._merge_heads(attention_repr)  # (b, 1, d)
+        attention_repr = attention_repr.permute(0, 2, 1, 3).reshape(batch_size, 1, self.embed_size)
 
         if sum_heads:
             masks = masks.sum(dim=1)
             attention_probs = attention_probs.sum(dim=1)
 
         out = self.mlp(attention_repr.squeeze(dim=1))
+        
         if self.training:
             mha_loss = prior - vae_log_prob(encoding, mu, sig) + ladj
             return out, masks, attention_probs, mha_loss
-        else:
-            return out, masks, attention_probs
+        return out, masks, attention_probs
 
     def _attention(
         self: Self,
@@ -325,42 +316,45 @@ class AggregationFlow(nn.Module):
         value: Tensor,
         encoding: Tensor,
     ):
-        batch_heads, seq_len, _ = key.size()
-        attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(
-            self.dk
-        )  # (bh, 1, dk) @ (bh, dk, s)
+        batch_size, heads, seq_len, _ = key.size()
+        batch_heads = batch_size * heads
 
-        attention_probs = softmax(attention_logits, dim=-1)
+        attention_logits = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.dk)
+        attention_probs = F.softmax(attention_logits, dim=-1)
 
         transform = self.normalizing_flow().transform
 
         if self.training:
             latent_nf, ladj = transform.call_and_ladj(encoding)
-            prior = self.prior().log_prob(latent_nf)
+            if self.nf_prior:
+                prior = self.prior().log_prob(latent_nf)
         else:
             latent_nf = transform(encoding)
+            ladj, prior = None, None
 
-        g = self.decoder(latent_nf).squeeze()
-        v = self.v.repeat(batch_heads, 1, 1)
-        v_dir = F.normalize(v, dim=-1)
+        g = self.decoder(latent_nf)
+        
+        v_dir = F.normalize(self.v, dim=-1).unsqueeze(0).expand(batch_heads, -1, -1)
         mask_weights_raw = g.view(-1, 1, 1) * v_dir
-        mask_weights = F.sigmoid(mask_weights_raw)
+        mask_weights = torch.sigmoid(mask_weights_raw)
         hard_mask = (mask_weights >= 0.5).float()
+        
         A = hard_mask - mask_weights.detach() + mask_weights
+        A = A.view(batch_size, heads, 1, seq_len)
+    
+        if not self.nf_prior and self.training:
+            prior = self.prior().log_prob(A.sum(dim=(-2, -1)))
 
         attention_probs = A * attention_probs
-
-        # (bh, 1, l)
-        hidden_repr = torch.bmm(attention_probs, value)  # (bh, 1, l) @ (bh, l, dk)
+        hidden_repr = torch.matmul(attention_probs, value)  
 
         return (
-            hidden_repr.view(-1, self.heads, 1, self.dk),
-            A.view(-1, self.heads, 1, seq_len),
-            attention_probs.view(-1, self.heads, 1, seq_len),
-            ladj if self.training else None,
-            prior if self.training else None,
+            hidden_repr,
+            A,
+            attention_probs,
+            ladj,
+            prior,
         )
-
 
 class AggregationQKV(nn.Module):
 
