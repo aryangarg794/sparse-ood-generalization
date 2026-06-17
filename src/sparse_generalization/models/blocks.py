@@ -176,12 +176,14 @@ class MHABlockGen(nn.Module):
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         nf_prior: bool = True,
+        per_mask_prior: bool = False, 
         *args,
         **kwargs,
     ):
         super(MHABlockGen, self).__init__(*args, **kwargs)
         self.residual = residual
         self.layernorm = layernorm
+        self.per_mask_prior = per_mask_prior
 
         self.mha = mha_layer(
             embed_size,
@@ -193,6 +195,7 @@ class MHABlockGen(nn.Module):
             bidirectional=bidirectional,
             prior_params=prior_params,
             flow_params=flow_params,
+            per_mask_prior=per_mask_prior, 
             nf_prior=nf_prior,
         )
 
@@ -213,7 +216,7 @@ class MHABlockGen(nn.Module):
         if self.layernorm:
             x_ln = self.ln1(x)
             if self.training:
-                attn_out, attn_masks, attn_scores, gen_loss = self.mha(x_ln, x_ln, x_ln)
+                attn_out, attn_masks, attn_scores, prior, ladj = self.mha(x_ln, x_ln, x_ln)
             else:
                 attn_out, attn_masks, attn_scores = self.mha(x_ln, x_ln, x_ln)
             if self.residual:
@@ -224,7 +227,7 @@ class MHABlockGen(nn.Module):
                 out = self.mlp(self.ln2(attn_out))
         else:
             if self.training:
-                attn_out, attn_masks, attn_scores, gen_loss = self.mha(x, x, x)
+                attn_out, attn_masks, attn_scores, prior, ladj = self.mha(x, x, x)
             else:
                 attn_out, attn_masks, attn_scores = self.mha(x, x, x)
             if self.residual:
@@ -233,7 +236,7 @@ class MHABlockGen(nn.Module):
                 out = self.mlp(attn_out)
 
         if self.training:
-            return out, attn_masks, attn_scores, gen_loss
+            return out, attn_masks, attn_scores, prior, ladj
         else:
             return (
                 out,

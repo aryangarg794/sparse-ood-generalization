@@ -20,6 +20,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_mask_mean,
     compute_max_paths,
 )
+from sparse_generalization.layers.priors import LaplacePrior
 
 
 class FlowSpartan(nn.Module):
@@ -48,6 +49,7 @@ class FlowSpartan(nn.Module):
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (128, 128)},
         nf_prior: bool = True,
+        per_mask_prior: bool = False, 
         embedding_inp: bool = True,
         beta: float = 1.0, 
         lr: float = 1e-3,
@@ -70,6 +72,7 @@ class FlowSpartan(nn.Module):
         self.num_heads = num_heads
         self.num_layers = num_layers
         self.agg_pool = agg_pool
+        self.per_mask_prior = per_mask_prior
         self.token_pool = token_pool
 
         if embedding_inp:
@@ -107,6 +110,7 @@ class FlowSpartan(nn.Module):
                     num_heads=num_heads,
                     dropout=dropout,
                     act=act,
+                    per_mask_prior=per_mask_prior, 
                     lstm_layers=lstm_layers,
                     bidirectional=bidirectional,
                     prior_params=prior_params,
@@ -116,6 +120,8 @@ class FlowSpartan(nn.Module):
                     layernorm=layernorm,
                 )
             )
+
+        self.prior = LaplacePrior()
 
         if self.agg_pool:
             if mha_layer.func == QKVHyperNet:
@@ -130,6 +136,7 @@ class FlowSpartan(nn.Module):
                 embed_size=embed_size,
                 seq_len=seq_len,
                 latent_dim=latent_dim,
+                per_mask_prior=per_mask_prior,
                 num_heads=num_heads,
                 lstm_layers=lstm_layers,
                 bidirectional=bidirectional,
@@ -167,7 +174,8 @@ class FlowSpartan(nn.Module):
         return (self.alpha - num_edges).pow(2).mean()
 
     def forward(self, x: Tensor):
-        gen_loss = 0
+        priors = 0
+        ladjs = 0
         attn_matrices = []
         batch_size, width, height, _ = x.size()
         if self.max_paths is None:
@@ -206,8 +214,10 @@ class FlowSpartan(nn.Module):
 
         for layer in self.layers:
             if self.training:
-                x_attn, mask, attn, layer_gen_loss = layer(x_attn)
-                gen_loss += layer_gen_loss
+                x_attn, mask, attn, prior, ladj = layer(x_attn)
+                if self.per_mask_prior:
+                    priors += prior 
+                ladjs += ladj
             else:
                 x_attn, mask, attn = layer(x_attn)
             attn_matrices.append(attn)
@@ -219,8 +229,10 @@ class FlowSpartan(nn.Module):
 
         if self.agg_pool:
             if self.training:
-                out, final_mask, agg_attn, layer_gen_loss = self.out(x_attn)
-                gen_loss += layer_gen_loss
+                out, final_mask, agg_attn, prior, ladj = self.out(x_attn)
+                if self.per_mask_prior:
+                    priors += prior 
+                ladjs += ladj
             else:
                 out, final_mask, agg_attn = self.out(x_attn)
         elif self.token_pool:
@@ -232,7 +244,11 @@ class FlowSpartan(nn.Module):
             attn_matrices.append(agg_attn)
             masks = torch.bmm(final_mask, masks)
 
-        return out, masks, attn_matrices, gen_loss.mean() if self.training else None
+        if not self.per_mask_prior:
+            priors = self.prior().log_prob(masks.sum(dim=(1, 2))) / self.max_paths
+        
+        gen_loss = (priors - 0.0001 * ladjs).mean()
+        return out, masks, attn_matrices, gen_loss if self.training else None
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []
@@ -330,7 +346,8 @@ class FlowSpartan(nn.Module):
                 losses_test[name].append(test_metrics["loss"])
                 accs_test[name].append(test_metrics["acc"])
 
-            postfix["edges"] = mask_running
+            postfix["mask_edges"] = mask_running
+            postfix["attn_edges"] = attn_running
 
             # if self.agg_pool:
             #     self.out.temp_decay(step, num_epochs)

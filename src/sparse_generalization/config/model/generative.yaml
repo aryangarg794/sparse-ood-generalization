@@ -23,6 +23,7 @@ nf_prior: false
 include_sparsity: false
 lr: 1e-3
 token_pool: false
+per_mask_prior: false
 alpha: 0.1
 residual: true
 num_embeddings: 25

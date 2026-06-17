@@ -28,6 +28,7 @@ class FlowMasking(nn.Module):
         residual: bool = False,
         bias: float = 0.5,
         nf_prior: bool = True,
+        per_mask_prior: bool = False, 
         *args,
         **kwargs,
     ):
@@ -43,6 +44,7 @@ class FlowMasking(nn.Module):
         self.embed_size = embed_size
         self.residual = residual
         self.bias = bias
+        self.per_mask_prior = per_mask_prior
 
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
@@ -124,13 +126,14 @@ class FlowMasking(nn.Module):
             mask = mask_per_head
 
         if self.training:
-            mha_loss = prior - ladj
-            return attention_repr, mask, adjacency, mha_loss
+            return attention_repr, mask, adjacency, prior, ladj
+        
         return attention_repr, mask, adjacency
 
     def _attention(
         self: Self, query: Tensor, key: Tensor, value: Tensor, encoding: Tensor
     ):
+        ladj, prior = None, None
         batch_size, heads, seq_len, _ = query.size()
         batch_heads = batch_size * heads
 
@@ -145,7 +148,6 @@ class FlowMasking(nn.Module):
                 prior = self.prior().log_prob(latent_nf)
         else:
             latent_nf = transform.sample()
-            ladj, prior = None, None
 
         g = self.decoder(latent_nf)
         v_dir = F.normalize(self.v, dim=-1).unsqueeze(0).expand(batch_heads, -1, -1)
@@ -157,7 +159,7 @@ class FlowMasking(nn.Module):
         A = gumbel_softmax(edges_logit, tau=1.0, hard=True)  
         A = A[:, :, -1].view(batch_size, heads, seq_len, seq_len) 
 
-        if not self.nf_prior and self.training:
+        if not self.nf_prior and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(A.sum(dim=(-2, -1)))
 
         masked_attention_probs = A * attention_probs

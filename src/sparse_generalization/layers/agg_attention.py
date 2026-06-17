@@ -206,6 +206,7 @@ class AggregationFlow(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
         nf_prior: bool = True,
+        per_mask_prior: bool = False, 
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
         *args,
@@ -223,6 +224,7 @@ class AggregationFlow(nn.Module):
         self.heads = num_heads
         self.dk = embed_size // num_heads
         self.layernorm = layernorm
+        self.per_mask_prior = per_mask_prior
 
         self.query = nn.Parameter(torch.zeros((1, embed_size)))
         self.queries = nn.Linear(embed_size, embed_size)
@@ -301,8 +303,7 @@ class AggregationFlow(nn.Module):
         out = self.mlp(attention_repr.squeeze(dim=1))
         
         if self.training:
-            mha_loss = prior - ladj
-            return out, masks, attention_probs, mha_loss
+            return out, masks, attention_probs, prior, ladj
         return out, masks, attention_probs
 
     def _attention(
@@ -312,6 +313,7 @@ class AggregationFlow(nn.Module):
         value: Tensor,
         encoding: Tensor,
     ):
+        ladj, prior = None, None
         batch_size, heads, seq_len, _ = key.size()
         batch_heads = batch_size * heads
 
@@ -326,7 +328,6 @@ class AggregationFlow(nn.Module):
                 prior = self.prior().log_prob(latent_nf)
         else:
             latent_nf = transform.sample()
-            ladj, prior = None, None
 
         g = self.decoder(latent_nf)
         
@@ -338,7 +339,7 @@ class AggregationFlow(nn.Module):
         A = hard_mask - mask_weights.detach() + mask_weights
         A = A.view(batch_size, heads, 1, seq_len)
     
-        if not self.nf_prior and self.training:
+        if not self.nf_prior and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(A.sum(dim=(-2, -1)))
 
         attention_probs = A * attention_probs
