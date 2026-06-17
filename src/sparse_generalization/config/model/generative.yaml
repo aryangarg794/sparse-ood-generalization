@@ -21,7 +21,7 @@ prior_params:
   hidden_features: [32, 32]
 nf_prior: false
 include_sparsity: false
-lr: 1e-3
+lr: 5e-4
 token_pool: false
 per_mask_prior: false
 alpha: 0.1

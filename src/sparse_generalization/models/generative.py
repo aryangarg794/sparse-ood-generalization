@@ -244,10 +244,13 @@ class FlowSpartan(nn.Module):
             attn_matrices.append(agg_attn)
             masks = torch.bmm(final_mask, masks)
 
-        if not self.per_mask_prior:
+        if not self.per_mask_prior and self.training:
             priors = self.prior().log_prob(masks.sum(dim=(1, 2))) / self.max_paths
         
-        gen_loss = (priors - 0.0001 * ladjs).mean()
+        if self.training:
+            gen_loss = priors.mean() - ladjs.mean()
+        else:
+            gen_loss = None
         return out, masks, attn_matrices, gen_loss if self.training else None
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
