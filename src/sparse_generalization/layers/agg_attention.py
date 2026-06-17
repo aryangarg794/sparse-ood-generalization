@@ -237,7 +237,7 @@ class AggregationFlow(nn.Module):
             dropout=dropout,
             bidirectional=bidirectional,
         )
-        self.encoder = nn.Linear(latent_dim, 2 * latent_dim)
+        self.encoder = nn.Linear(latent_dim, latent_dim * num_heads)
 
         self.v = nn.Parameter(torch.randn(1, seq_len))
         nn.init.xavier_uniform_(self.v)
@@ -248,7 +248,6 @@ class AggregationFlow(nn.Module):
 
         self.nf_prior = nf_prior
         if self.nf_prior:
-            import zuko
             self.prior = zuko.flows.NSF(
                 features=latent_dim,
                 transforms=prior_params["n_flows"],
@@ -257,9 +256,9 @@ class AggregationFlow(nn.Module):
         else:
             self.prior = LaplacePrior()
 
-        import zuko
         base_flow = zuko.flows.NSF(
             features=latent_dim,
+            context=latent_dim, 
             transforms=flow_params["n_flows"],
             hidden_features=flow_params["hidden_features"],
         )
@@ -285,12 +284,9 @@ class AggregationFlow(nn.Module):
         values_split = values.view(batch_size, seq_len, self.heads, self.dk).permute(0, 2, 1, 3)
 
         out, _ = self.encoder_lstm(x)  
-        lstm_encoding = self.encoder(out[:, -1, :]).view(batch_size, 2, self.heads, -1)
-        mu, sig = torch.chunk(lstm_encoding, chunks=2, dim=1)  
-        
-        mu = mu.permute(0, 2, 1, 3).reshape(batch_size * self.heads, -1)
-        sig = sig.permute(0, 2, 1, 3).reshape(batch_size * self.heads, -1)
-        encoding = reparametrize(mu, sig)
+        encoding = self.encoder(out[:, -1, :]).view(batch_size, self.heads, -1)
+        encoding = encoding.reshape(batch_size * self.heads, -1)
+    
 
         attention_repr, masks, attention_probs, ladj, prior = self._attention(
             queries_split, keys_split, values_split, encoding
@@ -305,7 +301,7 @@ class AggregationFlow(nn.Module):
         out = self.mlp(attention_repr.squeeze(dim=1))
         
         if self.training:
-            mha_loss = prior - vae_log_prob(encoding, mu, sig) + ladj
+            mha_loss = prior - ladj
             return out, masks, attention_probs, mha_loss
         return out, masks, attention_probs
 
@@ -322,14 +318,14 @@ class AggregationFlow(nn.Module):
         attention_logits = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.dk)
         attention_probs = F.softmax(attention_logits, dim=-1)
 
-        transform = self.normalizing_flow().transform
+        transform = self.normalizing_flow(encoding)
 
         if self.training:
-            latent_nf, ladj = transform.call_and_ladj(encoding)
+            latent_nf, ladj = transform.rsample_and_log_prob()
             if self.nf_prior:
                 prior = self.prior().log_prob(latent_nf)
         else:
-            latent_nf = transform(encoding)
+            latent_nf = transform.sample()
             ladj, prior = None, None
 
         g = self.decoder(latent_nf)
