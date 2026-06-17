@@ -175,7 +175,7 @@ class MHABlockGen(nn.Module):
         bidirectional: bool = True,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
-        nf_prior: bool = True,
+        prior_type: str = 'laplace',
         per_mask_prior: bool = False, 
         *args,
         **kwargs,
@@ -196,7 +196,7 @@ class MHABlockGen(nn.Module):
             prior_params=prior_params,
             flow_params=flow_params,
             per_mask_prior=per_mask_prior, 
-            nf_prior=nf_prior,
+            prior_type=prior_type,
         )
 
         self.ln1 = nn.LayerNorm(embed_size)

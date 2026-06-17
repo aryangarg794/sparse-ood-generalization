@@ -205,7 +205,7 @@ class AggregationFlow(nn.Module):
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
-        nf_prior: bool = True,
+        prior_type: str = 'laplace',
         per_mask_prior: bool = False, 
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
@@ -248,15 +248,17 @@ class AggregationFlow(nn.Module):
             nn.Linear(latent_dim, 128), nn.ReLU(), nn.Linear(128, 1)
         )
 
-        self.nf_prior = nf_prior
-        if self.nf_prior:
+        self.prior_type = prior_type
+        if self.prior_type == 'nf':
             self.prior = zuko.flows.NSF(
                 features=latent_dim,
                 transforms=prior_params["n_flows"],
                 hidden_features=prior_params["hidden_features"],
             )
-        else:
+        elif self.prior_type == 'laplace':
             self.prior = LaplacePrior()
+        else:
+            self.prior = nn.Identity()
 
         base_flow = zuko.flows.NSF(
             features=latent_dim,
@@ -324,7 +326,7 @@ class AggregationFlow(nn.Module):
 
         if self.training:
             latent_nf, ladj = transform.rsample_and_log_prob()
-            if self.nf_prior:
+            if self.prior_type == 'nf':
                 prior = self.prior().log_prob(latent_nf)
         else:
             latent_nf = transform.sample()
@@ -339,8 +341,10 @@ class AggregationFlow(nn.Module):
         A = hard_mask - mask_weights.detach() + mask_weights
         A = A.view(batch_size, heads, 1, seq_len)
     
-        if not self.nf_prior and self.training and self.per_mask_prior:
+        if self.prior_type == 'laplace' and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(A.sum(dim=(-2, -1)))
+        elif self.prior_type == 'uniform' and self.training and self.per_mask_prior:
+            prior = torch.tensor([1.0]).expand_as(ladj)
 
         attention_probs = A * attention_probs
         hidden_repr = torch.matmul(attention_probs, value)  

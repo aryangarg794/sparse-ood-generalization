@@ -19,7 +19,7 @@ flow_params:
 prior_params:
   n_flows: 2
   hidden_features: [32, 32]
-nf_prior: false
+prior_type: laplace
 include_sparsity: false
 lr: 5e-4
 token_pool: false

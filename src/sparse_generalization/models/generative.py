@@ -48,7 +48,7 @@ class FlowSpartan(nn.Module):
         bidirectional: bool = True,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (128, 128)},
-        nf_prior: bool = True,
+        prior_type: str = 'laplace',
         per_mask_prior: bool = False, 
         embedding_inp: bool = True,
         beta: float = 1.0, 
@@ -115,13 +115,15 @@ class FlowSpartan(nn.Module):
                     bidirectional=bidirectional,
                     prior_params=prior_params,
                     flow_params=flow_params,
-                    nf_prior=nf_prior,
+                    prior_type=prior_type,
                     residual=residual,
                     layernorm=layernorm,
                 )
             )
 
-        self.prior = LaplacePrior()
+        self.prior_type = prior_type
+        if self.prior_type == 'laplace':
+            self.prior = LaplacePrior()
 
         if self.agg_pool:
             if mha_layer.func == QKVHyperNet:
@@ -142,7 +144,7 @@ class FlowSpartan(nn.Module):
                 bidirectional=bidirectional,
                 prior_params=prior_params,
                 flow_params=flow_params,
-                nf_prior=nf_prior,
+                prior_type=prior_type,
                 residual=residual,
                 layernorm=layernorm,
             )
@@ -244,11 +246,13 @@ class FlowSpartan(nn.Module):
             attn_matrices.append(agg_attn)
             masks = torch.bmm(final_mask, masks)
 
-        if not self.per_mask_prior and self.training:
+        if not self.per_mask_prior and self.training and self.prior_type == 'laplace':
             priors = self.prior().log_prob(masks.sum(dim=(1, 2))) / self.max_paths
+        elif not self.per_mask_prior and self.training and self.prior_type == 'uniform':
+            priors = torch.tensor([1.0], device=self.device).expand_as(ladjs)
         
         if self.training:
-            gen_loss = priors.mean() - ladjs.mean()
+            gen_loss = (priors - ladjs).mean()
         else:
             gen_loss = None
         return out, masks, attn_matrices, gen_loss if self.training else None

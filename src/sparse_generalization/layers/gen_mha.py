@@ -27,7 +27,7 @@ class FlowMasking(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
         bias: float = 0.5,
-        nf_prior: bool = True,
+        prior_type: str = 'laplace',
         per_mask_prior: bool = False, 
         *args,
         **kwargs,
@@ -68,15 +68,17 @@ class FlowMasking(nn.Module):
             nn.Linear(latent_dim, 128), nn.ReLU(), nn.Linear(128, seq_len)
         )
 
-        self.nf_prior = nf_prior
-        if self.nf_prior:
+        self.prior_type = prior_type
+        if self.prior_type == 'nf':
             self.prior = zuko.flows.NSF(
                 features=latent_dim,
                 transforms=prior_params["n_flows"],
                 hidden_features=prior_params["hidden_features"],
             )
-        else:
+        elif self.prior_type == 'laplace':
             self.prior = LaplacePrior()
+        else:
+            self.prior = nn.Identity()
 
         base_flow = zuko.flows.NSF(
             features=latent_dim,
@@ -144,7 +146,7 @@ class FlowMasking(nn.Module):
 
         if self.training:
             latent_nf, ladj = transform.rsample_and_log_prob()
-            if self.nf_prior:
+            if self.prior_type == 'nf':
                 prior = self.prior().log_prob(latent_nf)
         else:
             latent_nf = transform.sample()
@@ -159,8 +161,10 @@ class FlowMasking(nn.Module):
         A = gumbel_softmax(edges_logit, tau=1.0, hard=True)  
         A = A[:, :, -1].view(batch_size, heads, seq_len, seq_len) 
 
-        if not self.nf_prior and self.training and self.per_mask_prior:
+        if self.prior_type == 'laplace' and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(A.sum(dim=(-2, -1)))
+        elif self.prior_type == 'uniform' and self.training and self.per_mask_prior:
+            prior = torch.tensor([1.0], device=query.device).expand_as(ladj)
 
         masked_attention_probs = A * attention_probs
         hidden_repr = torch.matmul(masked_attention_probs, value)

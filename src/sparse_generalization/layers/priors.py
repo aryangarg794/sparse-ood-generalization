@@ -17,3 +17,4 @@ class LaplacePrior(zuko.lazy.LazyDistribution):
 
     def forward(self, c = None):
         return torch.distributions.Laplace(loc=self.loc, scale=self.scale)
+    
