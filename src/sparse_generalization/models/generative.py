@@ -11,8 +11,8 @@ from tqdm import tqdm
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockGen
-from sparse_generalization.layers.gen_mha import FlowMasking, QKVHyperNet
-from sparse_generalization.layers.agg_attention import AggregationFlow, AggregationQKV
+from sparse_generalization.layers.gen_mha import FlowMasking, FlowMHA
+from sparse_generalization.layers.agg_attention import AggregationFlowMHA, AggregationFlowMask
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
 from sparse_generalization.utils.util_funcs import (
     positionalencoding2d,
@@ -126,10 +126,10 @@ class FlowSpartan(nn.Module):
             self.prior = LaplacePrior()
 
         if self.agg_pool:
-            if mha_layer.func == QKVHyperNet:
-                agg_layer = AggregationQKV
+            if mha_layer.func == FlowMHA:
+                agg_layer = AggregationFlowMHA
             else:
-                agg_layer = AggregationFlow
+                agg_layer = AggregationFlowMask
 
             self.out = agg_layer(
                 out_dim=out_dim,
@@ -184,6 +184,8 @@ class FlowSpartan(nn.Module):
             self.max_paths = compute_max_paths(
                 width * height, self.num_heads, self.num_layers, self.agg_pool
             )
+
+            print(f"MAX PATHS: {self.max_paths}")
 
         if self.embedding_inp:
             assert x.size(3) == 1, "channels is not 1 for shapes input"
@@ -248,11 +250,13 @@ class FlowSpartan(nn.Module):
 
         if not self.per_mask_prior and self.training and self.prior_type == 'laplace':
             priors = self.prior().log_prob(masks.sum(dim=(1, 2))) / self.max_paths
+        if not self.per_mask_prior and self.training and self.prior_type == 'a_laplace':
+            priors = -self._enforce_sparsity(masks)
         elif not self.per_mask_prior and self.training and self.prior_type == 'uniform':
             priors = torch.tensor([1.0], device=self.device).expand_as(ladjs)
         
         if self.training:
-            gen_loss = (priors - ladjs).mean()
+            gen_loss = (priors - 0.001 * ladjs).mean()
         else:
             gen_loss = None
         return out, masks, attn_matrices, gen_loss if self.training else None

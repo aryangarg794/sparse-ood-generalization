@@ -8,7 +8,7 @@ from typing import List, Self
 from sparse_generalization.models.mlp import BasicMLP
 from sparse_generalization.layers.bern_mha import MultiHeadAttentionBern
 from sparse_generalization.layers.oracle import MultiHeadAttentionOracle
-from sparse_generalization.layers.gen_mha import FlowMasking, QKVHyperNet
+from sparse_generalization.layers.gen_mha import FlowMasking, FlowMHA
 
 
 class MHABlock(nn.Module):
