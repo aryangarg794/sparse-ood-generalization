@@ -406,10 +406,10 @@ class FlowDirectA(nn.Module):
         self.encoder = nn.Linear(latent_dim, latent_dim * num_heads)
 
         self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 128), nn.ReLU(), nn.Linear(128,  embed_size)
+            nn.Linear(latent_dim, 128), nn.ReLU(), nn.Linear(128,  seq_len)
         )
         self.attention_weights = nn.init.xavier_uniform_(
-            nn.Parameter(torch.zeros(embed_size, embed_size))
+            nn.Parameter(torch.zeros(seq_len, seq_len))
         )
         self.values = nn.Linear(embed_size, embed_size)
         self.projection = nn.Linear(embed_size, embed_size)
@@ -541,7 +541,7 @@ class FlowOnlyQK(nn.Module):
         **kwargs,
     ):
 
-        super(FlowDirectA, self).__init__(*args, **kwargs)
+        super(FlowOnlyQK, self).__init__(*args, **kwargs)
 
         if embed_size % num_heads != 0:
             raise SyntaxError(
@@ -658,7 +658,7 @@ class FlowOnlyQK(nn.Module):
             latent_nf = transform.sample()
 
         gq, gk = torch.chunk(
-            self.decoder(latent_nf), chunks=4, dim=-1
+            self.decoder(latent_nf), chunks=2, dim=-1
         )
         vq_dir = F.normalize(self.Wq, dim=-1)
         vk_dir = F.normalize(self.Wk, dim=-1)

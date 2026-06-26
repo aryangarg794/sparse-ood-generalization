@@ -11,8 +11,8 @@ from tqdm import tqdm
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockGen
-from sparse_generalization.layers.gen_mha import FlowMasking, FlowMHA
-from sparse_generalization.layers.agg_attention import AggregationFlowMHA, AggregationFlowMask
+from sparse_generalization.layers.gen_mha import FlowMasking, FlowMHA, FlowDirectA, FlowOnlyQK
+from sparse_generalization.layers.agg_attention import AggregationFlowMHA, AggregationFlowMask, AggregationFlowDirectA, AggregationFlowOnlyQK
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
 from sparse_generalization.utils.util_funcs import (
     positionalencoding2d,
@@ -127,9 +127,17 @@ class FlowSpartan(nn.Module):
 
         if self.agg_pool:
             if mha_layer.func == FlowMHA:
+                print('Using FlowMHA')
                 agg_layer = AggregationFlowMHA
-            else:
+            elif mha_layer.func == FlowMasking:
+                print('Using FlowMasking')
                 agg_layer = AggregationFlowMask
+            elif mha_layer.func == FlowDirectA:
+                print('Using FlowDirectA')
+                agg_layer = AggregationFlowDirectA
+            elif mha_layer.func == FlowOnlyQK:
+                print('Using FlowOnlyQK')
+                agg_layer = AggregationFlowOnlyQK
 
             self.out = agg_layer(
                 out_dim=out_dim,
@@ -256,7 +264,7 @@ class FlowSpartan(nn.Module):
             priors = torch.tensor([1.0], device=self.device).expand_as(ladjs)
         
         if self.training:
-            gen_loss = (priors - 0.001 * ladjs).mean()
+            gen_loss = (priors - ladjs).mean()
         else:
             gen_loss = None
         return out, masks, attn_matrices, gen_loss if self.training else None

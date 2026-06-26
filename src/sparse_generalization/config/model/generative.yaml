@@ -37,5 +37,5 @@ beta2: 0.999
 
 mha_layer:
   _partial_: true
-  _target_: sparse_generalization.layers.gen_mha.FlowMHA
+  _target_: sparse_generalization.layers.gen_mha.FlowOnlyQK
   

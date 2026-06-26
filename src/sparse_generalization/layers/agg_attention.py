@@ -597,11 +597,11 @@ class AggregationFlowDirectA(nn.Module):
         self.encoder = nn.Linear(latent_dim, latent_dim * num_heads)
 
         self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 128), nn.ReLU(), nn.Linear(128, 4 * embed_size)
+            nn.Linear(latent_dim, 128), nn.ReLU(), nn.Linear(128, 1)
         )
 
         self.attention_weights = nn.init.xavier_uniform_(
-            nn.Parameter(torch.zeros(embed_size, embed_size))
+            nn.Parameter(torch.zeros(1, seq_len))
         )
         self.values = nn.Linear(embed_size, embed_size)
         self.projection = nn.Linear(embed_size, embed_size)
@@ -691,7 +691,7 @@ class AggregationFlowDirectA(nn.Module):
 
         g = self.decoder(latent_nf)
         attn_dir = F.normalize(self.attention_weights, dim=-1).unsqueeze(0).expand(batch_heads, -1, -1)
-        attention_logits = g.view(-1, seq_len, 1) * attn_dir
+        attention_logits = g.view(-1, 1, 1) * attn_dir
 
         values = self.values(value)
         values_split = self._split_heads(values)
@@ -855,7 +855,7 @@ class AggregationFlowOnlyQK(nn.Module):
             latent_nf = transform.sample()
 
         gq, gk = torch.chunk(
-            self.decoder(latent_nf), chunks=4, dim=-1
+            self.decoder(latent_nf), chunks=2, dim=-1
         )
         vq_dir = F.normalize(self.Wq, dim=-1)
         vk_dir = F.normalize(self.Wk, dim=-1)
@@ -883,6 +883,7 @@ class AggregationFlowOnlyQK(nn.Module):
 
         attention_repr = self._merge_heads(hidden_repr.view(-1, self.heads, 1, self.dk))
         attention_repr = self.projection(attention_repr)
+        
 
         return (
             attention_repr,
