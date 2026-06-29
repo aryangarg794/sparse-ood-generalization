@@ -167,8 +167,8 @@ def main(cfg: DictConfig):
 
             if cfg.save:
                 torch.save(
-                    {"model": model.state_dict(), "hparams": cfg.model},
-                    f"checkpoints/{cfg.run_name}_{timestamp}.pt",
+                    {"model": model.state_dict(), "hparams": model.hyper_params},
+                    f"checkpoints/{cfg.run_name}_seed{seed}_{timestamp}.pt",
                 )
 
             results[seed]["train_loss"] = losses

@@ -65,6 +65,11 @@ class FlowSpartan(nn.Module):
         *args,
         **kwargs,
     ):
+        self.hyper_params = locals()
+
+        for key in ["self", "__class__", "args", "kwargs"]:
+            del self.hyper_params[key]
+        
         super().__init__(*args, **kwargs)
         self.device = device
         self.logger = logger
@@ -122,6 +127,8 @@ class FlowSpartan(nn.Module):
             )
 
         self.prior_type = prior_type
+        non_mask_flow = mha_layer.func == FlowMHA or mha_layer.func == FlowOnlyQK or mha_layer.func == FlowDirectA
+        assert self.prior_type != "a_laplace" and not non_mask_flow, "non mask flow doesn't support laplace"
         if self.prior_type == 'laplace':
             self.prior = LaplacePrior()
 
@@ -177,7 +184,7 @@ class FlowSpartan(nn.Module):
         self.step_size = step_size
         self.val_to_name = val_to_name
         self.beta = beta
-        self.args = locals()
+        
 
     def _enforce_sparsity(self, attns):
         num_edges = attns.sum(dim=(1, 2)) / self.max_paths

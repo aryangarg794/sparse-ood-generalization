@@ -19,7 +19,7 @@ flow_params:
 prior_params:
   n_flows: 2
   hidden_features: [32, 32]
-prior_type: a_laplace
+prior_type: uniform
 include_sparsity: false
 lr: 1e-3
 token_pool: false
@@ -32,10 +32,10 @@ beta: 1.0
 sinusoidal: true
 dropout: 0.0
 device: cuda
-beta1: 0.99
+beta1: 0.9
 beta2: 0.999
 
 mha_layer:
   _partial_: true
-  _target_: sparse_generalization.layers.gen_mha.FlowOnlyQK
+  _target_: sparse_generalization.layers.gen_mha.FlowMasking
   

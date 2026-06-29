@@ -61,6 +61,11 @@ class SPARTAN(nn.Module):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        self.hyper_params = locals()
+
+        for key in ["self", "__class__", "args", "kwargs"]:
+            del self.hyper_params[key]
+
         self.device = device
         self.logger = logger
         self.model_dim = model_dim
@@ -155,7 +160,6 @@ class SPARTAN(nn.Module):
 
         self.alpha_res = alpha_res
         self.val_to_name = val_to_name
-        self.args = locals()
 
     def _enforce_sparsity(self, attns):
         num_edges = attns.sum(dim=(1, 2)) / self.max_paths
@@ -559,6 +563,7 @@ class OracleTransformer(nn.Module):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        
         self.logger = logger
         self.model_dim = model_dim
 
