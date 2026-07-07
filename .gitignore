@@ -6,3 +6,4 @@
 .env
 plots
 job_scripts
+data/mnist
