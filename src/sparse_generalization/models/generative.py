@@ -11,8 +11,18 @@ from tqdm import tqdm
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockGen
-from sparse_generalization.layers.gen_mha import FlowMasking, FlowMHA, FlowDirectA, FlowOnlyQK
-from sparse_generalization.layers.agg_attention import AggregationFlowMHA, AggregationFlowMask, AggregationFlowDirectA, AggregationFlowOnlyQK
+from sparse_generalization.layers.gen_mha import (
+    FlowMasking,
+    FlowMHA,
+    FlowDirectA,
+    FlowOnlyQK,
+)
+from sparse_generalization.layers.gen_agg_attn import (
+    AggregationFlowMHA,
+    AggregationFlowMask,
+    AggregationFlowDirectA,
+    AggregationFlowOnlyQK,
+)
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
 from sparse_generalization.utils.util_funcs import (
     positionalencoding2d,
@@ -20,7 +30,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_mask_mean,
     compute_max_paths,
 )
-from sparse_generalization.layers.priors import LaplacePrior
+from sparse_generalization.layers.priors import LaplacePrior, make_unit_gaussian
 
 
 class FlowSpartan(nn.Module):
@@ -31,10 +41,10 @@ class FlowSpartan(nn.Module):
         seq_len: int = 25,
         out_dim: int = 1,
         model_dim: int = 32,
-        latent_dim: int = 16,
-        lstm_layers: int = 1,
         num_heads: int = 1,
         num_layers: int = 4,
+        use_mask: bool = False,
+        separate_mask: bool = False,
         agg_pool: bool = False,
         residual: bool = True,
         include_sparsity: bool = False,
@@ -45,13 +55,12 @@ class FlowSpartan(nn.Module):
         step_size: float = 1e-1,
         pe: bool = True,
         sinusoidal: bool = True,
-        bidirectional: bool = True,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (128, 128)},
-        prior_type: str = 'laplace',
-        per_mask_prior: bool = False, 
+        prior_type: str = "laplace",
+        per_mask_prior: bool = False,
         embedding_inp: bool = True,
-        beta: float = 1.0, 
+        beta: float = 1.0,
         lr: float = 1e-3,
         dropout: float = 0.1,
         layernorm: bool = True,
@@ -69,7 +78,7 @@ class FlowSpartan(nn.Module):
 
         for key in ["self", "__class__", "args", "kwargs"]:
             del self.hyper_params[key]
-        
+
         super().__init__(*args, **kwargs)
         self.device = device
         self.logger = logger
@@ -110,62 +119,67 @@ class FlowSpartan(nn.Module):
                 MHABlockGen(
                     embed_size,
                     seq_len=seq_len,
+                    base_dist=make_unit_gaussian(seq_len),
                     mha_layer=mha_layer,
-                    latent_dim=latent_dim,
                     num_heads=num_heads,
                     dropout=dropout,
                     act=act,
-                    per_mask_prior=per_mask_prior, 
-                    lstm_layers=lstm_layers,
-                    bidirectional=bidirectional,
+                    per_mask_prior=per_mask_prior,
+                    separate_mask=separate_mask,
+                    use_mask=use_mask,
                     prior_params=prior_params,
                     flow_params=flow_params,
                     prior_type=prior_type,
                     residual=residual,
                     layernorm=layernorm,
+                    device=device,
                 )
             )
 
         self.prior_type = prior_type
-        non_mask_flow = mha_layer.func == FlowMHA or mha_layer.func == FlowOnlyQK or mha_layer.func == FlowDirectA
-        assert self.prior_type != "a_laplace" and not non_mask_flow, "non mask flow doesn't support laplace"
-        if self.prior_type == 'laplace':
+        non_mask_flow = (
+            mha_layer.func == FlowMHA
+            or mha_layer.func == FlowOnlyQK
+            or mha_layer.func == FlowDirectA
+        )
+        assert (
+            self.prior_type != "a_laplace" and not non_mask_flow
+        ), "non mask flow doesn't support laplace"
+        if self.prior_type == "laplace":
             self.prior = LaplacePrior()
 
         if self.agg_pool:
             if mha_layer.func == FlowMHA:
-                print('Using FlowMHA')
+                print("Using FlowMHA")
                 agg_layer = AggregationFlowMHA
             elif mha_layer.func == FlowMasking:
-                print('Using FlowMasking')
+                print("Using FlowMasking")
                 agg_layer = AggregationFlowMask
             elif mha_layer.func == FlowDirectA:
-                print('Using FlowDirectA')
+                print("Using FlowDirectA")
                 agg_layer = AggregationFlowDirectA
             elif mha_layer.func == FlowOnlyQK:
-                print('Using FlowOnlyQK')
+                print("Using FlowOnlyQK")
                 agg_layer = AggregationFlowOnlyQK
 
             self.out = agg_layer(
                 out_dim=out_dim,
                 act=act,
+                base_dist=make_unit_gaussian(1),
                 dropout=dropout,
                 embed_size=embed_size,
                 seq_len=seq_len,
-                latent_dim=latent_dim,
+                separate_mask=separate_mask,
+                use_mask=use_mask,
                 per_mask_prior=per_mask_prior,
                 num_heads=num_heads,
-                lstm_layers=lstm_layers,
-                bidirectional=bidirectional,
                 prior_params=prior_params,
                 flow_params=flow_params,
                 prior_type=prior_type,
                 residual=residual,
                 layernorm=layernorm,
+                device=device,
             )
-        elif self.token_pool:
-            self.cls = nn.Parameter(torch.rand(1, self.embed_size, device=self.device))
-            self.out = nn.Linear(self.embed_size, out_dim)
         else:
             self.out = nn.Linear(self.embed_size, out_dim)
 
@@ -184,7 +198,6 @@ class FlowSpartan(nn.Module):
         self.step_size = step_size
         self.val_to_name = val_to_name
         self.beta = beta
-        
 
     def _enforce_sparsity(self, attns):
         num_edges = attns.sum(dim=(1, 2)) / self.max_paths
@@ -213,9 +226,10 @@ class FlowSpartan(nn.Module):
         if self.pe:
             device = x.device
             if self.sinusoidal:
-                embeddings = (
-                    positionalencoding2d(self.embed_size, height=height, width=width, device=self.device) # returns (dim, h, w)
-                    .permute(2, 1, 0)
+                embeddings = positionalencoding2d(
+                    self.embed_size, height=height, width=width, device=self.device
+                ).permute(  # returns (dim, h, w)
+                    2, 1, 0
                 )
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
@@ -235,7 +249,7 @@ class FlowSpartan(nn.Module):
             if self.training:
                 x_attn, mask, attn, prior, ladj = layer(x_attn)
                 if self.per_mask_prior:
-                    priors += prior 
+                    priors += prior
                 ladjs += ladj
             else:
                 x_attn, mask, attn = layer(x_attn)
@@ -250,7 +264,7 @@ class FlowSpartan(nn.Module):
             if self.training:
                 out, final_mask, agg_attn, prior, ladj = self.out(x_attn)
                 if self.per_mask_prior:
-                    priors += prior 
+                    priors += prior
                 ladjs += ladj
             else:
                 out, final_mask, agg_attn = self.out(x_attn)
@@ -263,15 +277,15 @@ class FlowSpartan(nn.Module):
             attn_matrices.append(agg_attn)
             masks = torch.bmm(final_mask, masks)
 
-        if not self.per_mask_prior and self.training and self.prior_type == 'laplace':
+        if not self.per_mask_prior and self.training and self.prior_type == "laplace":
             priors = self.prior().log_prob(masks.sum(dim=(1, 2))) / self.max_paths
-        if not self.per_mask_prior and self.training and self.prior_type == 'a_laplace':
+        if not self.per_mask_prior and self.training and self.prior_type == "a_laplace":
             priors = -self._enforce_sparsity(masks)
-        elif not self.per_mask_prior and self.training and self.prior_type == 'uniform':
+        elif not self.per_mask_prior and self.training and self.prior_type == "uniform":
             priors = torch.tensor([1.0], device=self.device).expand_as(ladjs)
-        
+
         if self.training:
-            gen_loss = (priors - ladjs).mean()
+            gen_loss = (ladjs - priors).mean()
         else:
             gen_loss = None
         return out, masks, attn_matrices, gen_loss if self.training else None
@@ -311,9 +325,9 @@ class FlowSpartan(nn.Module):
                 if self.include_sparsity:
                     sparse_loss = self._enforce_sparsity(masks)
                     epoch_sparse += sparse_loss.item()
-                    loss = rec_loss - self.beta * gen_loss + sparse_loss
+                    loss = rec_loss + self.beta * gen_loss + sparse_loss
                 else:
-                    loss = rec_loss - self.beta * gen_loss
+                    loss = rec_loss + self.beta * gen_loss
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -367,13 +381,17 @@ class FlowSpartan(nn.Module):
                 test_metrics = self.test(name, loader, folder="val")
                 if "id" in name:
                     postfix["val_id"] = test_metrics["acc"]
+                elif "a" in name:
+                    postfix["val_a"] = test_metrics["acc"]
+                elif "b" in name:
+                    postfix["val_b"] = test_metrics["acc"]
                 masks_test[name].append(test_metrics["mask"])
                 attn_test[name].append(test_metrics["attn"])
                 losses_test[name].append(test_metrics["loss"])
                 accs_test[name].append(test_metrics["acc"])
 
             postfix["mask_edges"] = mask_running
-            postfix["attn_edges"] = attn_running
+            # postfix["attn_edges"] = attn_running
 
             # if self.agg_pool:
             #     self.out.temp_decay(step, num_epochs)

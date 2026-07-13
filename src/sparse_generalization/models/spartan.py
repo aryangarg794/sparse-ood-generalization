@@ -48,7 +48,7 @@ class SPARTAN(nn.Module):
         layernorm: bool = False,
         epsilon_greedy: bool = False,
         start_eps: float = 0.5,
-        end_eps: float = 0.05,  
+        end_eps: float = 0.05,
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
         num_embeddings: int = 64,
@@ -184,9 +184,10 @@ class SPARTAN(nn.Module):
         if self.pe:
             device = x.device
             if self.sinusoidal:
-                embeddings = (
-                    positionalencoding2d(self.embed_size, height=height, width=width, device=self.device) # returns (dim, h, w)
-                    .permute(2, 1, 0)
+                embeddings = positionalencoding2d(
+                    self.embed_size, height=height, width=width, device=self.device
+                ).permute(  # returns (dim, h, w)
+                    2, 1, 0
                 )
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
@@ -212,9 +213,10 @@ class SPARTAN(nn.Module):
             masks = torch.bmm(mask, masks)
             mask_matrices.append(mask.detach())
 
-
         if self.agg_pool:
-            out, final_mask, mask_attn, agg_attn = self.out(x_attn, forced_expl=forced_expl)
+            out, final_mask, mask_attn, agg_attn = self.out(
+                x_attn, forced_expl=forced_expl
+            )
         elif self.token_pool:
             out = self.out(x_attn[:, -1, :])
         else:
@@ -226,7 +228,13 @@ class SPARTAN(nn.Module):
             masks = torch.bmm(final_mask, masks)
             mask_matrices.append(final_mask.detach())
 
-        return out, masks, mask_attn_matrices, attn_matrices, mask_matrices  # (b, k, l, l)
+        return (
+            out,
+            masks,
+            mask_attn_matrices,
+            attn_matrices,
+            mask_matrices,
+        )  # (b, k, l, l)
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []
@@ -499,7 +507,7 @@ class SPARTAN(nn.Module):
     def _compute_attn_mean(self, all_attn: Tensor):
         seq_len = all_attn[0].size(0)
         thresh_list = [
-            (attn > 1/seq_len).float() for attn in all_attn
+            (attn > 1 / seq_len).float() for attn in all_attn
         ]  # list of (b, l, l)
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
@@ -512,11 +520,13 @@ class SPARTAN(nn.Module):
         return all_masks.sum(dim=(1, 2)).mean().item()
 
     def _compute_max_paths(self, seq_len: int):
-        paths = torch.ones((seq_len, seq_len)) * self.num_heads 
+        paths = torch.ones((seq_len, seq_len)) * self.num_heads
         paths = paths + torch.eye(seq_len) if self.residual else paths
         for l in range(self.num_layers - 1):
-            multiplier = torch.ones((seq_len, seq_len)) * self.num_heads 
-            multiplier = multiplier + torch.eye(seq_len) if self.residual else multiplier
+            multiplier = torch.ones((seq_len, seq_len)) * self.num_heads
+            multiplier = (
+                multiplier + torch.eye(seq_len) if self.residual else multiplier
+            )
             paths = paths @ multiplier
 
         if self.agg_pool:
@@ -563,7 +573,7 @@ class OracleTransformer(nn.Module):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        
+
         self.logger = logger
         self.model_dim = model_dim
 

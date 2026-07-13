@@ -66,7 +66,7 @@ class MultiHeadAttentionBern(nn.Module):
         values: Tensor,
         avg_attn_heads: bool = True,
         avg_mask: bool = True,
-        forced_expl: bool = False
+        forced_expl: bool = False,
     ):
         queries = self.queries(queries)  # (b, l, d)
         keys = self.keys(keys)
@@ -82,13 +82,15 @@ class MultiHeadAttentionBern(nn.Module):
             keys_mask = self.keys_mask(keys)
             keys_mask_split = self._split_heads(keys_mask)
 
-        attention_repr, mask_per_head, mask_attn_per_head, attn_per_head = self._attention(
-            queries_split,
-            keys_split,
-            values_split,
-            queries_mask_split if self.separate_mask else None,
-            keys_mask_split if self.separate_mask else None,
-            forced_expl=forced_expl
+        attention_repr, mask_per_head, mask_attn_per_head, attn_per_head = (
+            self._attention(
+                queries_split,
+                keys_split,
+                values_split,
+                queries_mask_split if self.separate_mask else None,
+                keys_mask_split if self.separate_mask else None,
+                forced_expl=forced_expl,
+            )
         )
 
         attention_repr = self._merge_heads(attention_repr)  # (b, l, d)
@@ -98,7 +100,7 @@ class MultiHeadAttentionBern(nn.Module):
             mask_attn_per_head = mask_attn_per_head.sum(dim=1)
             adjacency = attn_per_head.sum(dim=1)
 
-        if avg_mask: 
+        if avg_mask:
             mask = mask_per_head.sum(dim=1)
 
         return attention_repr, mask, mask_attn_per_head, adjacency
@@ -117,7 +119,7 @@ class MultiHeadAttentionBern(nn.Module):
             x.reshape(batch_size, self.heads, seq_len, self.dk)
             .transpose(1, 2)
             .reshape(batch_size, seq_len, self.dk * self.heads)
-        )  
+        )
 
     def _attention(
         self: Self,
@@ -126,7 +128,7 @@ class MultiHeadAttentionBern(nn.Module):
         value: Tensor,
         query_mask: Tensor,
         keys_mask: Tensor,
-        forced_expl: bool = False
+        forced_expl: bool = False,
     ):
         batch_heads, seq_len, _ = query.size()
         attention_logits = torch.bmm(query, key.transpose(1, 2)) / np.sqrt(
@@ -138,7 +140,9 @@ class MultiHeadAttentionBern(nn.Module):
         if self.zeros:
             A = torch.zeros((batch_heads, seq_len, seq_len), device=query.device)
         elif self.training and forced_expl:
-            A = torch.randint(0, 2, size=(batch_heads, seq_len, seq_len), device=query.device)
+            A = torch.randint(
+                0, 2, size=(batch_heads, seq_len, seq_len), device=query.device
+            )
         elif self.separate_mask:
             mask_logits = torch.bmm(query_mask, keys_mask.transpose(1, 2)) / np.sqrt(
                 self.dk
@@ -162,7 +166,7 @@ class MultiHeadAttentionBern(nn.Module):
             A = A[:, :, -1]  # get the mask value for class 1 (if there is edge)
 
         A = A.view(-1, seq_len, seq_len)
-        
+
         masked_attention_probs = A * attention_probs  # (b*h, l, l)
 
         hidden_repr = torch.bmm(masked_attention_probs, value)  # (b*h, l, d)

@@ -6,7 +6,7 @@ from torch import Tensor
 
 
 # https://github.com/wzlxjtu/PositionalEncoding2D/blob/master/positionalembedding2d.py
-def positionalencoding2d(d_model, height, width, device='cuda'):
+def positionalencoding2d(d_model, height, width, device="cuda"):
     if d_model % 4 != 0:
         raise ValueError(
             "Cannot use sin/cos positional encoding with "
@@ -15,7 +15,9 @@ def positionalencoding2d(d_model, height, width, device='cuda'):
     pe = torch.zeros(d_model, height, width, device=device)
     # Each dimension use half of d_model
     d_model = int(d_model / 2)
-    div_term = torch.exp(torch.arange(0.0, d_model, 2, device=device) * -(math.log(10000.0) / d_model))
+    div_term = torch.exp(
+        torch.arange(0.0, d_model, 2, device=device) * -(math.log(10000.0) / d_model)
+    )
     pos_w = torch.arange(0.0, width, device=device).unsqueeze(1)
     pos_h = torch.arange(0.0, height, device=device).unsqueeze(1)
     pe[0:d_model:2, :, :] = (

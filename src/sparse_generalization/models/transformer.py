@@ -198,10 +198,9 @@ class TransformerLit(pl.LightningModule):
         if self.pe:
             device = x.device
             if self.sinusoidal:
-                embeddings = (
-                    positionalencoding2d(self.embed_size, height=height, width=width, device=self.device)
-                    .permute(2, 1, 0)
-                )
+                embeddings = positionalencoding2d(
+                    self.embed_size, height=height, width=width, device=self.device
+                ).permute(2, 1, 0)
                 x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
             else:

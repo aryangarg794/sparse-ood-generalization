@@ -10,20 +10,19 @@ seq_len: 25
 embedding_inp: false
 num_heads: 1
 num_layers: 1
-latent_dim: 16
-lstm_layers: 1
-bidirectional: false
+separate_mask: false
+use_mask: false
 flow_params:
   n_flows: 2
   hidden_features: [128, 128]
 prior_params:
   n_flows: 2
   hidden_features: [32, 32]
-prior_type: uniform
+prior_type: nf
 include_sparsity: false
 lr: 1e-3
 token_pool: false
-per_mask_prior: false
+per_mask_prior: true
 alpha: 0.25
 residual: true
 num_embeddings: 25

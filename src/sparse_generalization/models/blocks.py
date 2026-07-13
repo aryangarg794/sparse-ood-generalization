@@ -1,6 +1,7 @@
 from hydra.utils import instantiate
 import torch
 import torch.nn as nn
+import zuko
 
 from torch import Tensor
 from typing import List, Self
@@ -45,7 +46,7 @@ class MHABlock(nn.Module):
         return self._forward_image(x)
 
     def _forward_image(self: Self, x: Tensor):
-        
+
         if self.layernorm:
             x_ln = self.ln1(x)
             attn_out, attn_scores = self.mha(x_ln, x_ln, x_ln)
@@ -130,7 +131,9 @@ class MHABlockBern(nn.Module):
 
         if self.layernorm:
             x_ln = self.ln1(x)
-            attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(x_ln, x_ln, x_ln, forced_expl=forced_expl)
+            attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(
+                x_ln, x_ln, x_ln, forced_expl=forced_expl
+            )
             if self.mask_res:
                 diags = attn_masks.diagonal(dim1=-2, dim2=-1)
                 x = x * diags.unsqueeze(dim=-1)  # (B, L, L) * (B, L, D)
@@ -165,18 +168,19 @@ class MHABlockGen(nn.Module):
         embed_size: int,
         act: nn.Module,
         seq_len: int,
-        latent_dim: int,
         dropout: int,
         layernorm: bool,
+        base_dist: zuko.lazy.LazyDistribution,
         residual: bool,
-        lstm_layers: int = 1,
+        separate_mask: bool,
         num_heads: int = 1,
+        use_mask: bool = False,
         mha_layer: nn.Module = FlowMasking,
-        bidirectional: bool = True,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
-        prior_type: str = 'laplace',
-        per_mask_prior: bool = False, 
+        prior_type: str = "laplace",
+        per_mask_prior: bool = False,
+        device: str = "cuda",
         *args,
         **kwargs,
     ):
@@ -188,14 +192,15 @@ class MHABlockGen(nn.Module):
         self.mha = mha_layer(
             embed_size,
             seq_len=seq_len,
-            latent_dim=latent_dim,
             num_heads=num_heads,
-            dropout=dropout,
-            lstm_layers=lstm_layers,
-            bidirectional=bidirectional,
+            base_dist=base_dist,
+            separate_mask=separate_mask,
             prior_params=prior_params,
+            layernorm=layernorm,
+            use_mask=use_mask,
             flow_params=flow_params,
-            per_mask_prior=per_mask_prior, 
+            device=device,
+            per_mask_prior=per_mask_prior,
             prior_type=prior_type,
         )
 
@@ -212,11 +217,13 @@ class MHABlockGen(nn.Module):
         return self._forward_image(x)
 
     def _forward_image(self: Self, x: Tensor):
-        
+
         if self.layernorm:
             x_ln = self.ln1(x)
             if self.training:
-                attn_out, attn_masks, attn_scores, prior, ladj = self.mha(x_ln, x_ln, x_ln)
+                attn_out, attn_masks, attn_scores, prior, ladj = self.mha(
+                    x_ln, x_ln, x_ln
+                )
             else:
                 attn_out, attn_masks, attn_scores = self.mha(x_ln, x_ln, x_ln)
             if self.residual:
