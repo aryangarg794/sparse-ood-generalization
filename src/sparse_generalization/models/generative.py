@@ -143,7 +143,7 @@ class FlowSpartan(nn.Module):
             or mha_layer.func == FlowDirectA
         )
         assert (
-            self.prior_type != "a_laplace" and not non_mask_flow
+            (self.prior_type != "a_laplace" and non_mask_flow) or (not non_mask_flow)
         ), "non mask flow doesn't support laplace"
         if self.prior_type == "laplace":
             self.prior = LaplacePrior()
@@ -288,6 +288,7 @@ class FlowSpartan(nn.Module):
             gen_loss = (ladjs - priors).mean()
         else:
             gen_loss = None
+        
         return out, masks, attn_matrices, gen_loss if self.training else None
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
@@ -337,7 +338,7 @@ class FlowSpartan(nn.Module):
                 with torch.no_grad():
                     acc = self.accuracy(out, y)
                     epoch_acc += acc.item()
-
+                    
                     attn_running += compute_attn_mean(
                         attns, self.threshold, self.device
                     )

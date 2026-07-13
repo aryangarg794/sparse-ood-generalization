@@ -13,16 +13,16 @@ num_layers: 1
 separate_mask: false
 use_mask: false
 flow_params:
-  n_flows: 2
-  hidden_features: [128, 128]
+  n_flows: 3
+  hidden_features: [256, 256]
 prior_params:
-  n_flows: 2
-  hidden_features: [32, 32]
-prior_type: nf
+  n_flows: 3
+  hidden_features: [128, 128]
+prior_type: uniform
 include_sparsity: false
 lr: 1e-3
 token_pool: false
-per_mask_prior: true
+per_mask_prior: false
 alpha: 0.25
 residual: true
 num_embeddings: 25
@@ -31,10 +31,9 @@ beta: 1.0
 sinusoidal: true
 dropout: 0.0
 device: cuda
-beta1: 0.9
+beta1: 0.95
 beta2: 0.999
 
 mha_layer:
   _partial_: true
-  _target_: sparse_generalization.layers.gen_mha.FlowMasking
-  
+  _target_: sparse_generalization.layers.gen_mha.FlowOnlyQK

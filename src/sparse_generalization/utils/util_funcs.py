@@ -59,7 +59,7 @@ def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str = "
     batch_size, seq_len, _ = thresh_list[0].size()
     path = torch.eye(seq_len, device=device).repeat(batch_size, 1, 1)
     for attn in thresh_list:
-        path = attn @ path
+        path = torch.bmm(attn, path)
 
     return path.sum(dim=(1, 2)).mean().item()
 

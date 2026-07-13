@@ -11,7 +11,7 @@ from typing import Self
 from zuko.flows import Flow
 
 from sparse_generalization.layers.vae import FlowVAE
-from sparse_generalization.layers.priors import LaplacePrior
+from sparse_generalization.layers.priors import LaplacePrior, NormalPrior
 
 
 class AggregationFlowMask(nn.Module):
@@ -30,6 +30,7 @@ class AggregationFlowMask(nn.Module):
         residual: bool = False,
         prior_type: str = "laplace",
         per_mask_prior: bool = False,
+        bias: float = 0.5, 
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
         device: str = "cuda",
@@ -49,6 +50,7 @@ class AggregationFlowMask(nn.Module):
         self.dk = embed_size // num_heads
         self.layernorm = layernorm
         self.per_mask_prior = per_mask_prior
+        self.bias = bias
 
         self.query = nn.Parameter(torch.zeros((1, embed_size)))
         self.queries = nn.Linear(embed_size, embed_size)
@@ -60,13 +62,15 @@ class AggregationFlowMask(nn.Module):
 
         self.prior_type = prior_type
         if self.prior_type == "nf":
-            self.prior = zuko.flows.NSF(
-                features=1,
+            self.prior = zuko.flows.MAF(
+                features=4 * embed_size,
                 transforms=prior_params["n_flows"],
                 hidden_features=prior_params["hidden_features"],
             )
         elif self.prior_type == "laplace":
             self.prior = LaplacePrior()
+        elif self.prior_type == "normal":
+            self.prior = NormalPrior()
         else:
             self.prior = nn.Identity()
 
@@ -130,6 +134,10 @@ class AggregationFlowMask(nn.Module):
 
         if self.prior_type == "laplace" and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(A.sum(dim=(-2, -1)))
+        elif self.prior_type == "normal" and self.training and self.per_mask_prior:
+            prior = self.prior().log_prob(g).sum(dim=-1)
+        elif self.prior_type == "nf" and self.training and self.per_mask_prior:
+            prior = self.prior().log_prob(g)
         elif self.prior_type == "uniform" and self.training and self.per_mask_prior:
             prior = torch.tensor([1.0]).expand_as(ladj)
 
@@ -175,12 +183,10 @@ class AggregationFlowMHA(nn.Module):
         self,
         embed_size: int,
         seq_len: int,
-        latent_dim: int = 16,
+        base_dist: zuko.lazy.LazyDistribution,
         num_heads: int = 1,
         out_dim: int = 1,
-        lstm_layers: int = 1,
         dropout: float = 0.0,
-        bidirectional: bool = True,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
@@ -188,6 +194,9 @@ class AggregationFlowMHA(nn.Module):
         per_mask_prior: bool = False,
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
+        device: str = "cuda",
+        separate_mask: bool = False,
+        use_mask: bool = False,
         *args,
         **kwargs,
     ):
@@ -203,26 +212,13 @@ class AggregationFlowMHA(nn.Module):
         self.heads = num_heads
         self.dk = embed_size // num_heads
         self.layernorm = layernorm
+        self.per_mask_prior = per_mask_prior
 
         self.query = nn.Parameter(torch.zeros((1, embed_size)))
         nn.init.uniform_(self.query)
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
         self.values = nn.Linear(embed_size, embed_size)
-
-        self.encoder_lstm = nn.LSTM(
-            embed_size,
-            latent_dim // 2 if bidirectional else latent_dim,
-            num_layers=lstm_layers,
-            batch_first=True,
-            dropout=dropout,
-            bidirectional=bidirectional,
-        )
-        self.encoder = nn.Linear(latent_dim, latent_dim)
-
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 128), nn.ReLU(), nn.Linear(128, 4 * embed_size)
-        )
 
         self.Wq = nn.init.uniform_(nn.Parameter(torch.zeros(embed_size, embed_size)))
         self.Wk = nn.init.uniform_(nn.Parameter(torch.zeros(embed_size, embed_size)))
@@ -235,21 +231,37 @@ class AggregationFlowMHA(nn.Module):
             self.prior_type == "a_laplace" and per_mask_prior
         ), "Cant have both adaptive laplace and per mask prior"
         if self.prior_type == "nf":
-            self.prior = zuko.flows.NSF(
-                features=latent_dim,
+            self.prior = zuko.flows.MAF(
+                features=4 * embed_size,
                 transforms=prior_params["n_flows"],
                 hidden_features=prior_params["hidden_features"],
             )
+        elif self.prior_type == "laplace":
+            self.prior = LaplacePrior()
+        elif self.prior_type == "normal":
+            self.prior = NormalPrior()
         else:
             self.prior = nn.Identity()
 
         base_flow = zuko.flows.NSF(
-            features=latent_dim,
-            context=latent_dim,
+            features=4 * embed_size,
             transforms=flow_params["n_flows"],
             hidden_features=flow_params["hidden_features"],
         )
-        self.normalizing_flow = Flow(base_flow.transform.inv, base_flow.base)
+
+        self.param_flow = FlowVAE(
+            input_dim=embed_size,
+            output_dim=4 * embed_size,
+            base_dist=base_dist,
+            num_heads=num_heads,
+            encoder_heads=True,
+            use_encoder=True,
+            layernorm=layernorm,
+            device=device,
+            flow_params=flow_params,
+            use_mask=use_mask,
+            separate_mask=separate_mask,
+        )
 
         self.mlp = nn.Sequential(
             nn.Linear(embed_size, 4 * embed_size),
@@ -276,13 +288,33 @@ class AggregationFlowMHA(nn.Module):
 
     def forward(self, x: Tensor, sum_heads: bool = True):
         batch_size, seq_len, _ = x.size()
+        ladj, prior = 0, 0
 
-        out, _ = self.encoder_lstm(x)  # assume self-attn (b, k)
-        encoding = self.encoder(out[:, -1, :]).view(batch_size, -1)
+        batch_heads = self.heads * batch_size
+        g, ladj = self.param_flow(x)
+        gq, gk, gv, go = torch.chunk(g, chunks=4, dim=-1)
+        vq_dir = F.normalize(self.Wq, dim=-1)
+        vk_dir = F.normalize(self.Wk, dim=-1)
+        vv_dir = F.normalize(self.Wv, dim=-1)
+        vo_dir = F.normalize(self.Wo, dim=-1)
 
-        attention_repr, masks, attention_probs, ladj, prior = self._attention(
-            self.query.repeat(batch_size, 1, 1), x, x, encoding
+        Wq = gq.view(-1, self.embed_size, 1) * vq_dir
+        Wk = gk.view(-1, self.embed_size, 1) * vk_dir
+        Wv = gv.view(-1, self.embed_size, 1) * vv_dir
+        Wo = go.view(-1, self.embed_size, 1) * vo_dir
+
+        attention_repr, attention_probs = self._attention(
+            self.query.repeat(batch_size, 1, 1), x, x, Wq, Wk, Wv, Wo
         )
+
+        masks = torch.ones((batch_size, self.heads, 1, seq_len))
+
+        if self.prior_type == "normal" and self.training and self.per_mask_prior:
+            prior = self.prior().log_prob(g).sum(dim=-1)
+        elif self.prior_type == "nf" and self.training and self.per_mask_prior:
+            prior = self.prior().log_prob(g)
+        elif self.prior_type == "uniform" and self.training and self.per_mask_prior:
+            prior = torch.tensor([1.0], device=x.device).expand_as(ladj)
 
         if sum_heads:
             masks = masks.sum(dim=1)
@@ -299,33 +331,15 @@ class AggregationFlowMHA(nn.Module):
         query: Tensor,
         key: Tensor,
         value: Tensor,
-        encoding: Tensor,
+        query_mat: Tensor, 
+        key_mat: Tensor, 
+        value_mat: Tensor, 
+        proj_mat: Tensor
     ):
-        ladj, prior = 0, 0
-        batch_size, seq_len, _ = key.size()
-        transform = self.normalizing_flow(encoding)
-
-        if self.training:
-            latent_nf, ladj = transform.rsample_and_log_prob()
-            if self.prior_type == "nf":
-                prior = self.prior().log_prob(latent_nf)
-        else:
-            latent_nf = transform.sample()
-
-        gq, gk, gv, go = torch.chunk(self.decoder(latent_nf), chunks=4, dim=-1)
-        vq_dir = F.normalize(self.Wq, dim=-1)
-        vk_dir = F.normalize(self.Wk, dim=-1)
-        vv_dir = F.normalize(self.Wv, dim=-1)
-        vo_dir = F.normalize(self.Wo, dim=-1)
-
-        Wq = gq.view(-1, self.embed_size, 1) * vq_dir
-        Wk = gk.view(-1, self.embed_size, 1) * vk_dir
-        Wv = gv.view(-1, self.embed_size, 1) * vv_dir
-        Wo = go.view(-1, self.embed_size, 1) * vo_dir
-
-        queries = torch.bmm(query, Wq)  # (b, l, k) @ (b, k, k)
-        keys = torch.bmm(key, Wk)
-        values = torch.bmm(value, Wv)
+        _, seq_len, _ = key.shape
+        queries = torch.bmm(query, query_mat)  # (b, l, k) @ (b, k, k)
+        keys = torch.bmm(key, key_mat)
+        values = torch.bmm(value, value_mat)
 
         queries_split = self._split_heads(queries)  # (b * h, l, d_k)
         keys_split = self._split_heads(keys)
@@ -342,14 +356,11 @@ class AggregationFlowMHA(nn.Module):
         hidden_repr = torch.bmm(attention_probs, values_split)
 
         attention_repr = self._merge_heads(hidden_repr.view(-1, self.heads, 1, self.dk))
-        attention_repr = torch.bmm(attention_repr, Wo)
+        attention_repr = torch.bmm(attention_repr, proj_mat)
 
         return (
             attention_repr,
-            torch.ones((batch_size, self.heads, 1, seq_len)),
-            attention_probs.view(-1, self.heads, 1, seq_len),
-            ladj if self.training else None,
-            prior if self.training else None,
+            attention_probs.view(-1, self.heads, 1, seq_len)
         )
 
 
@@ -359,12 +370,10 @@ class AggregationFlowDirectA(nn.Module):
         self,
         embed_size: int,
         seq_len: int,
-        latent_dim: int = 16,
+        base_dist: zuko.lazy.LazyDistribution,
         num_heads: int = 1,
         out_dim: int = 1,
-        lstm_layers: int = 1,
         dropout: float = 0.0,
-        bidirectional: bool = True,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
@@ -372,6 +381,9 @@ class AggregationFlowDirectA(nn.Module):
         per_mask_prior: bool = False,
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
+        device: str = "cuda",
+        separate_mask: bool = False,
+        use_mask: bool = False,
         *args,
         **kwargs,
     ):
@@ -387,23 +399,10 @@ class AggregationFlowDirectA(nn.Module):
         self.heads = num_heads
         self.dk = embed_size // num_heads
         self.layernorm = layernorm
+        self.per_mask_prior = per_mask_prior
 
         self.query = nn.Parameter(torch.zeros((1, embed_size)))
         nn.init.uniform_(self.query)
-
-        self.encoder_lstm = nn.LSTM(
-            embed_size,
-            latent_dim // 2 if bidirectional else latent_dim,
-            num_layers=lstm_layers,
-            batch_first=True,
-            dropout=dropout,
-            bidirectional=bidirectional,
-        )
-        self.encoder = nn.Linear(latent_dim, latent_dim * num_heads)
-
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 128), nn.ReLU(), nn.Linear(128, 1)
-        )
 
         self.attention_weights = nn.init.xavier_uniform_(
             nn.Parameter(torch.zeros(1, seq_len))
@@ -417,21 +416,31 @@ class AggregationFlowDirectA(nn.Module):
             self.prior_type == "a_laplace" and per_mask_prior
         ), "Cant have both adaptive laplace and per mask prior"
         if self.prior_type == "nf":
-            self.prior = zuko.flows.NSF(
-                features=latent_dim,
+            self.prior = zuko.flows.MAF(
+                features=1,
                 transforms=prior_params["n_flows"],
                 hidden_features=prior_params["hidden_features"],
             )
+        elif self.prior_type == "laplace":
+            self.prior = LaplacePrior()
+        elif self.prior_type == "normal":
+            self.prior = NormalPrior()
         else:
             self.prior = nn.Identity()
 
-        base_flow = zuko.flows.NSF(
-            features=latent_dim,
-            context=latent_dim,
-            transforms=flow_params["n_flows"],
-            hidden_features=flow_params["hidden_features"],
+        self.param_flow = FlowVAE(
+            input_dim=embed_size,
+            output_dim=1,
+            base_dist=base_dist,
+            num_heads=num_heads,
+            encoder_heads=True,
+            use_encoder=True,
+            layernorm=layernorm,
+            device=device,
+            flow_params=flow_params,
+            use_mask=use_mask,
+            separate_mask=separate_mask,
         )
-        self.normalizing_flow = Flow(base_flow.transform.inv, base_flow.base)
 
         self.mlp = nn.Sequential(
             nn.Linear(embed_size, 4 * embed_size),
@@ -457,15 +466,28 @@ class AggregationFlowDirectA(nn.Module):
         )
 
     def forward(self, x: Tensor, sum_heads: bool = True):
+        ladj, prior = 0, 0
         batch_size, seq_len, _ = x.size()
         # encoder
-        out, _ = self.encoder_lstm(x)  # assume self-attn (b, k)
-        encoding = self.encoder(out[:, -1, :]).view(batch_size, self.heads, -1)
-        encoding = encoding.reshape(batch_size * self.heads, -1)
-
-        attention_repr, masks, attention_probs, ladj, prior = self._attention(
-            self.query.repeat(batch_size, 1, 1), x, x, encoding
+        batch_heads = self.heads * batch_size
+        g, ladj = self.param_flow(x)
+        attn_dir = (
+            F.normalize(self.attention_weights, dim=-1)
+            .unsqueeze(0)
+            .expand(batch_heads, -1, -1)
         )
+        attention_logits = g.view(-1, 1, 1) * attn_dir
+
+        attention_repr, masks, attention_probs = self._attention(
+            x, x, x, attention_logits
+        )
+
+        if self.prior_type == "normal" and self.training and self.per_mask_prior:
+            prior = self.prior().log_prob(g).sum(dim=-1)
+        elif self.prior_type == "nf" and self.training and self.per_mask_prior:
+            prior = self.prior().log_prob(g)
+        elif self.prior_type == "uniform" and self.training and self.per_mask_prior:
+            prior = torch.tensor([1.0], device=x.device).expand_as(ladj)
 
         if sum_heads:
             masks = masks.sum(dim=1)
@@ -482,32 +504,15 @@ class AggregationFlowDirectA(nn.Module):
         query: Tensor,
         key: Tensor,
         value: Tensor,
-        encoding: Tensor,
+        attn_logits: Tensor,
     ):
-        ladj, prior = 0, 0
         batch_size, seq_len, _ = key.size()
         batch_heads = batch_size * self.heads
-        transform = self.normalizing_flow(encoding)
-
-        if self.training:
-            latent_nf, ladj = transform.rsample_and_log_prob()
-            if self.prior_type == "nf":
-                prior = self.prior().log_prob(latent_nf)
-        else:
-            latent_nf = transform.sample()
-
-        g = self.decoder(latent_nf)
-        attn_dir = (
-            F.normalize(self.attention_weights, dim=-1)
-            .unsqueeze(0)
-            .expand(batch_heads, -1, -1)
-        )
-        attention_logits = g.view(-1, 1, 1) * attn_dir
 
         values = self.values(value)
         values_split = self._split_heads(values)
 
-        attention_probs = softmax(attention_logits, dim=-1)
+        attention_probs = softmax(attn_logits, dim=-1)
         attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         hidden_repr = torch.bmm(attention_probs, values_split)
 
@@ -518,8 +523,6 @@ class AggregationFlowDirectA(nn.Module):
             attention_repr,
             torch.ones((batch_size, self.heads, 1, seq_len)),
             attention_probs.view(-1, self.heads, 1, seq_len),
-            ladj if self.training else None,
-            prior if self.training else None,
         )
 
 
@@ -528,20 +531,21 @@ class AggregationFlowOnlyQK(nn.Module):
     def __init__(
         self,
         embed_size: int,
+        base_dist: zuko.lazy.LazyDistribution,
         seq_len: int,
-        latent_dim: int = 16,
         num_heads: int = 1,
         out_dim: int = 1,
-        lstm_layers: int = 1,
         dropout: float = 0.0,
-        bidirectional: bool = True,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
         prior_type: str = "laplace",
         per_mask_prior: bool = False,
         act: nn.Module = nn.ReLU,
+        device: str = "cuda",
         layernorm: bool = True,
+        separate_mask: bool = False,
+        use_mask: bool = False,
         *args,
         **kwargs,
     ):
@@ -561,25 +565,15 @@ class AggregationFlowOnlyQK(nn.Module):
         self.query = nn.Parameter(torch.zeros((1, embed_size)))
         nn.init.uniform_(self.query)
 
-        self.encoder_lstm = nn.LSTM(
-            embed_size,
-            latent_dim // 2 if bidirectional else latent_dim,
-            num_layers=lstm_layers,
-            batch_first=True,
-            dropout=dropout,
-            bidirectional=bidirectional,
-        )
-        self.encoder = nn.Linear(latent_dim, latent_dim)
+        self.per_mask_prior = per_mask_prior
 
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 128), nn.ReLU(), nn.Linear(128, 2 * embed_size)
-        )
         self.Wq = nn.init.xavier_uniform_(
             nn.Parameter(torch.zeros(embed_size, embed_size))
         )
         self.Wk = nn.init.xavier_uniform_(
             nn.Parameter(torch.zeros(embed_size, embed_size))
         )
+
         self.values = nn.Linear(embed_size, embed_size)
         self.projection = nn.Linear(embed_size, embed_size)
 
@@ -589,21 +583,31 @@ class AggregationFlowOnlyQK(nn.Module):
             self.prior_type == "a_laplace" and per_mask_prior
         ), "Cant have both adaptive laplace and per mask prior"
         if self.prior_type == "nf":
-            self.prior = zuko.flows.NSF(
-                features=latent_dim,
+            self.prior = zuko.flows.MAF(
+                features=2 * embed_size,
                 transforms=prior_params["n_flows"],
                 hidden_features=prior_params["hidden_features"],
             )
+        elif self.prior_type == "laplace":
+            self.prior = LaplacePrior()
+        elif self.prior_type == "normal":
+            self.prior = NormalPrior()
         else:
             self.prior = nn.Identity()
 
-        base_flow = zuko.flows.NSF(
-            features=latent_dim,
-            context=latent_dim,
-            transforms=flow_params["n_flows"],
-            hidden_features=flow_params["hidden_features"],
+        self.param_flow = FlowVAE(
+            input_dim=embed_size,
+            output_dim=2 * embed_size,
+            base_dist=base_dist,
+            num_heads=num_heads,
+            encoder_heads=True,
+            use_encoder=True,
+            layernorm=layernorm,
+            device=device,
+            flow_params=flow_params,
+            use_mask=use_mask,
+            separate_mask=separate_mask,
         )
-        self.normalizing_flow = Flow(base_flow.transform.inv, base_flow.base)
 
         self.mlp = nn.Sequential(
             nn.Linear(embed_size, 4 * embed_size),
@@ -629,14 +633,27 @@ class AggregationFlowOnlyQK(nn.Module):
         )
 
     def forward(self, x: Tensor, sum_heads: bool = True):
+        ladj, prior = 0, 0
         batch_size, seq_len, _ = x.size()
-        # encoder
-        out, _ = self.encoder_lstm(x)  # assume self-attn (b, k)
-        encoding = self.encoder(out[:, -1, :])
+        
+        g, ladj = self.param_flow(x)
+        gq, gk = torch.chunk(g, chunks=2, dim=-1)
+        vq_dir = F.normalize(self.Wq, dim=-1)
+        vk_dir = F.normalize(self.Wk, dim=-1)
 
-        attention_repr, masks, attention_probs, ladj, prior = self._attention(
-            self.query.repeat(batch_size, 1, 1), x, x, encoding
+        Wq = gq.view(-1, self.embed_size, 1) * vq_dir
+        Wk = gk.view(-1, self.embed_size, 1) * vk_dir
+
+        attention_repr, masks, attention_probs = self._attention(
+            self.query.repeat(batch_size, 1, 1), x, x, Wq, Wk
         )
+
+        if self.prior_type == "normal" and self.training and self.per_mask_prior:
+            prior = self.prior().log_prob(g).sum(dim=-1)
+        elif self.prior_type == "nf" and self.training and self.per_mask_prior:
+            prior = self.prior().log_prob(g)
+        elif self.prior_type == "uniform" and self.training and self.per_mask_prior:
+            prior = torch.tensor([1.0], device=x.device).expand_as(ladj)
 
         if sum_heads:
             masks = masks.sum(dim=1)
@@ -653,29 +670,13 @@ class AggregationFlowOnlyQK(nn.Module):
         query: Tensor,
         key: Tensor,
         value: Tensor,
-        encoding: Tensor,
+        query_mat: Tensor,
+        key_mat: Tensor
     ):
-        ladj, prior = 0, 0
         batch_size, seq_len, _ = key.size()
-        batch_heads = batch_size * self.heads
-        transform = self.normalizing_flow(encoding)
 
-        if self.training:
-            latent_nf, ladj = transform.rsample_and_log_prob()
-            if self.prior_type == "nf":
-                prior = self.prior().log_prob(latent_nf)
-        else:
-            latent_nf = transform.sample()
-
-        gq, gk = torch.chunk(self.decoder(latent_nf), chunks=2, dim=-1)
-        vq_dir = F.normalize(self.Wq, dim=-1)
-        vk_dir = F.normalize(self.Wk, dim=-1)
-
-        Wq = gq.view(-1, self.embed_size, 1) * vq_dir
-        Wk = gk.view(-1, self.embed_size, 1) * vk_dir
-
-        queries = torch.bmm(query, Wq)  # (b, l, k) @ (b, k, k)
-        keys = torch.bmm(key, Wk)
+        queries = torch.bmm(query, query_mat)  # (b, l, k) @ (b, k, k)
+        keys = torch.bmm(key, key_mat)
         values = self.values(value)
 
         queries_split = self._split_heads(queries)  # (b * h, l, d_k)
@@ -698,7 +699,5 @@ class AggregationFlowOnlyQK(nn.Module):
         return (
             attention_repr,
             torch.ones((batch_size, self.heads, 1, seq_len)),
-            attention_probs.view(-1, self.heads, 1, seq_len),
-            ladj if self.training else None,
-            prior if self.training else None,
+            attention_probs.view(-1, self.heads, 1, seq_len)
         )
