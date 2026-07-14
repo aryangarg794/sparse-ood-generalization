@@ -30,6 +30,7 @@ class AggregationFlowMask(nn.Module):
         residual: bool = False,
         prior_type: str = "laplace",
         per_mask_prior: bool = False,
+        force_vae_gaussian: bool = False, 
         bias: float = 0.5, 
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
@@ -85,6 +86,7 @@ class AggregationFlowMask(nn.Module):
             device=device,
             flow_params=flow_params,
             use_mask=use_mask,
+            force_vae_gaussian=force_vae_gaussian,
             separate_mask=separate_mask,
         )
 

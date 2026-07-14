@@ -31,6 +31,7 @@ class FlowMasking(nn.Module):
         separate_mask: bool = False,
         use_mask: bool = False,
         per_mask_prior: bool = False,
+        force_vae_gaussian: bool = False, 
         *args,
         **kwargs,
     ):
@@ -85,6 +86,7 @@ class FlowMasking(nn.Module):
             device=device,
             flow_params=flow_params,
             use_mask=use_mask,
+            force_vae_gaussian=force_vae_gaussian, 
             separate_mask=separate_mask,
         )
 
@@ -201,6 +203,7 @@ class FlowMHA(nn.Module):
         device: str = "cuda",
         layernorm: bool = True,
         separate_mask: bool = False,
+        force_vae_gaussian: bool = False,
         use_mask: bool = False,
         *args,
         **kwargs,
@@ -218,6 +221,7 @@ class FlowMHA(nn.Module):
         self.embed_size = embed_size
         self.residual = residual
         self.per_mask_prior = per_mask_prior
+        self.force_vae_gaussian = force_vae_gaussian
 
         self.Wq = nn.init.xavier_uniform_(
             nn.Parameter(torch.zeros(embed_size, embed_size))
@@ -370,6 +374,7 @@ class FlowDirectA(nn.Module):
         embed_size: int,
         base_dist: zuko.lazy.LazyDistribution,
         seq_len: int = 25,
+        force_vae_gaussian: bool = False, 
         num_heads: int = 1,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
@@ -531,6 +536,7 @@ class FlowOnlyQK(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
         prior_type: str = "laplace",
+        force_vae_gaussian: bool = False, 
         per_mask_prior: bool = False,
         device: str = "cuda",
         layernorm: bool = True,

@@ -37,6 +37,7 @@ class FlowVAE(nn.Module):
         base_dist: Distribution,
         num_heads: int = 1,
         encoder_heads: bool = False,
+        force_vae_gaussian: bool = False, 
         use_encoder: bool = True,
         device: str = "cuda",
         layernorm: bool = True,
@@ -53,6 +54,7 @@ class FlowVAE(nn.Module):
         self.use_encoder = use_encoder
         self.encoder_heads = encoder_heads
         self.base_dist = base_dist
+        self.force_vae_gaussian = force_vae_gaussian
 
         self.encoder_agg = AggregationAttention(
             embed_size=input_dim,
@@ -93,6 +95,10 @@ class FlowVAE(nn.Module):
                 rep = rep.view(batch_size, self.num_heads, -1).reshape(
                     batch_size * self.num_heads, -1
                 )
+            
+            if self.force_vae_gaussian:
+                gaussian = torch.distributions.Normal(torch.zeros_like(rep[0]), torch.ones_like(rep[0]))
+                vae_prior = gaussian.log_prob(rep.reshape(batch_size, -1)).sum(dim=-1)
         else:
             if self.is_lazy:
                 base_dist = self.base_dist()
@@ -116,5 +122,7 @@ class FlowVAE(nn.Module):
             output = transform(rep)
 
         log_prob_z = log_prior_base - ladj
+        if self.force_vae_gaussian:
+            log_prob_z = log_prob_z - vae_prior
 
         return output, log_prob_z
