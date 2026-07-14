@@ -20,7 +20,7 @@ prior_params:
   hidden_features: [128, 128]
 prior_type: uniform
 include_sparsity: false
-lr: 1e-3
+lr: 5e-4
 token_pool: false
 per_mask_prior: false
 alpha: 0.25

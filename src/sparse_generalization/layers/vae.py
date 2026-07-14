@@ -96,16 +96,17 @@ class FlowVAE(nn.Module):
         else:
             if self.is_lazy:
                 base_dist = self.base_dist()
-                rep = base_dist.sample((batch_size * self.num_heads,))
+                rep = base_dist.sample().view(1, -1)
             else:
                 base_dist = self.base_dist
-                rep = self.prior.sample((batch_size * self.num_heads,))
+                rep = self.prior.sample().view(1, -1)
 
         log_prior_base = (
             q.log_prob(rep.reshape(batch_size, -1))
             if self.use_encoder
-            else base_dist.log_prob(rep.reshape(batch_size, -1))
-        )
+            else base_dist.log_prob(rep.reshape(1, -1))
+        ).reshape(-1, 1)
+       
         dist = self.normalizing_flow()
         transform = dist.transform
         if self.training:

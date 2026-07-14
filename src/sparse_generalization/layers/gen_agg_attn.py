@@ -298,10 +298,10 @@ class AggregationFlowMHA(nn.Module):
         vv_dir = F.normalize(self.Wv, dim=-1)
         vo_dir = F.normalize(self.Wo, dim=-1)
 
-        Wq = gq.view(-1, self.embed_size, 1) * vq_dir
-        Wk = gk.view(-1, self.embed_size, 1) * vk_dir
-        Wv = gv.view(-1, self.embed_size, 1) * vv_dir
-        Wo = go.view(-1, self.embed_size, 1) * vo_dir
+        Wq = gq.view(self.embed_size, 1) * vq_dir
+        Wk = gk.view(self.embed_size, 1) * vk_dir
+        Wv = gv.view(self.embed_size, 1) * vv_dir
+        Wo = go.view(self.embed_size, 1) * vo_dir
 
         attention_repr, attention_probs = self._attention(
             self.query.repeat(batch_size, 1, 1), x, x, Wq, Wk, Wv, Wo
@@ -337,9 +337,9 @@ class AggregationFlowMHA(nn.Module):
         proj_mat: Tensor
     ):
         _, seq_len, _ = key.shape
-        queries = torch.bmm(query, query_mat)  # (b, l, k) @ (b, k, k)
-        keys = torch.bmm(key, key_mat)
-        values = torch.bmm(value, value_mat)
+        queries = query @ query_mat# (b, l, k) @ (b, k, k)
+        keys = key @ key_mat
+        values = value @ value_mat
 
         queries_split = self._split_heads(queries)  # (b * h, l, d_k)
         keys_split = self._split_heads(keys)
@@ -356,7 +356,7 @@ class AggregationFlowMHA(nn.Module):
         hidden_repr = torch.bmm(attention_probs, values_split)
 
         attention_repr = self._merge_heads(hidden_repr.view(-1, self.heads, 1, self.dk))
-        attention_repr = torch.bmm(attention_repr, proj_mat)
+        attention_repr = attention_repr @ proj_mat
 
         return (
             attention_repr,
@@ -600,8 +600,8 @@ class AggregationFlowOnlyQK(nn.Module):
             output_dim=2 * embed_size,
             base_dist=base_dist,
             num_heads=num_heads,
-            encoder_heads=True,
-            use_encoder=True,
+            encoder_heads=False,
+            use_encoder=False,
             layernorm=layernorm,
             device=device,
             flow_params=flow_params,
@@ -641,8 +641,8 @@ class AggregationFlowOnlyQK(nn.Module):
         vq_dir = F.normalize(self.Wq, dim=-1)
         vk_dir = F.normalize(self.Wk, dim=-1)
 
-        Wq = gq.view(-1, self.embed_size, 1) * vq_dir
-        Wk = gk.view(-1, self.embed_size, 1) * vk_dir
+        Wq = gq.view(self.embed_size, 1) * vq_dir
+        Wk = gk.view(self.embed_size, 1) * vk_dir
 
         attention_repr, masks, attention_probs = self._attention(
             self.query.repeat(batch_size, 1, 1), x, x, Wq, Wk
@@ -675,8 +675,8 @@ class AggregationFlowOnlyQK(nn.Module):
     ):
         batch_size, seq_len, _ = key.size()
 
-        queries = torch.bmm(query, query_mat)  # (b, l, k) @ (b, k, k)
-        keys = torch.bmm(key, key_mat)
+        queries = query @ query_mat  # (b, l, k) @ (b, k, k)
+        keys = key @ key_mat
         values = self.values(value)
 
         queries_split = self._split_heads(queries)  # (b * h, l, d_k)

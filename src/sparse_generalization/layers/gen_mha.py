@@ -255,8 +255,8 @@ class FlowMHA(nn.Module):
             output_dim=4 * embed_size,
             base_dist=base_dist,
             num_heads=num_heads,
-            encoder_heads=True,
-            use_encoder=True,
+            encoder_heads=False,
+            use_encoder=False,
             layernorm=layernorm,
             device=device,
             flow_params=flow_params,
@@ -284,10 +284,10 @@ class FlowMHA(nn.Module):
         vv_dir = F.normalize(self.Wv, dim=-1)
         vo_dir = F.normalize(self.Wo, dim=-1)
 
-        Wq = gq.view(-1, self.embed_size, 1) * vq_dir
-        Wk = gk.view(-1, self.embed_size, 1) * vk_dir
-        Wv = gv.view(-1, self.embed_size, 1) * vv_dir
-        Wo = go.view(-1, self.embed_size, 1) * vo_dir
+        Wq = gq.view(self.embed_size, 1) * vq_dir
+        Wk = gk.view(self.embed_size, 1) * vk_dir
+        Wv = gv.view(self.embed_size, 1) * vv_dir
+        Wo = go.view(self.embed_size, 1) * vo_dir
 
         attention_repr, attn_per_head = self._attention(
             queries, keys, values, Wq, Wk, Wv, Wo
@@ -334,9 +334,9 @@ class FlowMHA(nn.Module):
         value_mat: Tensor, proj_mat: Tensor
     ):
         _, seq_len, _ = query.shape
-        queries = torch.bmm(query, query_mat)  # (b, l, k) @ (b, k, k)
-        keys = torch.bmm(key, key_mat)
-        values = torch.bmm(value, value_mat)
+        queries = query @ query_mat  # (b, l, k) @ (k, k)
+        keys = key @ key_mat
+        values = value @ value_mat
 
         queries_split = self._split_heads(queries)  # (b * h, l, d_k)
         keys_split = self._split_heads(keys)
@@ -355,7 +355,7 @@ class FlowMHA(nn.Module):
         attention_repr = self._merge_heads(
             hidden_repr.view(-1, self.heads, seq_len, self.dk)
         )
-        attention_repr = torch.bmm(attention_repr, proj_mat)
+        attention_repr = attention_repr @ proj_mat
 
         return (
             attention_repr,
@@ -586,8 +586,8 @@ class FlowOnlyQK(nn.Module):
             output_dim=2 * embed_size,
             base_dist=base_dist,
             num_heads=num_heads,
-            encoder_heads=True,
-            use_encoder=True,
+            encoder_heads=False,
+            use_encoder=False,
             layernorm=layernorm,
             device=device,
             flow_params=flow_params,
@@ -612,8 +612,8 @@ class FlowOnlyQK(nn.Module):
         vq_dir = F.normalize(self.Wq, dim=-1)
         vk_dir = F.normalize(self.Wk, dim=-1)
 
-        Wq = gq.view(-1, self.embed_size, 1) * vq_dir
-        Wk = gk.view(-1, self.embed_size, 1) * vk_dir
+        Wq = gq.view(self.embed_size, 1) * vq_dir
+        Wk = gk.view(self.embed_size, 1) * vk_dir
 
         attention_repr, mask_per_head, attn_per_head = self._attention(
             queries, keys, values, Wq, Wk
@@ -659,8 +659,8 @@ class FlowOnlyQK(nn.Module):
         ladj, prior = 0, 0
         batch_size, seq_len, _ = query.size()        
 
-        queries = torch.bmm(query, query_mat)  # (b, l, k) @ (b, k, k)
-        keys = torch.bmm(key, key_mat)
+        queries = query @ query_mat  # (b, l, k) @ (k, k)
+        keys = key @ key_mat
         values = self.values(value)
 
         queries_split = self._split_heads(queries)  # (b * h, l, d_k)

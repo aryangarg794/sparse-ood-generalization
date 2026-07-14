@@ -114,12 +114,22 @@ class FlowSpartan(nn.Module):
 
         self.layers = nn.ModuleList()
 
+        if mha_layer.func == FlowMHA:
+            base_dist_size = 4 * self.embed_size
+            agg_dist_size = base_dist_size
+        elif mha_layer.func == FlowMasking or mha_layer.func == FlowDirectA:
+            base_dist_size = seq_len
+            agg_dist_size = 1
+        elif mha_layer.func == FlowOnlyQK:
+            base_dist_size = 2 * self.embed_size
+            agg_dist_size = base_dist_size
+
         for _ in range(num_layers):
             self.layers.append(
                 MHABlockGen(
                     embed_size,
                     seq_len=seq_len,
-                    base_dist=make_unit_gaussian(seq_len),
+                    base_dist=make_unit_gaussian(base_dist_size),
                     mha_layer=mha_layer,
                     num_heads=num_heads,
                     dropout=dropout,
@@ -165,7 +175,7 @@ class FlowSpartan(nn.Module):
             self.out = agg_layer(
                 out_dim=out_dim,
                 act=act,
-                base_dist=make_unit_gaussian(1),
+                base_dist=make_unit_gaussian(agg_dist_size),
                 dropout=dropout,
                 embed_size=embed_size,
                 seq_len=seq_len,
