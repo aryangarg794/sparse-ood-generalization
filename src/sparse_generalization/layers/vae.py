@@ -107,11 +107,14 @@ class FlowVAE(nn.Module):
                 base_dist = self.base_dist
                 rep = self.prior.sample().view(1, -1)
 
-        log_prior_base = (
-            q.log_prob(rep.reshape(batch_size, -1))
-            if self.use_encoder
-            else base_dist.log_prob(rep.reshape(1, -1))
-        ).reshape(-1, 1)
+        if self.training:
+            log_prior_base = (
+                q.log_prob(rep.reshape(batch_size, -1))
+                if self.use_encoder
+                else base_dist.log_prob(rep.reshape(1, -1))
+            ).reshape(-1, 1)
+        else:
+            log_prior_base = 0
        
         dist = self.normalizing_flow()
         transform = dist.transform

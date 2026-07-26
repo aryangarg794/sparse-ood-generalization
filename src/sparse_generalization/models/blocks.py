@@ -60,6 +60,7 @@ class MHABlock(nn.Module):
             attn_out, attn_scores = self.mha(x, x, x)
             if self.residual:
                 out = self.mlp(attn_out + x)
+                out = out + attn_out
             else:
                 out = self.mlp(attn_out)
 
@@ -148,6 +149,7 @@ class MHABlockBern(nn.Module):
             attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(x, x, x)
             if self.residual:
                 out = self.mlp(attn_out + x)
+                out = out + attn_out
             else:
                 out = self.mlp(attn_out)
 
@@ -241,6 +243,7 @@ class MHABlockGen(nn.Module):
                 attn_out, attn_masks, attn_scores = self.mha(x, x, x)
             if self.residual:
                 out = self.mlp(attn_out + x)
+                out = out + attn_out
             else:
                 out = self.mlp(attn_out)
 

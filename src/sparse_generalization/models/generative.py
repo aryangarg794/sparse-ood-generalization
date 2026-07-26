@@ -62,6 +62,7 @@ class FlowSpartan(nn.Module):
         embedding_inp: bool = True,
         beta: float = 1.0,
         lr: float = 1e-3,
+        prior_func = make_unit_gaussian,
         dropout: float = 0.1,
         layernorm: bool = True,
         act: nn.Module = nn.ReLU,
@@ -130,7 +131,7 @@ class FlowSpartan(nn.Module):
                 MHABlockGen(
                     embed_size,
                     seq_len=seq_len,
-                    base_dist=make_unit_gaussian(base_dist_size),
+                    base_dist=prior_func(base_dist_size),
                     mha_layer=mha_layer,
                     num_heads=num_heads,
                     dropout=dropout,
@@ -177,7 +178,7 @@ class FlowSpartan(nn.Module):
             self.out = agg_layer(
                 out_dim=out_dim,
                 act=act,
-                base_dist=make_unit_gaussian(agg_dist_size),
+                base_dist=prior_func(agg_dist_size),
                 dropout=dropout,
                 embed_size=embed_size,
                 seq_len=seq_len,

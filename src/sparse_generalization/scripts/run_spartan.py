@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 from torchinfo import summary
 
 from sparse_generalization.models.generative import FlowSpartan
+from sparse_generalization.models.hypernet import HyperNetSpartan
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 warnings.filterwarnings(
@@ -36,7 +37,7 @@ def main(cfg: DictConfig):
     group_name = cfg.run_name + "_" + timestamp
 
     test_model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
-    flow_model = isinstance(test_model, FlowSpartan)
+    flow_model = isinstance(test_model, FlowSpartan) or isinstance(test_model, HyperNetSpartan)
     del test_model
     dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)(
         compute_mask=cfg.model.compute_mask if not flow_model else False

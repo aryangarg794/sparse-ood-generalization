@@ -339,7 +339,7 @@ class AggregationFlowMHA(nn.Module):
         proj_mat: Tensor
     ):
         _, seq_len, _ = key.shape
-        queries = query @ query_mat# (b, l, k) @ (b, k, k)
+        queries = query @ query_mat# (b, l, k) @ (b, k, k) = (b, 1, k)
         keys = key @ key_mat
         values = value @ value_mat
 
@@ -351,11 +351,11 @@ class AggregationFlowMHA(nn.Module):
             queries_split, keys_split.transpose(1, 2)
         ) / np.sqrt(
             self.dk
-        )  # (b*h, l, l)
+        )  # (b*h, 1, s)
 
         attention_probs = softmax(attention_logits, dim=-1)
         attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
-        hidden_repr = torch.bmm(attention_probs, values_split)
+        hidden_repr = torch.bmm(attention_probs, values_split) # (b*h, 1, s) @ (b*h, s, k)
 
         attention_repr = self._merge_heads(hidden_repr.view(-1, self.heads, 1, self.dk))
         attention_repr = attention_repr @ proj_mat

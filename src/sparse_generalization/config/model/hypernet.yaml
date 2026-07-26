@@ -1,15 +1,16 @@
-_target_: sparse_generalization.models.generative.FlowSpartan
+_target_: sparse_generalization.models.hypernet.HyperNetSpartan
 _partial_: true
 
 inp_dim: 25
 out_dim: 1 
-layernorm: false
-agg_pool: false 
-model_dim: 32
+layernorm: true
+model_dim: 16
 seq_len: 25
 embedding_inp: false
 num_heads: 1
-num_layers: 1
+hyper_type: qk
+num_mha_layers: 1
+num_agg_layers: 0
 separate_mask: false
 use_mask: false
 flow_params:
@@ -20,15 +21,13 @@ prior_params:
   hidden_features: [128, 128]
 prior_type: uniform
 include_sparsity: false
-lr: 5e-4
-token_pool: false
-per_mask_prior: false
+lr: 1e-3
 force_vae_gaussian: false
 alpha: 0.25
 residual: true
 num_embeddings: 25
 pe: true
-beta: 1.0
+beta: 1
 sinusoidal: true
 dropout: 0.0
 device: cuda
@@ -39,7 +38,3 @@ prior_func:
   _partial_: true
   _target_: sparse_generalization.layers.priors.make_unit_gaussian
   k: 10
-
-mha_layer:
-  _partial_: true
-  _target_: sparse_generalization.layers.gen_mha.FlowOnlyQK
