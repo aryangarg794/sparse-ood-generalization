@@ -49,13 +49,14 @@ def get_shapes_datasets(
     one_hot: bool,
     compute_mask: bool,
     corr: bool,
+    train_only: str = "",
 ):
     if corr:
         corr = f"_corr"
     else:
         corr = ""
 
-    data_path = os.path.join(data_dir, f"shapes_train{corr}_size{grid_size}.pl")
+    data_path = os.path.join(data_dir, f"shapes_train{corr}{train_only}_size{grid_size}.pl")
     data_path = to_absolute_path(data_path)
     data_cls = partial(ShapesDataset, one_hot=one_hot, size=grid_size)
 
@@ -63,11 +64,22 @@ def get_shapes_datasets(
         train_data = dill.load(file)
         file.close()
 
-    midpoint = train_data["X_train"].size(0) // 2
-    X_train_pos = train_data["X_train"][:midpoint]
-    Y_train_pos = train_data["Y_train"][:midpoint]
-    X_train_neg = train_data["X_train"][midpoint:]
-    Y_train_neg = train_data["Y_train"][midpoint:]
+    if train_only == "":
+        key_x = "X_train"
+        key_y = "Y_train"
+    elif train_only == "a":
+        key_x = "X_test_a"
+        key_y = "Y_test_a"
+    elif train_only == "b":
+        key_x = "X_test_b"
+        key_y = "Y_test_b"
+
+
+    midpoint = train_data[key_x].size(0) // 2
+    X_train_pos = train_data[key_x][:midpoint]
+    Y_train_pos = train_data[key_y][:midpoint]
+    X_train_neg = train_data[key_x][midpoint:]
+    Y_train_neg = train_data[key_y][midpoint:]
 
     half_size = size // 2
 

@@ -215,6 +215,7 @@ class HyperNet(nn.Module):
                 out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
                 attn_matrices.append(adj)
                 path_matrix = torch.bmm(mask, path_matrix)
+                x = out
 
         elif self.hyper_type == "mha":
             mha_layers = torch.chunk(flow_out, chunks=self.total_num_layers, dim=-1)
@@ -234,6 +235,7 @@ class HyperNet(nn.Module):
                 out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
                 attn_matrices.append(adj)
                 path_matrix = torch.bmm(mask, path_matrix)
+                x = out
         
         elif self.hyper_type == "directa":
             mha_out, agg_out = torch.split(flow_out, split_size_or_sections=[self.total_mha_size, self.total_agg_size], dim=-1)
@@ -255,6 +257,7 @@ class HyperNet(nn.Module):
                 out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
                 attn_matrices.append(adj)
                 path_matrix = torch.bmm(mask, path_matrix)
+                x = out
 
         elif self.hyper_type == "qk":
             mha_layers = torch.chunk(flow_out, chunks=self.total_num_layers, dim=-1)
@@ -277,6 +280,7 @@ class HyperNet(nn.Module):
                 out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
                 attn_matrices.append(adj)
                 path_matrix = torch.bmm(mask, path_matrix)
+                x = out
 
         if self.prior_type == "laplace" and self.training:
             prior = self.prior().log_prob(path_matrix.sum(dim=(-2, -1)))
@@ -360,10 +364,10 @@ class HyperNet(nn.Module):
 
         if avg_heads:
             adjacency = masked_attention_probs.view(-1, self.num_heads, *shape).sum(dim=1)
-            mask = A.view(-1, self.num_heads, seq_len, seq_len).sum(dim=1)
+            mask = A.view(-1, self.num_heads, shape[0], seq_len).sum(dim=1)
         else:
             adjacency = attention_probs
-            mask = A.view(-1, self.num_heads, seq_len, seq_len)
+            mask = A.view(-1, self.num_heads, shape[0], seq_len)
 
         return attention_repr, mask, adjacency
     
