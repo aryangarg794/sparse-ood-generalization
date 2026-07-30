@@ -47,8 +47,8 @@ def get_shapes_datasets(
     data_dir: str,
     grid_size: int,
     one_hot: bool,
-    compute_mask: bool,
-    corr: bool,
+    compute_mask: bool = False, 
+    corr: bool = False,
     train_only: str = "",
 ):
     if corr:

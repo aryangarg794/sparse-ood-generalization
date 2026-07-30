@@ -4,10 +4,10 @@ _partial_: true
 inp_dim: 25
 out_dim: 1 
 layernorm: true
-model_dim: 32
+model_dim: 16
 seq_len: 25
 embedding_inp: false
-num_heads: 1
+num_heads: 2
 hyper_type: qk
 num_mha_layers: 1
 num_agg_layers: 1

@@ -115,7 +115,7 @@ class HyperNet(nn.Module):
 
         if self.prior_type == "nf":
             self.prior = zuko.flows.MAF(
-                features=2 * embed_size,
+                features=self.total_dist_size,
                 transforms=prior_params["n_flows"],
                 hidden_features=prior_params["hidden_features"],
             )

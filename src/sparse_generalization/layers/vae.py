@@ -24,6 +24,7 @@ class Encoder(zuko.lazy.LazyDistribution):
     def forward(self, c: Tensor) -> Distribution:
         phi = self.hyper(c)
         mu, log_sigma = phi.chunk(2, dim=-1)
+        log_sigma = torch.clamp(log_sigma, -6, 2)
 
         return Independent(Normal(mu, log_sigma.exp()), 1)
 
