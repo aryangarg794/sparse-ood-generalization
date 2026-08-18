@@ -1,0 +1,27 @@
+_target_: sparse_generalization.models.ensemble.Ensemble
+_partial_: true
+
+inp_dim: 25
+out_dim: 1 
+layernorm: true
+agg_pool: false 
+model_dim: 32
+embedding_inp: false
+num_heads: 1
+num_layers: 1
+include_sparsity: false
+lr: 1e-3
+ensemble_loss: mean
+num_models: 3
+val_freq: 1
+spartan: false
+alpha: 0.1
+residual: true
+num_embeddings: 25
+pe: true
+sinusoidal: true
+dropout: 0.0
+device: cuda
+beta1: 0.99
+beta2: 0.999
+

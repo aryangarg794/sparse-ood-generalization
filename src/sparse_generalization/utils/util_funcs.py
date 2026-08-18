@@ -64,8 +64,20 @@ def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str = "
     return path.sum(dim=(1, 2)).mean().item()
 
 
+def compute_attn_mean_ens(all_attn: Tensor, threshold: float = 0.01, device: str = "cuda"):
+    thresh = (all_attn > threshold).float()  
+    num_models, num_layers, batch_size, seq_len, _ = thresh.size()
+    path = torch.eye(seq_len, device=device).repeat(batch_size * num_models, 1, 1)
+    thresh = thresh.view(-1, num_layers, seq_len, seq_len).transpose(0, 1)
+    for idx in range(num_layers):
+        attn = thresh[idx]
+        path = torch.bmm(attn, path)
+
+    return path.sum(dim=(1, 2)).mean().item()
+
+
 def compute_mask_mean(all_masks: Tensor):
-    return all_masks.sum(dim=(1, 2)).mean().item()
+    return all_masks.sum(dim=(-2, -1)).mean().item()
 
 
 def compute_max_paths(
