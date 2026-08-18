@@ -12,7 +12,7 @@ num_layers: 1
 include_sparsity: false
 lr: 1e-3
 ensemble_loss: mean
-num_models: 3
+num_models: 5
 val_freq: 1
 spartan: false
 alpha: 0.1

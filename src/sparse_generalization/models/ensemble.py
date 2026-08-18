@@ -294,7 +294,7 @@ class Ensemble(nn.Module):
 
     def predict(self, x: Tensor):
         out, mask, mask_attn, attn = self(x)
-        return out.mean(dim=1), mask, mask_attn, attn
+        return F.sigmoid(out).mean(dim=1), mask, mask_attn, attn
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []
@@ -322,7 +322,7 @@ class Ensemble(nn.Module):
                 y = y.to(self.device)
                 out, masks, mask_attns, attns = self(x)  # list of (b, l, l)
 
-                rec_loss = self.loss(out, y.unsqueeze(dim=1).expand(-1, 3, -1))
+                rec_loss = self.loss(out, y.unsqueeze(dim=1).expand(-1, self.num_models, -1))
                 if self.ensemble_loss == "mean":
                     rec_loss = rec_loss.mean()
                 elif self.ensemble_loss == "sum":
@@ -432,7 +432,7 @@ class Ensemble(nn.Module):
             y = y.to(self.device)
             out, mask, mask_attn, attn = self.predict(x)
 
-            loss = self.loss(out, y).mean() 
+            loss = F.binary_cross_entropy(out, y, reduction="mean")
             epoch_loss += loss.item()
 
             with torch.no_grad():
@@ -482,8 +482,7 @@ class Ensemble(nn.Module):
         for batch_idx, (x, y) in enumerate(anti_dataset):
             x = x.to(self.device)
             y = y.to(self.device)
-            out, mask, mask_attn, attn = self(x)
-            probs = F.sigmoid(out)
+            probs, mask, mask_attn, attn = self.predict(x)
             labels.append(probs)
             true_labels.append(y)
 
@@ -498,7 +497,7 @@ class Ensemble(nn.Module):
         acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
         acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
         conf_a = preds[:midpoint].mean()
-        conf_b = preds[:midpoint].mean()
+        conf_b = preds[midpoint:].mean()
 
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()
