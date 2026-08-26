@@ -12,8 +12,9 @@ num_layers: 1
 include_sparsity: false
 lr: 1e-3
 ensemble_loss: mean
-num_models: 5
+num_models: 3
 val_freq: 1
+per_ensemble_test: 10
 spartan: false
 alpha: 0.1
 residual: true

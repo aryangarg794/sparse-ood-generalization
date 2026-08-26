@@ -189,6 +189,10 @@ class EnsembleMember(nn.Module):
             mask_matrices,
         ) 
 
+    def predict(self, x: Tensor):
+        out, mask, mask_attn, attn, _ = self(x)
+        return F.sigmoid(out), mask, mask_attn, attn
+
 class Ensemble(nn.Module):
 
     def __init__(
@@ -212,6 +216,7 @@ class Ensemble(nn.Module):
         lr: float = 1e-3,
         dropout: float = 0.0,
         val_freq: int = 10, 
+        per_ensemble_test: int = 10, 
         layernorm: bool = False,
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
@@ -233,6 +238,7 @@ class Ensemble(nn.Module):
         self.ensemble_loss = ensemble_loss
         self.val_to_name = val_to_name
         self.val_freq = val_freq
+        self.per_ensemble_test = per_ensemble_test
 
         for _ in range(num_models):
             self.models.append(
@@ -269,6 +275,8 @@ class Ensemble(nn.Module):
         self.residual = residual
         self.agg_pool = agg_pool
         self.num_layers = num_layers
+        self.num_a = 0
+        self.num_b = 0
 
     def _enforce_sparsity(self, attns):
         num_edges = attns.sum(dim=(1, 2)) / self.max_paths
@@ -388,7 +396,9 @@ class Ensemble(nn.Module):
 
             if step % self.val_freq == 0:
                 for loader, name in zip(testloaders, self.val_to_name.values()):
-                    test_metrics = self.test(name, loader, folder="val")
+                    test_metrics = self.test(self, name, loader, folder="val")
+
+                    # NOTE: hardcoded
                     if "id" in name:
                         postfix["val_id"] = test_metrics["acc"]
                     elif "a" in name:
@@ -401,6 +411,30 @@ class Ensemble(nn.Module):
                     losses_test[name].append(test_metrics["loss"])
                     accs_test[name].append(test_metrics["acc"])
 
+            
+            if step % self.per_ensemble_test == 0:
+                self.num_a = 0
+                self.num_b = 0
+                for i, model in enumerate(self.models): #NOTE: hardcoded to shapes dataset
+                    score_a = 0
+                    score_b = 0
+                    for loader, name in zip(testloaders, self.val_to_name.values()):
+                        acc = self.test_member(model, name, loader, folder="val")
+                        if "a" in name:
+                            score_a = acc
+                            self.logger.log_metrics({f'ensembles/member_{i}_a' : acc}, step=self.global_step)
+                        elif "b" in name:
+                            score_b = acc
+                            self.logger.log_metrics({f'ensembles/member_{i}_b' : acc}, step=self.global_step)
+
+                    if score_a > 0.8:
+                        self.num_a += 1
+                    if score_b > 0.8:
+                        self.num_b += 1
+
+            postfix["num_a"] = self.num_a
+            postfix["num_b"] = self.num_b
+        
             postfix["mask_edges"] = mask_running
             postfix["attn_edges"] = attn_running
 
@@ -419,7 +453,7 @@ class Ensemble(nn.Module):
         )
 
     @torch.no_grad()
-    def test(self, name: str, dataloader: DataLoader, folder: str = "test"):
+    def test(self, model, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
         attn_running = 0.0
         mask_running = 0.0
@@ -430,7 +464,7 @@ class Ensemble(nn.Module):
             x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
-            out, mask, mask_attn, attn = self.predict(x)
+            out, mask, mask_attn, attn = model.predict(x)
 
             loss = F.binary_cross_entropy(out, y, reduction="mean")
             epoch_loss += loss.item()
@@ -473,6 +507,26 @@ class Ensemble(nn.Module):
             "mask": mask_running,
         }
 
+    @torch.no_grad()
+    def test_member(self, model, name: str, dataloader: DataLoader, folder: str = "test"):
+        self.eval()
+        epoch_acc = 0.0
+
+        for batch_idx, batch in enumerate(dataloader):
+            x, y = batch
+            x = x.to(self.device)
+            y = y.to(self.device)
+            out, _, _, _ = model.predict(x)
+
+            with torch.no_grad():
+                acc = self.accuracy(out, y)
+                epoch_acc += acc.item()
+
+        epoch_acc /= len(dataloader)
+        self.train()
+
+        return epoch_acc
+    
     @torch.no_grad()
     def test_anti(self, anti_dataset: DataLoader):
         # total acc, acc a, acc b, conf a, conf b
