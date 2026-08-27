@@ -3,14 +3,14 @@ _partial_: true
 
 inp_dim: 25
 out_dim: 1 
-layernorm: true
-model_dim: 16
+layernorm: false
+model_dim: 32
 seq_len: 25
 embedding_inp: false
-num_heads: 2
+num_heads: 1
 hyper_type: qk
 num_mha_layers: 1
-num_agg_layers: 1
+include_agg_layer: false
 separate_mask: false
 use_mask: false
 flow_params:
@@ -19,18 +19,20 @@ flow_params:
 prior_params:
   n_flows: 3
   hidden_features: [128, 128]
-prior_type: uniform
+prior_type: normal
 include_sparsity: false
 lr: 1e-3
 force_vae_gaussian: false
-alpha: 0.25
+alpha: 0.1
 residual: true
 num_embeddings: 25
 pe: true
 beta: 1.0
+val_freq: 5
+num_eval_samples: 5
 sinusoidal: true
 dropout: 0.0
-device: cuda
+device: cpu
 beta1: 0.95
 beta2: 0.999
 

@@ -50,13 +50,15 @@ def get_shapes_datasets(
     compute_mask: bool = False, 
     corr: bool = False,
     train_only: str = "",
+    explicit: bool = False, 
 ):
     if corr:
         corr = f"_corr"
     else:
         corr = ""
 
-    data_path = os.path.join(data_dir, f"shapes_train{corr}{train_only}_size{grid_size}.pl")
+    name_explicit = "_explicit" if explicit else ""
+    data_path = os.path.join(data_dir, f"shapes_train{corr}{train_only}_size{grid_size}{name_explicit}.pl")
     data_path = to_absolute_path(data_path)
     data_cls = partial(ShapesDataset, one_hot=one_hot, size=grid_size)
 
@@ -83,9 +85,16 @@ def get_shapes_datasets(
 
     half_size = size // 2
 
-    X_train = torch.cat([X_train_pos[:half_size], X_train_neg[:half_size]], dim=0)
-    Y_train = torch.cat([Y_train_pos[:half_size], Y_train_neg[:half_size]], dim=0)
+    if explicit:
+        mode_size = X_train_pos.size(0) // 2
+        half_half_size = half_size // 2
+        X_train_modeA = X_train_pos[:mode_size]
+        X_train_modeB = X_train_pos[mode_size:]
+        X_train = torch.cat([X_train_modeA[:half_half_size], X_train_modeB[:half_half_size], X_train_neg[:half_size]], dim=0)
+    else:
+        X_train = torch.cat([X_train_pos[:half_size], X_train_neg[:half_size]], dim=0)
 
+    Y_train = torch.cat([Y_train_pos[:half_size], Y_train_neg[:half_size]], dim=0)
     X_val = torch.cat([X_train_pos[20000:20500], X_train_neg[20000:20500]], dim=0)
     Y_val = torch.cat([Y_train_pos[20000:20500], Y_train_neg[20000:20500]], dim=0)
 
@@ -156,7 +165,7 @@ def get_shapes_datasets(
 
 
 def get_boxworld_datasets(
-    size: int, num_pairs: int, data_dir: str, one_hot: bool = False
+    size: int, num_pairs: int, data_dir: str, one_hot: bool = False,
 ):
     data_path = os.path.join(data_dir, f"boxworld_v2_train_pairs{num_pairs}.pl")
     data_path = to_absolute_path(data_path)

@@ -560,6 +560,7 @@ def generate_dataset(
     num_samples: int = 500,
     mode: str = "train",
     func: str = "row",
+    causal: bool = True, 
     visualize: bool = True,
     corruption: float = 0.0,
     size: int = 8,
@@ -569,6 +570,7 @@ def generate_dataset(
     dataset = {}
     name = mode
     mode = "train" if mode == "test" or mode == "val" else mode
+    name_causal = ""
 
     if mode == "anti":
         samples = []
@@ -605,39 +607,78 @@ def generate_dataset(
         dataset[f"X_{mode}"] = torch.stack(tensors, dim=0)
         dataset[f"Y_{mode}"] = torch.stack(labels, dim=0)
     else:
-        samples = []
-        labels = []
-        match func:
-            case "row":
-                data_func = generate_grid_row
-            case "row_col":
-                data_func = generate_grid_row_col
-            case "same_row":
-                data_func = generate_grid_same_row
-            case "adj":
-                data_func = generate_grid_adjacent
+        if causal:
+            samples = []
+            labels = []
+            interventions = []
 
-        for label in [True, False]:
-            for _ in range(half_samples):
-                grid = data_func(size=size, label_A=label, mode=mode)
-                inp_tensor = torch.zeros((size, size, 1), dtype=torch.int64)
-                for x in range(size):
-                    for y in range(size):
-                        inp_tensor[x, y] = SHAPES_TO_IDX[grid[x, y]]
-                samples.append(inp_tensor)
-                labels.append(torch.tensor([int(label)], dtype=torch.int64))
+            int_dict = {
+                "test_a" : 0,
+                "test_b" : 1
+            }
 
-        dataset[f"X_{mode}"] = torch.stack(samples, dim=0)
-        dataset[f"Y_{mode}"] = torch.stack(labels, dim=0)
+            half_half_samples = half_samples // 2
 
-        if corruption > 0.0 and mode == "train":
-            train_size = dataset[f"Y_{mode}"].size(0) - 6000
-            num_corr = int(corruption * train_size)
-            corr_idxs = torch.randperm(train_size)[:num_corr]
-            dataset[f"Y_{mode}"][corr_idxs] = 1 - dataset[f"Y_{mode}"][corr_idxs]
+            match func:
+                case "row":
+                    data_func = generate_grid_row
+                case "row_col":
+                    data_func = generate_grid_row_col
+                case "same_row":
+                    data_func = generate_grid_same_row
+                case "adj":
+                    data_func = generate_grid_adjacent
+            for label in [True, False]:
+                for causal_mode in ['test_a', 'test_b']:
+                    for _ in range(half_half_samples):
+                        grid = data_func(size=size, label_A=label, mode=causal_mode)
+                        inp_tensor = torch.zeros((size, size, 1), dtype=torch.int64)
+                        for x in range(size):
+                            for y in range(size):
+                                inp_tensor[x, y] = SHAPES_TO_IDX[grid[x, y]]
+                        samples.append(inp_tensor)
+                        labels.append(torch.tensor([int(label)], dtype=torch.int64))
+                        interventions.append(torch.tensor(int(int_dict[causal_mode]), dtype=torch.int64))
+    
+            dataset[f"X_train"] = torch.stack(samples, dim=0)
+            dataset[f"Y_train"] = torch.stack(labels, dim=0)
+            dataset["Interventions"] = torch.stack(interventions, dim=0)
+            name_causal = "_causal"
+    
+        else:
+            samples = []
+            labels = []
+            match func:
+                case "row":
+                    data_func = generate_grid_row
+                case "row_col":
+                    data_func = generate_grid_row_col
+                case "same_row":
+                    data_func = generate_grid_same_row
+                case "adj":
+                    data_func = generate_grid_adjacent
+    
+            for label in [True, False]:
+                for _ in range(half_samples):
+                    grid = data_func(size=size, label_A=label, mode=mode)
+                    inp_tensor = torch.zeros((size, size, 1), dtype=torch.int64)
+                    for x in range(size):
+                        for y in range(size):
+                            inp_tensor[x, y] = SHAPES_TO_IDX[grid[x, y]]
+                    samples.append(inp_tensor)
+                    labels.append(torch.tensor([int(label)], dtype=torch.int64))
+    
+            dataset[f"X_{mode}"] = torch.stack(samples, dim=0)
+            dataset[f"Y_{mode}"] = torch.stack(labels, dim=0)
+    
+            if corruption > 0.0 and mode == "train":
+                train_size = dataset[f"Y_{mode}"].size(0) - 6000
+                num_corr = int(corruption * train_size)
+                corr_idxs = torch.randperm(train_size)[:num_corr]
+                dataset[f"Y_{mode}"][corr_idxs] = 1 - dataset[f"Y_{mode}"][corr_idxs]
 
     print("Saving")
-    file_path = file_path + f"_{name}_{num_samples}_size{size}.pl"
+    file_path = file_path + f"_{name}_{num_samples}_size{size}{name_causal}.pl"
     with open(file_path, "wb") as f:
         dill.dump(dataset, f)
 
@@ -652,7 +693,8 @@ if __name__ == "__main__":
         "-c", "--corr", type=float, default=0.0, help="corruption noise"
     )
     parser.add_argument("-m", "--mode", type=str, default="train", help="mode name")
-    parser.add_argument("-f", "--func", type=str, default="row", help="mode name")
+    parser.add_argument("-f", "--func", type=str, default="row", help="func name")
+    parser.add_argument('--causal', action='store_true')
 
     args = parser.parse_args()
     generate_dataset(
@@ -660,4 +702,5 @@ if __name__ == "__main__":
         size=args.size,
         mode=args.mode,
         corruption=args.corr,
+        causal=args.causal
     )

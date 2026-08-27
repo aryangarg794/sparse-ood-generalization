@@ -6,6 +6,7 @@ data_func:
   data_dir: data/shapes
   corr: false
   one_hot: true
+  explicit: false
 
 val_to_name:
   0: id

@@ -316,6 +316,11 @@ class Ensemble(nn.Module):
         losses_test = deepcopy(attn_test)
         accs_test = deepcopy(attn_test)
 
+        postfix = {
+            "loss": 1.0,
+            "acc": 0.0,
+        }
+
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
             epoch_loss = 0.0
@@ -370,10 +375,8 @@ class Ensemble(nn.Module):
             attn_edges.append(attn_running)
             mask_edges.append(mask_running)
 
-            postfix = {
-                "loss": epoch_loss,
-                "acc": epoch_acc,
-            }
+            postfix['loss'] = epoch_loss
+            postfix['acc'] = epoch_acc
 
             pbar.set_description(f"Epoch: {step}")
 

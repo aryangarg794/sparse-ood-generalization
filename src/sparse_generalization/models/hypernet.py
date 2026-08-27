@@ -21,6 +21,7 @@ from sparse_generalization.layers.priors import make_unit_gaussian
 from sparse_generalization.utils.util_funcs import (
     positionalencoding2d,
     compute_attn_mean,
+    compute_attn_mean_ens, 
     compute_mask_mean,
     compute_max_paths,
 )
@@ -32,7 +33,7 @@ class HyperNet(nn.Module):
         prior_func = make_unit_gaussian,
         prior_type: str = "uniform",
         num_mha_layers: int = 1,
-        num_agg_layers: int = 1, 
+        include_agg_layer: bool = False, 
         seq_len: int = 1,
         embed_size: int = 32, 
         out_dim: int = 1, 
@@ -62,21 +63,20 @@ class HyperNet(nn.Module):
         self.prior_type = prior_type
         self.seq_len = seq_len
         self.num_mha_layers = num_mha_layers
-        self.num_agg_layers = num_agg_layers
+        self.include_agg_layer = include_agg_layer
         self.base_dist_size = 0
         self.agg_dist_size = 0
-        self.use_agg = False
         self.device = device
         self.embed_size = embed_size
         self.layernorm = layernorm
         self.dk = embed_size // num_heads
-        assert num_agg_layers < 2, "Cant have more than one agg layer"
+        self.num_agg_layers = 1 if include_agg_layer else 0 
 
         if hyper_type == "mask":
-            self.query_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + num_agg_layers)])
-            self.key_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + num_agg_layers)])
-            self.value_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + num_agg_layers)])
-            self.proj_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + num_agg_layers)])
+            self.query_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
+            self.key_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
+            self.value_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
+            self.proj_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
 
             self.base_dist_size = seq_len ** 2
             self.agg_dist_size = seq_len
@@ -90,8 +90,8 @@ class HyperNet(nn.Module):
             encoder_heads = False
 
         elif hyper_type == "directa":
-            self.value_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + num_agg_layers)])
-            self.proj_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + num_agg_layers)])
+            self.value_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
+            self.proj_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
 
             self.base_dist_size = seq_len ** 2
             self.agg_dist_size = seq_len
@@ -99,15 +99,15 @@ class HyperNet(nn.Module):
             encoder_heads = True
 
         elif hyper_type == "qk":
-            self.value_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + num_agg_layers)])
-            self.proj_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + num_agg_layers)])
+            self.value_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
+            self.proj_layers = nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
 
             self.base_dist_size = 2 * embed_size ** 2
             self.agg_dist_size = self.base_dist_size
             use_encoder = False
             encoder_heads = False
 
-        self.queries = nn.init.uniform_(nn.Parameter(torch.zeros((num_agg_layers, 1, embed_size), device=device)))
+        self.queries = nn.init.uniform_(nn.Parameter(torch.zeros((self.num_agg_layers, 1, embed_size), device=device)))
         self.total_mha_size = self.num_mha_layers * self.base_dist_size
         self.total_agg_size = self.num_agg_layers * self.agg_dist_size 
         self.total_num_layers = self.num_agg_layers + self.num_mha_layers
@@ -126,9 +126,6 @@ class HyperNet(nn.Module):
         else:
             self.prior = nn.Identity()
 
-        if num_agg_layers > 0:
-            self.use_agg = True
-
         self.param_flow = FlowVAE(
             input_dim=embed_size, 
             base_dist=prior_func(self.total_dist_size),
@@ -144,25 +141,30 @@ class HyperNet(nn.Module):
             device=device
         )
 
-        self.ln1s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(num_mha_layers + num_agg_layers)])
-        self.ln2s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(num_mha_layers + num_agg_layers)])
-        num_agg_mlps = 0 if (num_agg_layers - 1) < 0 else num_agg_layers - 1
+        self.ln1s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
+        self.ln2s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(num_mha_layers + self.num_agg_layers)])
         self.mlps = nn.ModuleList([nn.Sequential(
             nn.Linear(embed_size, 4 * embed_size),
             nn.Dropout(dropout),
             act(),
             nn.Linear(4 * embed_size, embed_size),
-        ) for _ in range(num_agg_mlps + num_mha_layers)])
+        ) for _ in range(num_mha_layers)])
 
-        self.mlps.append(
-            nn.Sequential(
-                nn.Linear(embed_size, 4 * embed_size),
-                nn.Dropout(dropout),
-                act(),
-                nn.Linear(4 * embed_size, out_dim),
+        if self.include_agg_layer:
+            self.mlps.append(
+                nn.Sequential(
+                    nn.Linear(embed_size, 4 * embed_size),
+                    nn.Dropout(dropout),
+                    act(),
+                    nn.Linear(4 * embed_size, out_dim),
+                )
             )
-        )
-
+        else:
+            self.mlps.append(
+                nn.Sequential(
+                    nn.Linear(embed_size, out_dim)
+                )
+            )
 
     def _split_heads(self, x: Tensor):
         batch_size, seq_len, _ = x.size()
@@ -291,12 +293,26 @@ class HyperNet(nn.Module):
         elif self.prior_type == "uniform" and self.training:
             prior = torch.tensor([1.0]).expand_as(ladj)
 
-        if self.num_agg_layers < 1: 
+        if not self.include_agg_layer: 
             out = self.mlps[-1](out.max(dim=1)[0])
         else:
             out = out.squeeze(dim=1)
 
         return out, path_matrix, ladj, prior, attn_matrices
+
+    @torch.no_grad()
+    def evaluate(self, x: Tensor, num_eval_samples: int = 5):
+        outs, masks, attns = [], [], []
+        for _ in range(num_eval_samples):
+            out, path_matrix, ladj, prior, attn_matrices = self(x)
+            outs.append(F.sigmoid(out))
+            masks.append(path_matrix)
+            attns.append(torch.stack(attn_matrices, dim=0))
+
+        outs = torch.stack(outs, dim=1)
+        masks = torch.stack(masks, dim=1)
+        attns = torch.stack(attns, dim=0)
+        return out.mean(dim=1, keepdim=True), masks, attns
     
     def _run_block(self, x: Tensor, ln1: nn.Module, ln2: nn.Module, mlp: nn.Module, mha_func, agg: bool = False):
         if self.layernorm:
@@ -498,8 +514,9 @@ class HyperNetSpartan(nn.Module):
         include_sparsity: bool = False,
         alpha: float = 0.1,
         num_mha_layers: int = 1,
-        num_agg_layers: int = 1, 
+        include_agg_layer: bool = False, 
         seq_len: int = 25,
+        num_eval_samples: int = 5, 
         model_dim: int = 32, 
         num_heads: int = 1,
         dropout: float = 0.0,
@@ -512,6 +529,7 @@ class HyperNetSpartan(nn.Module):
         separate_mask: bool = False,
         use_mask: bool = False,
         act: nn.Module = nn.ReLU,
+        val_freq: int = 10, 
         force_vae_gaussian: bool = False,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
         pe: bool = True,
@@ -527,14 +545,21 @@ class HyperNetSpartan(nn.Module):
         *args, 
         **kwargs
     ):
+        self.hyper_params = locals()
+        
+        for key in ["self", "__class__", "args", "kwargs"]:
+            del self.hyper_params[key]
+
         super().__init__(*args, **kwargs)
 
         self.device = device
         self.logger = logger
         self.model_dim = model_dim
+        self.val_freq = val_freq
         self.num_heads = num_heads
-        self.use_agg = num_agg_layers > 0
         self.num_mha_layers = num_mha_layers
+        self.include_agg_layer = include_agg_layer
+        self.num_eval_samples = num_eval_samples
 
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
@@ -563,7 +588,7 @@ class HyperNetSpartan(nn.Module):
             prior_func=prior_func,
             prior_type=prior_type,
             num_mha_layers=num_mha_layers,
-            num_agg_layers=num_agg_layers,
+            include_agg_layer=include_agg_layer,
             seq_len=seq_len,
             embed_size=embed_size,
             out_dim=out_dim,
@@ -600,12 +625,12 @@ class HyperNetSpartan(nn.Module):
         num_edges = attns.sum(dim=(1, 2)) / self.max_paths
         return (self.alpha - num_edges).pow(2).mean()
 
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor, evaluate: bool = False):
         priors, ladjs = 0, 0
         batch_size, width, height, _ = x.size()
         if self.max_paths is None:
             self.max_paths = compute_max_paths(
-                width * height, self.num_heads, self.num_mha_layers, self.use_agg
+                width * height, self.num_heads, self.num_mha_layers, self.include_agg_layer
             )
 
             print(f"MAX PATHS: {self.max_paths}")
@@ -632,11 +657,14 @@ class HyperNetSpartan(nn.Module):
                 x_attn = torch.cat([x_features, coords], dim=-1)
                 x_attn = x_attn.view(-1, width * height, self.embed_size)
 
-        out, path_matrix, ladj, prior, attn_matrices = self.hyper_net(x_attn)
+        if evaluate:
+            out, masks, attns = self.hyper_net.evaluate(x_attn, num_eval_samples=self.num_eval_samples)
+            return out, masks, attns
+        else:
+            out, path_matrix, ladj, prior, attn_matrices = self.hyper_net(x_attn)
+            return out, path_matrix, ladj, prior, attn_matrices
 
-        return out, path_matrix, ladj, prior, attn_matrices
-
-
+        
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []
         accs = []
@@ -649,6 +677,8 @@ class HyperNetSpartan(nn.Module):
         masks_test = deepcopy(attn_test)
         losses_test = deepcopy(attn_test)
         accs_test = deepcopy(attn_test)
+
+        postfix = {"loss": 0.0, "acc": 0.0, "gen_loss": 0.0}
 
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
@@ -705,7 +735,9 @@ class HyperNetSpartan(nn.Module):
             attn_edges.append(attn_running)
             mask_edges.append(mask_running)
 
-            postfix = {"loss": epoch_loss, "acc": epoch_acc, "gen_loss": epoch_gen}
+            postfix["loss"] = epoch_loss
+            postfix["acc"] = epoch_acc
+            postfix["gen_loss"] = epoch_loss
 
             pbar.set_description(f"Epoch: {step}")
             self.logger.log_metrics({"train/loss_epoch": epoch_loss}, step=step)
@@ -723,18 +755,19 @@ class HyperNetSpartan(nn.Module):
                 {f"train/mask_edges_train": mask_running}, step=self.global_step
             )
 
-            for loader, name in zip(testloaders, self.val_to_name.values()):
-                test_metrics = self.test(name, loader, folder="val")
-                if "id" in name:
-                    postfix["val_id"] = test_metrics["acc"]
-                elif "a" in name:
-                    postfix["val_a"] = test_metrics["acc"]
-                elif "b" in name:
-                    postfix["val_b"] = test_metrics["acc"]
-                masks_test[name].append(test_metrics["mask"])
-                attn_test[name].append(test_metrics["attn"])
-                losses_test[name].append(test_metrics["loss"])
-                accs_test[name].append(test_metrics["acc"])
+            if step % self.val_freq == 0: 
+                for loader, name in zip(testloaders, self.val_to_name.values()):
+                    test_metrics = self.test(name, loader, folder="val")
+                    if "id" in name:
+                        postfix["val_id"] = test_metrics["acc"]
+                    elif "a" in name:
+                        postfix["val_a"] = test_metrics["acc"]
+                    elif "b" in name:
+                        postfix["val_b"] = test_metrics["acc"]
+                    masks_test[name].append(test_metrics["mask"])
+                    attn_test[name].append(test_metrics["attn"])
+                    losses_test[name].append(test_metrics["loss"])
+                    accs_test[name].append(test_metrics["acc"])
 
             postfix["mask_edges"] = mask_running
             # postfix["attn_edges"] = attn_running
@@ -764,22 +797,19 @@ class HyperNetSpartan(nn.Module):
         mask_running = 0.0
         epoch_acc = 0.0
         epoch_loss = 0.0
-        epoch_masks = []
 
         for batch_idx, batch in enumerate(dataloader):
             x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
-            out, masks, ladj, prior, attns = self(x)
+            out, masks, attns = self(x, evaluate=True)
             loss = self.loss(out, y)
-
-            epoch_masks.append(masks)
 
             epoch_loss += loss.item()
             with torch.no_grad():
                 acc = self.accuracy(out, y)
                 epoch_acc += acc.item()
-                attn_running += compute_attn_mean(attns, self.threshold, self.device)
+                attn_running += compute_attn_mean_ens(attns, self.threshold, self.device)
                 mask_running += compute_mask_mean(masks)
 
         epoch_loss /= len(dataloader)
@@ -822,8 +852,7 @@ class HyperNetSpartan(nn.Module):
         for batch_idx, (x, y) in enumerate(anti_dataset):
             x = x.to(self.device)
             y = y.to(self.device)
-            out, masks, ladj, prior, attns = self(x)
-            probs = F.sigmoid(out)
+            probs, masks, attns = self(x, evaluate=True)
             labels.append(probs)
             true_labels.append(y)
 
