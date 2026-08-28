@@ -83,39 +83,57 @@ class FlowVAE(nn.Module):
             True if isinstance(base_dist, zuko.lazy.LazyDistribution) else False
         )
 
-    def forward(self, x: Tensor = None):
+    def forward(self, x: Tensor = None, num_evals: int = 1):
         ladj = 0
         batch_size, seq_len, _ = x.shape
 
+        if num_evals > 1:
+            x_rep = x.repeat_interleave(num_evals, dim=0)
+        else:
+            x_rep = x
+
         if self.use_encoder:
-            encoding, _, _, _ = self.encoder_agg(x)
+            encoding, _, _, _ = self.encoder_agg(x_rep)
             encoding = encoding.squeeze(dim=1)
             q = self.encoder(encoding)
             rep = q.rsample()
+
+            eff_batch = batch_size * num_evals
+
+            if self.training:
+                log_prior_base = q.log_prob(rep)
+            else:
+                log_prior_base = torch.zeros(
+                    eff_batch,
+                    device=rep.device,
+                    dtype=rep.dtype,
+                )
+
+            if self.force_vae_gaussian:
+                gaussian = torch.distributions.Normal(torch.zeros_like(rep[0]), torch.ones_like(rep[0]))
+                vae_prior = gaussian.log_prob(rep.reshape(batch_size, -1)).sum(dim=-1)
+
             if self.encoder_heads:
                 rep = rep.view(batch_size, self.num_heads, -1).reshape(
                     batch_size * self.num_heads, -1
                 )
-            
-            if self.force_vae_gaussian:
-                gaussian = torch.distributions.Normal(torch.zeros_like(rep[0]), torch.ones_like(rep[0]))
-                vae_prior = gaussian.log_prob(rep.reshape(batch_size, -1)).sum(dim=-1)
         else:
+            eff_batch = num_evals
             if self.is_lazy:
                 base_dist = self.base_dist()
-                rep = base_dist.sample().view(1, -1)
             else:
                 base_dist = self.base_dist
-                rep = self.prior.sample().view(1, -1)
 
-        if self.training:
-            log_prior_base = (
-                q.log_prob(rep.reshape(batch_size, -1))
-                if self.use_encoder
-                else base_dist.log_prob(rep.reshape(1, -1))
-            ).reshape(-1, 1)
-        else:
-            log_prior_base = 0
+            rep = base_dist.sample((eff_batch,))
+
+            if self.training:
+                log_prior_base = base_dist.log_prob(rep)
+            else:
+                log_prior_base = torch.zeros(
+                    eff_batch,
+                    device=rep.device,
+                    dtype=rep.dtype,
+                )
        
         dist = self.normalizing_flow()
         transform = dist.transform
@@ -124,9 +142,24 @@ class FlowVAE(nn.Module):
             ladj = zuko.distributions._sum_rightmost(ladj, dist.reinterpreted)
         else:
             output = transform(rep)
+            ladj = torch.zeros(
+                output.shape[0],
+                device=output.device,
+                dtype=output.dtype,
+            )
 
         log_prob_z = log_prior_base - ladj
         if self.force_vae_gaussian:
             log_prob_z = log_prob_z - vae_prior
+
+        if self.encoder_heads:
+            output = (
+                output.view(eff_batch, self.num_heads, -1)
+                .reshape(eff_batch, -1)
+            )
+
+            log_prob_z = (
+                log_prob_z.view(eff_batch, self.num_heads,).sum(dim=-1)
+            )
 
         return output, log_prob_z

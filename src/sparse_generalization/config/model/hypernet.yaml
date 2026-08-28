@@ -4,21 +4,22 @@ _partial_: true
 inp_dim: 25
 out_dim: 1 
 layernorm: false
-model_dim: 32
+model_dim: 16
 seq_len: 25
 embedding_inp: false
 num_heads: 1
 hyper_type: qk
 num_mha_layers: 1
 include_agg_layer: false
+forward_evals: 1
 separate_mask: false
 use_mask: false
 flow_params:
   n_flows: 3
-  hidden_features: [256, 256]
+  hidden_features: [64, 64]
 prior_params:
   n_flows: 3
-  hidden_features: [128, 128]
+  hidden_features: [32, 32]
 prior_type: normal
 include_sparsity: false
 lr: 1e-3
@@ -27,7 +28,7 @@ alpha: 0.1
 residual: true
 num_embeddings: 25
 pe: true
-beta: 1.0
+beta: 0.1
 val_freq: 5
 num_eval_samples: 5
 sinusoidal: true

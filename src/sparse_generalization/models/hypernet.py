@@ -107,7 +107,7 @@ class HyperNet(nn.Module):
             use_encoder = False
             encoder_heads = False
 
-        self.queries = nn.init.uniform_(nn.Parameter(torch.zeros((self.num_agg_layers, 1, embed_size), device=device)))
+        self.queries = nn.init.uniform_(nn.Parameter(torch.zeros((1, embed_size), device=device)))
         self.total_mha_size = self.num_mha_layers * self.base_dist_size
         self.total_agg_size = self.num_agg_layers * self.agg_dist_size 
         self.total_num_layers = self.num_agg_layers + self.num_mha_layers
@@ -182,13 +182,14 @@ class HyperNet(nn.Module):
             .reshape(batch_size, seq_len, self.dk * self.num_heads)
         )
 
-    def forward(self, x: Tensor, avg_heads: bool = True):
-        batch_size, seq_len, _ = x.shape
+    def forward(self, x: Tensor, avg_heads: bool = True, num_evals: int = 2):
+        batch_size, seq_len, dim = x.shape
+        threshold = 1 / seq_len
         batch_heads = batch_size * self.num_heads
         ladj, prior = 0, 0 
-        flow_out, ladj = self.param_flow(x)
-        path_matrix = torch.eye(self.seq_len, device=self.device).repeat(batch_size, 1, 1)
-        attn_matrices = []
+        flow_out, ladj = self.param_flow(x, num_evals=num_evals)
+        path_matrix = torch.eye(self.seq_len, device=self.device).repeat(num_evals, batch_size, 1, 1).view(-1, seq_len, seq_len)
+        attn_matrix = torch.eye(self.seq_len, device=self.device).repeat(num_evals, batch_size, 1, 1).view(-1, seq_len, seq_len)
 
         if self.hyper_type == "mask":
             mha_out, agg_out = torch.split(flow_out, split_size_or_sections=[self.total_mha_size, self.total_agg_size], dim=-1)
@@ -198,7 +199,7 @@ class HyperNet(nn.Module):
                 agg_layer = False if i < self.num_mha_layers else True
                 shape = 1 if agg_layer else self.seq_len
                 mask_layer = agg_layers[i - self.num_mha_layers] if agg_layer else mha_layers[i]
-                query = self.queries[i - self.num_mha_layers] if agg_layer else None
+                query = self.queries if agg_layer else None
                 
                 query_layer = self.query_layers[i]
                 key_layer = self.key_layers[i]
@@ -213,31 +214,36 @@ class HyperNet(nn.Module):
                                    proj_nn=proj_layer,
                                    agg=agg_layer, 
                                    query=query,
-                                   avg_heads=avg_heads)
+                                   avg_heads=avg_heads,
+                                   num_evals=num_evals)
                 out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
-                attn_matrices.append(adj)
+                thresh = (adj > threshold).float()
+                attn_matrix = torch.bmm(thresh, attn_matrix)
                 path_matrix = torch.bmm(mask, path_matrix)
                 x = out
 
         elif self.hyper_type == "mha":
             mha_layers = torch.chunk(flow_out, chunks=self.total_num_layers, dim=-1)
+            x = x.expand(num_evals, -1, -1, -1).reshape(-1, seq_len, dim)
             for i in range(self.total_num_layers):
                 agg_layer = False if i < self.num_mha_layers else True
                 query_layer, key_layer, value_layer, proj_layer  = torch.chunk(mha_layers[i], chunks=4, dim=-1)
-                query = self.queries[i - self.num_mha_layers] if agg_layer else None
+                query = self.queries if agg_layer else None
 
                 mha_func = partial(self._mha_mha, 
-                                   Wq=query_layer.view(self.embed_size, self.embed_size),
-                                   Wk=key_layer.view(self.embed_size, self.embed_size),
-                                   Wv=value_layer.view(self.embed_size, self.embed_size),
-                                   Wo=proj_layer.view(self.embed_size, self.embed_size),
+                                   Wq=query_layer.view(num_evals, self.embed_size, self.embed_size),
+                                   Wk=key_layer.view(num_evals, self.embed_size, self.embed_size),
+                                   Wv=value_layer.view(num_evals, self.embed_size, self.embed_size),
+                                   Wo=proj_layer.view(num_evals, self.embed_size, self.embed_size),
                                    agg=agg_layer,
                                    query=query,
-                                   avg_heads=avg_heads)
+                                   avg_heads=avg_heads, 
+                                   num_evals=num_evals)
                 out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
-                attn_matrices.append(adj)
+                thresh = (adj > threshold).float()
+                attn_matrix = torch.bmm(thresh, attn_matrix)
                 path_matrix = torch.bmm(mask, path_matrix)
-                x = out
+                x = out # (b * e, l, k)
         
         elif self.hyper_type == "directa":
             mha_out, agg_out = torch.split(flow_out, split_size_or_sections=[self.total_mha_size, self.total_agg_size], dim=-1)
@@ -255,64 +261,72 @@ class HyperNet(nn.Module):
                                    value_nn=value_layer,
                                    proj_nn=proj_layer,
                                    agg=agg_layer,
-                                   avg_heads=avg_heads)
+                                   avg_heads=avg_heads, 
+                                   num_evals=num_evals)
                 out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
-                attn_matrices.append(adj)
+                thresh = (adj > threshold).float()
+                attn_matrix = torch.bmm(thresh, attn_matrix)
                 path_matrix = torch.bmm(mask, path_matrix)
                 x = out
 
         elif self.hyper_type == "qk":
             mha_layers = torch.chunk(flow_out, chunks=self.total_num_layers, dim=-1)
+            x = x.expand(num_evals, -1, -1, -1).reshape(-1, seq_len, dim)
             for i in range(self.total_num_layers):
                 agg_layer = False if i < self.num_mha_layers else True
                 query_layer, key_layer  = torch.chunk(mha_layers[i], chunks=2, dim=-1)
                 value_layer = self.value_layers[i]
                 proj_layer = self.proj_layers[i]
-                query = self.queries[i - self.num_mha_layers] if agg_layer else None
+                query = self.queries if agg_layer else None
 
                 mha_func = partial(self._mha_qk, 
-                                   Wq=query_layer.view(self.embed_size, self.embed_size),
-                                   Wk=key_layer.view(self.embed_size, self.embed_size),
+                                   Wq=query_layer.view(num_evals, self.embed_size, self.embed_size),
+                                   Wk=key_layer.view(num_evals, self.embed_size, self.embed_size),
                                    value_nn=value_layer,
                                    proj_nn=proj_layer,
                                    agg=agg_layer,
                                    query=query,
-                                   avg_heads=avg_heads)
+                                   avg_heads=avg_heads, 
+                                   num_evals=num_evals)
                 
                 out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
-                attn_matrices.append(adj)
+                thresh = (adj > threshold).float()
+                attn_matrix = torch.bmm(thresh, attn_matrix)
                 path_matrix = torch.bmm(mask, path_matrix)
                 x = out
 
-        if self.prior_type == "laplace" and self.training:
-            prior = self.prior().log_prob(path_matrix.sum(dim=(-2, -1)))
-        elif self.prior_type == "normal" and self.training:
-            prior = self.prior().log_prob(flow_out).sum(dim=-1)
-        elif self.prior_type == "nf" and self.training:
-            prior = self.prior().log_prob(flow_out)
-        elif self.prior_type == "uniform" and self.training:
-            prior = torch.tensor([1.0]).expand_as(ladj)
+        if self.training: 
+            if self.prior_type == "laplace" and self.training:
+                prior = self.prior().log_prob(path_matrix.sum(dim=(-2, -1)))
+            elif self.prior_type == "normal" and self.training:
+                prior = self.prior().log_prob(flow_out).sum(dim=-1)
+            elif self.prior_type == "nf" and self.training:
+                prior = self.prior().log_prob(flow_out)
+            elif self.prior_type == "uniform" and self.training:
+                prior = torch.tensor([1.0]).expand_as(ladj)
 
         if not self.include_agg_layer: 
             out = self.mlps[-1](out.max(dim=1)[0])
         else:
             out = out.squeeze(dim=1)
 
-        return out, path_matrix, ladj, prior, attn_matrices
+        return out, path_matrix, ladj, prior, attn_matrix
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate(self, x: Tensor, num_eval_samples: int = 5):
-        outs, masks, attns = [], [], []
-        for _ in range(num_eval_samples):
-            out, path_matrix, ladj, prior, attn_matrices = self(x)
-            outs.append(F.sigmoid(out))
-            masks.append(path_matrix)
-            attns.append(torch.stack(attn_matrices, dim=0))
+        batch_size, seq_len, hidden_dim = x.shape
+        outs, masks, ladj, prior, attns = self(x, num_evals=num_eval_samples)
+        outs = torch.sigmoid(outs)
+        outs = outs.view(num_eval_samples, batch_size, -1)
 
-        outs = torch.stack(outs, dim=1)
-        masks = torch.stack(masks, dim=1)
-        attns = torch.stack(attns, dim=0)
-        return out.mean(dim=1, keepdim=True), masks, attns
+        masks = masks.view(num_eval_samples, batch_size, -1, seq_len)
+        attns = attns.view(num_eval_samples, batch_size, -1, seq_len)
+
+        return outs.mean(dim=0), masks, attns
+
+    def matmul(self, x: Tensor, W: Tensor, num_evals: int):
+        batch_evals, seq_len, dim = x.shape
+        return (x.view(num_evals, -1, seq_len, dim) @ W.unsqueeze(1)).view(-1, seq_len, dim)
     
     def _run_block(self, x: Tensor, ln1: nn.Module, ln2: nn.Module, mlp: nn.Module, mha_func, agg: bool = False):
         if self.layernorm:
@@ -345,7 +359,8 @@ class HyperNet(nn.Module):
         avg_heads: bool = True,
         agg: bool = False, 
         query: Tensor = None,
-        bias: float = 0.5
+        bias: float = 0.5,
+        num_evals: int = 1
     ):
         batch_size, seq_len, _ = x.size()
         shape = (1, seq_len) if agg else (seq_len, seq_len)
@@ -370,9 +385,9 @@ class HyperNet(nn.Module):
         masked_attention_probs = A * attention_probs
         hidden_repr = torch.matmul(masked_attention_probs, values_split)
 
-        if self.residual:
+        if self.residual and not agg:
             eye = torch.eye(seq_len, device=A.device).view(1, seq_len, seq_len).expand_as(A)
-            A = A + eye if not agg else A
+            A = A + eye 
 
         hidden_repr = hidden_repr.view(-1, self.num_heads, shape[0], self.dk)
         attention_repr = self._merge_heads(hidden_repr)
@@ -389,20 +404,26 @@ class HyperNet(nn.Module):
     
     def _mha_mha(
         self, 
-        x: Tensor, 
+        x: Tensor, # (b * e, l, k)
         Wq: Tensor, 
         Wk: Tensor, 
         Wv: Tensor, 
         Wo: Tensor,
         agg: bool = False, 
         query: Tensor = None,
-        avg_heads: bool = True
+        avg_heads: bool = True,
+        num_evals: int = 1
     ):
-        batch_size, seq_len, _ = x.shape
+        batch_evals, seq_len, dim = x.shape
         shape = 1 if agg else seq_len
-        queries = x @ Wq if not agg else query.expand(batch_size, -1, -1) @ Wq
-        keys = x @ Wk
-        values = x @ Wv
+        if not agg:
+            queries = self.matmul(x, Wq, num_evals=num_evals)
+        else:
+            queries = self.matmul(query.expand(batch_evals, -1, -1), Wq, num_evals=num_evals)
+        keys = self.matmul(x, Wk, num_evals=num_evals)
+        values = self.matmul(x, Wv, num_evals=num_evals) # (b*e, l, k)
+
+        print(x.shape, keys.shape)
 
         queries_split = self._split_heads(queries)  
         keys_split = self._split_heads(keys)
@@ -412,15 +433,17 @@ class HyperNet(nn.Module):
             queries_split, keys_split.transpose(1, 2)
         ) / math.sqrt(
             self.dk
-        )  # (b*h, l, l)
+        )  # (b*h*e, l, l)
 
         attention_probs = softmax(attention_logits, dim=-1)
-        hidden_repr = torch.bmm(attention_probs, values_split)
+        hidden_repr = torch.bmm(attention_probs, values_split) 
         attention_repr = self._merge_heads(
             hidden_repr.view(-1, self.num_heads, shape, self.dk)
-        )
-        attention_repr = attention_repr @ Wo
-        mask = torch.ones((batch_size, self.num_heads, shape, seq_len))
+        ) # (b*e, l, k) 
+        
+        attention_repr = attention_repr.view(num_evals, -1, shape, dim) @ Wo.unsqueeze(1) # (b*e, l, k) @ (e, k, k)
+        attention_repr = attention_repr.view(-1, shape, dim) 
+        mask = torch.ones((batch_evals, self.num_heads, shape, seq_len), device=self.device)
 
         if avg_heads:
             adjacency = attention_probs.view(-1, self.num_heads, shape, seq_len).sum(dim=1)
@@ -437,7 +460,8 @@ class HyperNet(nn.Module):
         value_nn: nn.Module,
         proj_nn: nn.Module,
         agg: bool = False, 
-        avg_heads: bool = True
+        avg_heads: bool = True,
+        num_evals: int = 1
     ):
         batch_size, seq_len, _ = x.shape
         shape = 1 if agg else seq_len
@@ -468,15 +492,19 @@ class HyperNet(nn.Module):
         proj_nn: nn.Module,
         agg: bool = False, 
         query: Tensor = None,
-        avg_heads: bool = True
+        avg_heads: bool = True,
+        num_evals: int = 1
     ):
-        batch_size, seq_len, _ = x.shape
+        batch_evals, seq_len, dim = x.shape
         shape = 1 if agg else seq_len
-        queries = x @ Wq if not agg else query.expand(batch_size, -1, -1) @ Wq
-        keys = x @ Wk
-        values = value_nn(x)
+        if not agg:
+            queries = self.matmul(x, Wq, num_evals=num_evals)
+        else:
+            queries = self.matmul(query.expand(batch_evals, -1, -1), Wq, num_evals=num_evals)
+        keys = self.matmul(x, Wk, num_evals=num_evals)
+        values = value_nn(x) 
 
-        queries_split = self._split_heads(queries)  # (b * h, l, d_k)
+        queries_split = self._split_heads(queries)  # (b * h * e, l, d_k)
         keys_split = self._split_heads(keys)
         values_split = self._split_heads(values)
 
@@ -493,7 +521,7 @@ class HyperNet(nn.Module):
             hidden_repr.view(-1, self.num_heads, shape, self.dk)
         )
         attention_repr = proj_nn(attention_repr)
-        mask = torch.ones((batch_size, self.num_heads, shape, seq_len))
+        mask = torch.ones((batch_evals, self.num_heads, shape, seq_len), device=self.device)
 
         if avg_heads:
             adjacency = attention_probs.view(-1, self.num_heads, shape, seq_len).sum(dim=1)
@@ -525,6 +553,7 @@ class HyperNetSpartan(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
         device: str = "cuda",
+        forward_evals: int = 1, 
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
@@ -560,6 +589,7 @@ class HyperNetSpartan(nn.Module):
         self.num_mha_layers = num_mha_layers
         self.include_agg_layer = include_agg_layer
         self.num_eval_samples = num_eval_samples
+        self.forward_evals = forward_evals
 
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
@@ -635,6 +665,8 @@ class HyperNetSpartan(nn.Module):
 
             print(f"MAX PATHS: {self.max_paths}")
 
+        self.threshold = 1 / (width * height)
+
         if self.embedding_inp:
             assert x.size(3) == 1, "channels is not 1 for shapes input"
             x = self.embed_layer(x.squeeze(3).int())  # (b, w, h, e)
@@ -661,7 +693,7 @@ class HyperNetSpartan(nn.Module):
             out, masks, attns = self.hyper_net.evaluate(x_attn, num_eval_samples=self.num_eval_samples)
             return out, masks, attns
         else:
-            out, path_matrix, ladj, prior, attn_matrices = self.hyper_net(x_attn)
+            out, path_matrix, ladj, prior, attn_matrices = self.hyper_net(x_attn, num_evals=self.forward_evals)
             return out, path_matrix, ladj, prior, attn_matrices
 
         
@@ -714,9 +746,7 @@ class HyperNetSpartan(nn.Module):
                     acc = self.accuracy(out, y)
                     epoch_acc += acc.item()
                     
-                    attn_running += compute_attn_mean(
-                        attns, self.threshold, self.device
-                    )
+                    attn_running += compute_mask_mean(attns)
                     mask_running += compute_mask_mean(masks)
 
                 self.global_step += 1
@@ -809,7 +839,7 @@ class HyperNetSpartan(nn.Module):
             with torch.no_grad():
                 acc = self.accuracy(out, y)
                 epoch_acc += acc.item()
-                attn_running += compute_attn_mean_ens(attns, self.threshold, self.device)
+                attn_running += compute_mask_mean(attns)
                 mask_running += compute_mask_mean(masks)
 
         epoch_loss /= len(dataloader)
