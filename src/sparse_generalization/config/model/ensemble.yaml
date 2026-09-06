@@ -20,9 +20,10 @@ alpha: 0.1
 residual: true
 num_embeddings: 25
 pe: true
+use_optimal_test: true
 sinusoidal: true
 dropout: 0.0
-device: cuda
+device: cpu
 beta1: 0.99
 beta2: 0.999
 

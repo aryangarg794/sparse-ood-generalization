@@ -85,14 +85,15 @@ class FlowVAE(nn.Module):
 
     def forward(self, x: Tensor = None, num_evals: int = 1):
         ladj = 0
-        batch_size, seq_len, _ = x.shape
-
-        if num_evals > 1:
-            x_rep = x.repeat_interleave(num_evals, dim=0)
-        else:
-            x_rep = x
+        batch_size, seq_len, dim = x.shape
 
         if self.use_encoder:
+
+            if num_evals > 1:
+                x_rep = x.expand(num_evals, -1, -1, -1).reshape(-1, seq_len, dim)
+            else:
+                x_rep = x
+
             encoding, _, _, _ = self.encoder_agg(x_rep)
             encoding = encoding.squeeze(dim=1)
             q = self.encoder(encoding)
@@ -111,11 +112,11 @@ class FlowVAE(nn.Module):
 
             if self.force_vae_gaussian:
                 gaussian = torch.distributions.Normal(torch.zeros_like(rep[0]), torch.ones_like(rep[0]))
-                vae_prior = gaussian.log_prob(rep.reshape(batch_size, -1)).sum(dim=-1)
+                vae_prior = gaussian.log_prob(rep.reshape(eff_batch, -1)).sum(dim=-1)
 
             if self.encoder_heads:
-                rep = rep.view(batch_size, self.num_heads, -1).reshape(
-                    batch_size * self.num_heads, -1
+                rep = rep.view(eff_batch, self.num_heads, -1).reshape(
+                    eff_batch * self.num_heads, -1
                 )
         else:
             eff_batch = num_evals
@@ -152,7 +153,7 @@ class FlowVAE(nn.Module):
         if self.force_vae_gaussian:
             log_prob_z = log_prob_z - vae_prior
 
-        if self.encoder_heads:
+        if self.encoder_heads and self.use_encoder:
             output = (
                 output.view(eff_batch, self.num_heads, -1)
                 .reshape(eff_batch, -1)

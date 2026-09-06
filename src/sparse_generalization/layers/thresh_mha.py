@@ -57,7 +57,7 @@ class MultiHeadAttentionThresh(nn.Module):
         queries_split = self._split_heads(queries)  # (b * h, l, d_k)
         keys_split = self._split_heads(keys)
         values_split = self._split_heads(values)
-
+        
         attention_repr, adjacency_per_head = self._attention(
             queries_split, keys_split, values_split
         )

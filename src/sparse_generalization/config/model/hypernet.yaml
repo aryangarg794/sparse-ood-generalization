@@ -11,7 +11,7 @@ num_heads: 1
 hyper_type: qk
 num_mha_layers: 1
 include_agg_layer: false
-forward_evals: 1
+forward_evals: 2
 separate_mask: false
 use_mask: false
 flow_params:
@@ -28,9 +28,11 @@ alpha: 0.1
 residual: true
 num_embeddings: 25
 pe: true
-beta: 0.1
+beta: 1.0
 val_freq: 5
 num_eval_samples: 5
+div_coeff: -0.2
+use_optimal_test: true
 sinusoidal: true
 dropout: 0.0
 device: cpu
@@ -41,3 +43,7 @@ prior_func:
   _partial_: true
   _target_: sparse_generalization.layers.priors.make_unit_gaussian
   k: 10
+
+div_loss: 
+  _partial_: true
+  _target_: sparse_generalization.layers.diversity_losses.CosineRepDiv

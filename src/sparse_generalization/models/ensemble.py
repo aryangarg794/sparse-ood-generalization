@@ -207,6 +207,7 @@ class Ensemble(nn.Module):
         agg_pool: bool = False,
         residual: bool = True,
         include_sparsity: bool = False,
+        use_optimal_test: bool = False, 
         ensemble_loss: str = "mean",
         alpha: float = 0.1,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
@@ -235,7 +236,9 @@ class Ensemble(nn.Module):
         self.alpha = alpha
         self.device = device
         self.logger = logger
+        self.use_optimal_test = use_optimal_test
         self.ensemble_loss = ensemble_loss
+
         self.val_to_name = val_to_name
         self.val_freq = val_freq
         self.per_ensemble_test = per_ensemble_test
@@ -300,9 +303,11 @@ class Ensemble(nn.Module):
         
         return torch.stack(outputs, dim=1), torch.stack(masks, dim=1), torch.stack(mask_attns, dim=0), attns
 
-    def predict(self, x: Tensor):
+    def predict(self, x: Tensor, ret_mean: bool = True):
         out, mask, mask_attn, attn = self(x)
-        return F.sigmoid(out).mean(dim=1), mask, mask_attn, attn
+        if ret_mean:
+            return F.sigmoid(out).mean(dim=1), mask, mask_attn, attn
+        return out, mask, mask_attn, attn
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []
@@ -357,7 +362,7 @@ class Ensemble(nn.Module):
                     acc = self.accuracy(self.predict(x)[0], y)
                     epoch_acc += acc.item()
 
-                    threshold = 1 / x.size(1)
+                    threshold = 1 / (x.size(1) * x.size(2)) 
                     attn_running += compute_attn_mean_ens(mask_attns, threshold=threshold, device=self.device)
                     mask_running += compute_mask_mean(masks)
 
@@ -397,7 +402,7 @@ class Ensemble(nn.Module):
                 {f"train/mask_edges_train": mask_running}, step=self.global_step
             )
 
-            if step % self.val_freq == 0:
+            if not self.use_optimal_test and step % self.val_freq == 0:
                 for loader, name in zip(testloaders, self.val_to_name.values()):
                     test_metrics = self.test(self, name, loader, folder="val")
 
@@ -434,6 +439,16 @@ class Ensemble(nn.Module):
                         self.num_a += 1
                     if score_b > 0.8:
                         self.num_b += 1
+
+            if self.use_optimal_test and step % self.val_freq == 0:
+                for loader, name in zip(testloaders, self.val_to_name.values()):
+                    test_metrics = self.optimal_test(self, name, loader, folder="val")
+                    if "id" in name:
+                        postfix["ens_id"] = test_metrics["acc"]
+                    elif "a" in name:
+                        postfix["ens_a"] = test_metrics["acc"]
+                    elif "b" in name:
+                        postfix["ens_b"] = test_metrics["acc"]
 
             postfix["num_a"] = self.num_a
             postfix["num_b"] = self.num_b
@@ -476,7 +491,7 @@ class Ensemble(nn.Module):
                 acc = self.accuracy(out, y)
                 epoch_acc += acc.item()
 
-                threshold = 1 / x.size(1)
+                threshold = 1 / (x.size(1) * x.size(2)) 
                 attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device)
                 mask_running += compute_mask_mean(mask)
 
@@ -562,3 +577,60 @@ class Ensemble(nn.Module):
         results["conf_b"] = conf_b.item()
 
         return results
+
+    @torch.inference_mode()
+    def optimal_test(self, model, name: str, dataloader: DataLoader, folder: str = 'test'):
+        self.eval()
+        attn_running = 0.0
+        mask_running = 0.0
+        epoch_acc = 0.0
+        epoch_loss = 0.0
+
+        for batch_idx, batch in enumerate(dataloader):
+            x, y = batch
+            x = x.to(self.device)
+            y = y.to(self.device)
+            outs, masks, mask_attn, attns = model.predict(x, ret_mean=False)
+            outs = outs.transpose(0, 1)
+            loss = float('inf')
+            acc = float('-inf')
+            for out in outs:
+                loss = min(F.binary_cross_entropy_with_logits(out, y), loss)
+                acc = max(self.accuracy(out, y), acc)
+
+            threshold = 1 / (x.size(1) * x.size(2)) 
+            attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device)
+            mask_running += compute_mask_mean(masks)
+
+            epoch_loss += loss.item()
+            epoch_acc += acc.item()
+
+        epoch_loss /= len(dataloader)
+        epoch_acc /= len(dataloader)
+        attn_running /= len(dataloader)
+        mask_running /= len(dataloader)
+
+        self.logger.log_metrics(
+            {f"{folder}/loss_ens_{name}": epoch_loss}, step=self.global_step
+        )
+
+        self.logger.log_metrics(
+            {f"{folder}/acc_ens_{name}": epoch_acc}, step=self.global_step
+        )
+
+        self.logger.log_metrics(
+            {f"{folder}/attn_ens_{name}": attn_running}, step=self.global_step
+        )
+
+        self.logger.log_metrics(
+            {f"{folder}/mask_ens_{name}": mask_running}, step=self.global_step
+        )
+
+        self.train()
+
+        return {
+            "loss": epoch_loss,
+            "acc": epoch_acc,
+            "attn": attn_running,
+            "mask": mask_running,
+        }
