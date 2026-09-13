@@ -20,6 +20,7 @@ from torchinfo import summary
 from sparse_generalization.models.generative import FlowSpartan
 from sparse_generalization.models.hypernet import HyperNetSpartan
 from sparse_generalization.models.ensemble import Ensemble
+from sparse_generalization.models.cond_spartan import ConditionalSPARTAN
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 warnings.filterwarnings(
@@ -40,9 +41,10 @@ def main(cfg: DictConfig):
     test_model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
     flow_model = isinstance(test_model, FlowSpartan) or isinstance(test_model, HyperNetSpartan)
     ensemble_model = isinstance(test_model, Ensemble)
+    cond_model = isinstance(test_model, ConditionalSPARTAN)
     del test_model
     dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)(
-        compute_mask=cfg.model.compute_mask if not (flow_model or ensemble_model) else False
+        compute_mask=cfg.model.compute_mask if not (flow_model or ensemble_model or cond_model) else False
     )
 
     print(OmegaConf.to_yaml(cfg, resolve=True))

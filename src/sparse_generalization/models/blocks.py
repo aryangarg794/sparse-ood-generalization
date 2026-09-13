@@ -10,6 +10,7 @@ from sparse_generalization.models.mlp import BasicMLP
 from sparse_generalization.layers.bern_mha import MultiHeadAttentionBern
 from sparse_generalization.layers.oracle import MultiHeadAttentionOracle
 from sparse_generalization.layers.gen_mha import FlowMasking, FlowMHA
+from sparse_generalization.layers.film_attn import FiLMAttention, FiLMLayer
 
 
 class MHABlock(nn.Module):
@@ -255,6 +256,97 @@ class MHABlockGen(nn.Module):
                 attn_masks,
                 attn_scores,
             )
+
+
+class MHABlockCond(nn.Module):
+    def __init__(
+        self: Self,
+        embed_size: int,
+        context_dim: int,
+        act: nn.Module,
+        dropout: int,
+        layernorm: bool,
+        residual: bool,
+        num_heads: int = 1,
+        temp: float = 1.0,
+        num_layers_film: int = 2,
+        film_mlp: bool = False,
+        device: str = "cuda",
+        *args,
+        **kwargs,
+    ):
+        super(MHABlockCond, self).__init__(*args, **kwargs)
+        self.residual = residual
+        self.layernorm = layernorm
+        self.film_mlp = film_mlp
+
+        self.mha = FiLMAttention(
+            embed_size,
+            context_dim=context_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            temp=temp,
+            act=act,
+            num_layers_film=num_layers_film,
+            residual=residual,
+        )
+
+        self.ln1 = nn.LayerNorm(embed_size)
+        self.ln2 = nn.LayerNorm(embed_size)
+        if film_mlp:
+            self.first_mlp = nn.Sequential(
+                nn.Linear(embed_size, 4 * embed_size),
+                nn.Dropout(dropout),
+            )
+            self.film_layer = FiLMLayer(
+                4 * embed_size, context_dim, num_layers_film, act
+            )
+            self.second_mlp = nn.Sequential(
+                act(),
+                nn.Linear(4 * embed_size, embed_size),
+            )
+        else:
+            self.mlp = nn.Sequential(
+                nn.Linear(embed_size, 4 * embed_size),
+                nn.Dropout(dropout),
+                act(),
+                nn.Linear(4 * embed_size, embed_size),
+            )
+
+    def _mlp(self: Self, x: Tensor, context: Tensor):
+        if self.film_mlp:
+            out = self.first_mlp(x)  # (b, m, l, 4d)
+            out = self.film_layer(out, context, per_mode=True)
+            return self.second_mlp(out)
+        return self.mlp(x)
+
+    def forward(self: Self, x: Tensor, context: Tensor, avg_heads: bool = True):
+        return self._forward_image(x, context, avg_heads)
+
+    def _forward_image(self: Self, x: Tensor, context: Tensor, avg_heads: bool = True):
+
+        if self.layernorm:
+            x_ln = self.ln1(x)
+            attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(
+                x_ln, x_ln, x_ln, context, avg_attn_heads=avg_heads, avg_mask=avg_heads
+            )
+            if self.residual:
+                attn_out = attn_out + x
+                out = self._mlp(self.ln2(attn_out), context)
+                out = out + attn_out
+            else:
+                out = self._mlp(self.ln2(attn_out), context)
+        else:
+            attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(
+                x, x, x, context, avg_attn_heads=avg_heads, avg_mask=avg_heads
+            )
+            if self.residual:
+                out = self._mlp(attn_out + x, context)
+                out = out + attn_out
+            else:
+                out = self._mlp(attn_out, context)
+
+        return out, attn_masks, masked_attn_scores, attn_scores
 
 
 class MHABlockOracle(MHABlockBern):

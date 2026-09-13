@@ -171,7 +171,7 @@ class AggregationAttention(nn.Module):
 
             masked_attention_probs = A * attention_probs
         else:
-            A = torch.ones(batch_heads, 1, seq_len)
+            A = torch.ones(batch_heads, 1, seq_len, device=query.device)
             masked_attention_probs = attention_probs
 
         # (bh, 1, l)

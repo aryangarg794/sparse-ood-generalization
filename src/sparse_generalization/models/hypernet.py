@@ -316,7 +316,7 @@ class HyperNet(nn.Module):
             elif self.prior_type == "nf" and self.training:
                 prior = self.prior().log_prob(flow_out)
             elif self.prior_type == "uniform" and self.training:
-                prior = torch.tensor([1.0]).expand_as(ladj)
+                prior = torch.ones_like(ladj)
 
         if compute_div:
             match self.div_loss:
@@ -512,7 +512,9 @@ class HyperNet(nn.Module):
         )
 
         attention_repr = proj_nn(attention_repr)
-        mask = torch.ones((batch_size, self.num_heads, shape, seq_len))
+        mask = torch.ones(
+            (batch_size, self.num_heads, shape, seq_len), device=x.device
+        )
         if avg_heads:
             adjacency = attention_probs.view(-1, self.num_heads, shape, seq_len).sum(dim=1)
             mask = mask.sum(dim=1)
@@ -973,7 +975,7 @@ class HyperNetSpartan(nn.Module):
         acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
         acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
         conf_a = preds[:midpoint].mean()
-        conf_b = preds[:midpoint].mean()
+        conf_b = preds[midpoint:].mean()
 
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()

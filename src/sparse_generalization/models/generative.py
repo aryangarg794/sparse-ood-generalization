@@ -507,7 +507,7 @@ class FlowSpartan(nn.Module):
         acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
         acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
         conf_a = preds[:midpoint].mean()
-        conf_b = preds[:midpoint].mean()
+        conf_b = preds[midpoint:].mean()
 
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()

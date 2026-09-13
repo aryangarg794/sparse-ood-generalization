@@ -297,7 +297,9 @@ class FlowMHA(nn.Module):
             queries, keys, values, Wq, Wk, Wv, Wo
         )
 
-        mask_per_head = torch.ones((batch_size, self.heads, seq_len, seq_len))
+        mask_per_head = torch.ones(
+            (batch_size, self.heads, seq_len, seq_len), device=queries.device
+        )
 
         if self.prior_type == "normal" and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(g).sum(dim=-1)
@@ -519,7 +521,9 @@ class FlowDirectA(nn.Module):
 
         return (
             attention_repr,
-            torch.ones((batch_size, self.heads, seq_len, seq_len)),
+            torch.ones(
+                (batch_size, self.heads, seq_len, seq_len), device=query.device
+            ),
             attention_probs.view(-1, self.heads, seq_len, seq_len),
         )
 
@@ -690,6 +694,8 @@ class FlowOnlyQK(nn.Module):
 
         return (
             attention_repr,
-            torch.ones((batch_size, self.heads, seq_len, seq_len)),
+            torch.ones(
+                (batch_size, self.heads, seq_len, seq_len), device=query.device
+            ),
             attention_probs.view(-1, self.heads, seq_len, seq_len)
         )

@@ -20,7 +20,7 @@ flow_params:
 prior_params:
   n_flows: 3
   hidden_features: [32, 32]
-prior_type: normal
+prior_type: uniform
 include_sparsity: false
 lr: 1e-3
 force_vae_gaussian: false
@@ -31,7 +31,7 @@ pe: true
 beta: 1.0
 val_freq: 5
 num_eval_samples: 5
-div_coeff: -0.2
+div_coeff: 1.0
 use_optimal_test: true
 sinusoidal: true
 dropout: 0.0

@@ -462,7 +462,7 @@ class TransformerLit(pl.LightningModule):
         acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
         acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
         conf_a = preds[:midpoint].mean()
-        conf_b = preds[:midpoint].mean()
+        conf_b = preds[midpoint:].mean()
 
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()
@@ -494,8 +494,7 @@ class TransformerLit(pl.LightningModule):
         self.test_attn_matrices.clear()
 
     def _compute_thresh_path(self: Self, attn_list: List):
-        seq_len = attn_list[0].size(0)
-        thresh_list = [(attn > 1 / seq_len).float() for attn in attn_list]
+        thresh_list = [(attn > 1 / attn.size(-1)).float() for attn in attn_list]
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
         for attn in thresh_list:

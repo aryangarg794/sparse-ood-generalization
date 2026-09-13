@@ -28,7 +28,6 @@ class Encoder(zuko.lazy.LazyDistribution):
 
         return Independent(Normal(mu, log_sigma.exp()), 1)
 
-
 class FlowVAE(nn.Module):
 
     def __init__(

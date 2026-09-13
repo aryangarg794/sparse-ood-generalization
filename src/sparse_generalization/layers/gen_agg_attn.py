@@ -141,7 +141,7 @@ class AggregationFlowMask(nn.Module):
         elif self.prior_type == "nf" and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(g)
         elif self.prior_type == "uniform" and self.training and self.per_mask_prior:
-            prior = torch.tensor([1.0]).expand_as(ladj)
+            prior = torch.ones_like(ladj)
 
         if sum_heads:
             masks = masks.sum(dim=1)
@@ -309,7 +309,7 @@ class AggregationFlowMHA(nn.Module):
             self.query.repeat(batch_size, 1, 1), x, x, Wq, Wk, Wv, Wo
         )
 
-        masks = torch.ones((batch_size, self.heads, 1, seq_len))
+        masks = torch.ones((batch_size, self.heads, 1, seq_len), device=x.device)
 
         if self.prior_type == "normal" and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(g).sum(dim=-1)
@@ -523,7 +523,7 @@ class AggregationFlowDirectA(nn.Module):
 
         return (
             attention_repr,
-            torch.ones((batch_size, self.heads, 1, seq_len)),
+            torch.ones((batch_size, self.heads, 1, seq_len), device=query.device),
             attention_probs.view(-1, self.heads, 1, seq_len),
         )
 
@@ -700,6 +700,6 @@ class AggregationFlowOnlyQK(nn.Module):
 
         return (
             attention_repr,
-            torch.ones((batch_size, self.heads, 1, seq_len)),
+            torch.ones((batch_size, self.heads, 1, seq_len), device=query.device),
             attention_probs.view(-1, self.heads, 1, seq_len)
         )

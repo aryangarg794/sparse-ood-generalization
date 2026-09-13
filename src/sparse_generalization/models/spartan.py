@@ -495,7 +495,7 @@ class SPARTAN(nn.Module):
         acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
         acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
         conf_a = preds[:midpoint].mean()
-        conf_b = preds[:midpoint].mean()
+        conf_b = preds[midpoint:].mean()
 
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()
@@ -505,9 +505,8 @@ class SPARTAN(nn.Module):
         return results
 
     def _compute_attn_mean(self, all_attn: Tensor):
-        seq_len = all_attn[0].size(0)
         thresh_list = [
-            (attn > 1 / seq_len).float() for attn in all_attn
+            (attn > 1 / attn.size(-1)).float() for attn in all_attn
         ]  # list of (b, l, l)
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
