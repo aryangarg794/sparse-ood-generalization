@@ -45,6 +45,27 @@ class CosineRepDiv(nn.Module):
         return cos_mat.mean()
 
 
+
+class MaskOverlapDiv(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, paths: Tensor):
+        # paths = (e, b, l, l), or (e, b, 1, l) with an agg layer
+        num_evals = paths.size(0)
+        assert num_evals > 1 and len(paths.shape) == 4, "need multi-evals to compute overlap, need shape to be exact"
+
+        # straight-through binarisation: path counts -> {0, 1} in the forward pass
+        paths = (paths > 0).to(paths.dtype) + paths - paths.detach()
+        max_overlap = paths.size(-2) * paths.size(-1)
+        paths_1 = paths.unsqueeze(1)  # (e, 1, b, l, l)
+        paths_2 = paths.unsqueeze(0)  # (1, e, b, l, l)
+        overlap = (paths_1 * paths_2).sum(dim=(-2, -1)) / max_overlap  # (e, e, b)
+        mask = ~torch.eye(num_evals, dtype=torch.bool, device=paths.device)
+
+        return overlap[mask].mean()
+
+
 class L2DistanceDiv(nn.Module):
 
     def __init__(

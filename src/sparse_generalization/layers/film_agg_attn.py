@@ -7,7 +7,7 @@ from torch import Tensor
 from torch.nn.functional import gumbel_softmax, softmax
 from typing import Self, Callable
 
-from sparse_generalization.layers.film_attn import FiLMLayer
+from sparse_generalization.layers.film_attn import FiLMLayer, FiLMMLP
 
 
 class FiLMAggAttention(nn.Module):
@@ -49,6 +49,7 @@ class FiLMAggAttention(nn.Module):
         self.layernorm = layernorm
         self.agg_residual = agg_residual
         self.agg_res_coeff = agg_res_coeff
+        self.bias = 1.0
 
         self.queries_mask = FiLMLayer(embed_size, context_dim, num_layers_film, act)
         self.keys_mask = FiLMLayer(embed_size, context_dim, num_layers_film, act)
@@ -61,15 +62,7 @@ class FiLMAggAttention(nn.Module):
         self.values = nn.Linear(embed_size, embed_size)
         self.projection = nn.Linear(embed_size, embed_size)
 
-        self.first_mlp = nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
-            nn.Dropout(dropout)
-        )
-        self.second_mlp = nn.Sequential(
-            act(),
-            nn.Linear(4*embed_size, out_dim)
-        )
-        self.film_layer = FiLMLayer(4*embed_size, context_dim, act=act)
+        self.mlp = FiLMMLP(embed_size, context_dim, out_dim, act, dropout, num_layers_film)
 
         if agg_residual:
             self.res_proj = nn.Linear(embed_size, embed_size)
@@ -119,15 +112,13 @@ class FiLMAggAttention(nn.Module):
             attention_probs = attention_probs.sum(dim=1)
 
         if self.agg_residual:
-            pooled = self.res_proj(x.max(dim=2)[0])  # (b, m, d)
+            pooled = x.max(dim=2)[0]  # (b, m, d)
             attention_repr = attention_repr + self.agg_res_coeff * pooled
 
         if self.layernorm:
             attention_repr = self.ln(attention_repr)
 
-        out = self.first_mlp(attention_repr) # (b, m, 4d)
-        out = self.film_layer(out, context, per_mode=True) # (b, m, 4d)
-        out = self.second_mlp(out) # (b, m, out_dim)
+        out = self.mlp(attention_repr, context)  # (b, m, out_dim)
 
         return out, masks.squeeze(-2), masked_probs.squeeze(-2), attention_probs.squeeze(-2)
 
@@ -166,7 +157,7 @@ class FiLMAggAttention(nn.Module):
         mask_logits = torch.matmul(query_mask, keys_mask.transpose(-2, -1)) / np.sqrt(self.dk)
         mask_logits = mask_logits.reshape(-1, seq_len) # (b*h*m, l)
         edges_logit = torch.stack(
-            [torch.zeros_like(mask_logits), mask_logits], dim=-1
+            [torch.zeros_like(mask_logits), mask_logits + self.bias], dim=-1
         )
         A = gumbel_softmax(edges_logit, tau=self.temp, hard=self.hard) # (b*h*m, l, 2)
         A = A[:, :, -1].view(batch_heads, num_modes, 1, seq_len)

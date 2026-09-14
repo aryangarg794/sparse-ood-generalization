@@ -1,0 +1,41 @@
+_target_: sparse_generalization.models.hyper_mode_spartan.HyperModeSPARTAN
+_partial_: true
+
+inp_dim: 25
+seq_len: 25
+out_dim: 1
+layernorm: false
+model_dim: 16
+embedding_inp: true
+num_heads: 1
+num_mha_layers: 1
+output_type: linear  # agg | linear
+head_pool: mean  # mean | max | concat
+num_modes: 3
+temp: 1.0
+include_sparsity: false
+lr: 1e-3
+alpha: 0.1
+residual: true
+num_embeddings: 25
+pe: true
+pe_type: sin  # sin | coord | learned
+max_grid_size: 5
+val_freq: 5
+num_eval_samples: 5
+div_coeff: 0.0
+use_optimal_test: true
+dropout: 0.0
+device: cpu
+beta1: 0.95
+beta2: 0.999
+
+# MaskNet hypernetworks (one per mode)
+hyper_hidden_dim: 128
+hyper_num_hidden: 2
+mask_bias: 0.5
+hard: true
+
+div_loss:
+  _partial_: true
+  _target_: sparse_generalization.layers.diversity_losses.MaskOverlapDiv

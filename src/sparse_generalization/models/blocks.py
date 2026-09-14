@@ -10,7 +10,8 @@ from sparse_generalization.models.mlp import BasicMLP
 from sparse_generalization.layers.bern_mha import MultiHeadAttentionBern
 from sparse_generalization.layers.oracle import MultiHeadAttentionOracle
 from sparse_generalization.layers.gen_mha import FlowMasking, FlowMHA
-from sparse_generalization.layers.film_attn import FiLMAttention, FiLMLayer
+from sparse_generalization.layers.film_attn import FiLMAttention, FiLMLayer, FiLMMLP
+from sparse_generalization.layers.masknet import HyperMaskAttention
 
 
 class MHABlock(nn.Module):
@@ -271,6 +272,7 @@ class MHABlockCond(nn.Module):
         temp: float = 1.0,
         num_layers_film: int = 2,
         film_mlp: bool = False,
+        film_values: bool = False,
         device: str = "cuda",
         *args,
         **kwargs,
@@ -289,21 +291,14 @@ class MHABlockCond(nn.Module):
             act=act,
             num_layers_film=num_layers_film,
             residual=residual,
+            film_values=film_values,
         )
 
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
         if film_mlp:
-            self.first_mlp = nn.Sequential(
-                nn.Linear(embed_size, 4 * embed_size),
-                nn.Dropout(dropout),
-            )
-            self.film_layer = FiLMLayer(
-                4 * embed_size, context_dim, num_layers_film, act
-            )
-            self.second_mlp = nn.Sequential(
-                act(),
-                nn.Linear(4 * embed_size, embed_size),
+            self.mlp = FiLMMLP(
+                embed_size, context_dim, embed_size, act, dropout, num_layers_film
             )
         else:
             self.mlp = nn.Sequential(
@@ -315,9 +310,7 @@ class MHABlockCond(nn.Module):
 
     def _mlp(self: Self, x: Tensor, context: Tensor):
         if self.film_mlp:
-            out = self.first_mlp(x)  # (b, m, l, 4d)
-            out = self.film_layer(out, context, per_mode=True)
-            return self.second_mlp(out)
+            return self.mlp(x, context)  # (b, m, l, d)
         return self.mlp(x)
 
     def forward(self: Self, x: Tensor, context: Tensor, avg_heads: bool = True):
@@ -399,3 +392,42 @@ class MHABlockOracle(MHABlockBern):
             out = self.ln2(out)
 
         return out, attn_masks, attn_scores
+
+
+class HyperMaskBlock(nn.Module):
+    """Transformer block around HyperMaskAttention (no mode conditioning anywhere)."""
+
+    def __init__(
+        self: Self,
+        embed_size: int,
+        act: nn.Module,
+        dropout: float,
+        layernorm: bool,
+        residual: bool,
+        num_heads: int = 1,
+    ):
+        super().__init__()
+        self.residual = residual
+        self.layernorm = layernorm
+        self.mha = HyperMaskAttention(embed_size, num_heads=num_heads, dropout=dropout, residual=residual)
+        self.ln1 = nn.LayerNorm(embed_size)
+        self.ln2 = nn.LayerNorm(embed_size)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_size, 4 * embed_size),
+            nn.Dropout(dropout),
+            act(),
+            nn.Linear(4 * embed_size, embed_size),
+        )
+
+    def forward(self: Self, x: Tensor, mask: Tensor, avg_heads: bool = True):
+        x_in = self.ln1(x) if self.layernorm else x
+        attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(
+            x_in, mask, avg_attn_heads=avg_heads, avg_mask=avg_heads
+        )
+        if self.residual:
+            attn_out = attn_out + x
+            out = self.mlp(self.ln2(attn_out) if self.layernorm else attn_out)
+            out = out + attn_out
+        else:
+            out = self.mlp(self.ln2(attn_out) if self.layernorm else attn_out)
+        return out, attn_masks, masked_attn_scores, attn_scores

@@ -4,29 +4,30 @@ _partial_: true
 inp_dim: 25
 out_dim: 1 
 layernorm: false
-model_dim: 32
+model_dim: 16
 embedding_inp: false
 num_heads: 1
 num_mha_layers: 1
-include_agg_layer: true
-agg_residual: true
+output_type: film  # agg/film/linear
+head_pool: concat  # mean | max | concat
+agg_residual: false
 agg_res_coeff: 0.1
 num_modes: 3
-context_dim: 32
-temp: 1.0
+context_dim: 8
+temp: 0.5
 num_layers_film: 2
 film_mlp: true
+film_values: true  # per-mode FiLM on the attention values
 include_sparsity: false
 lr: 1e-3
 alpha: 0.1
 residual: true
 num_embeddings: 25
-pe: true
 val_freq: 5
 num_eval_samples: 5
-div_coeff: 0.0
+div_coeff: 0.1
 use_optimal_test: true
-sinusoidal: true
+pe_type: sin  # sin | coord | learned
 dropout: 0.0
 device: cpu
 beta1: 0.95

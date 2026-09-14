@@ -21,6 +21,7 @@ from sparse_generalization.models.generative import FlowSpartan
 from sparse_generalization.models.hypernet import HyperNetSpartan
 from sparse_generalization.models.ensemble import Ensemble
 from sparse_generalization.models.cond_spartan import ConditionalSPARTAN
+from sparse_generalization.models.spartan import SPARTAN
 
 warnings.filterwarnings("ignore", ".*does not have many workers.*")
 warnings.filterwarnings(
@@ -32,19 +33,17 @@ print(f"CUDA available: {torch.cuda.is_available()}")
 
 @hydra.main(version_base=None, config_path="../config", config_name="default")
 def main(cfg: DictConfig):
-    """Main function to run the training loop and stuff for
-    box world example.
-    """
     timestamp = datetime.now().strftime("%d_%b_%Y__%Hh%Mm")
     group_name = cfg.run_name + "_" + timestamp
 
     test_model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
     flow_model = isinstance(test_model, FlowSpartan) or isinstance(test_model, HyperNetSpartan)
+    spartan_model = isinstance(test_model, SPARTAN)
     ensemble_model = isinstance(test_model, Ensemble)
     cond_model = isinstance(test_model, ConditionalSPARTAN)
     del test_model
     dataset, val_sets, test_sets, anti_dataset = instantiate(cfg.data.data_func)(
-        compute_mask=cfg.model.compute_mask if not (flow_model or ensemble_model or cond_model) else False
+        compute_mask=cfg.model.compute_mask if spartan_model else False
     )
 
     print(OmegaConf.to_yaml(cfg, resolve=True))

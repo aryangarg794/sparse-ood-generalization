@@ -36,12 +36,83 @@ class FiLMLayer(nn.Module):
         self.projection = nn.Linear(inp_dim, inp_dim)
 
     def forward(self, x: Tensor, c: Tensor, per_mode: bool = False):
-        mu, sig = self.film_mlp(c).chunk(2, dim=-1)   # (m, d) each
+        mu, delta = self.film_mlp(c).chunk(2, dim=-1)   # (m, d) each
+        sig = 1.0 + delta
         out = self.projection(x) # (b, l, d) or (b, m, d)
         if not per_mode:
             out = out.unsqueeze(1)                     # (b, 1, *, d)
         shape = (1, mu.size(0)) + (1,) * (out.dim() - 3) + (mu.size(-1),)  # (1, m, 1..., d)
         return sig.view(shape) * out + mu.view(shape)  # (b, m, *, d)
+
+
+class FiLMMLP(nn.Module):
+
+    def __init__(
+        self,
+        inp_dim: int,
+        context_dim: int,
+        out_dim: int,
+        act: nn.Module = nn.ReLU,
+        dropout: float = 0.0,
+        num_layers_film: int = 2,
+    ):
+        super().__init__()
+        self.first_mlp = nn.Sequential(
+            nn.Linear(inp_dim, 4 * inp_dim),
+            nn.Dropout(dropout),
+        )
+        self.film_layer = FiLMLayer(4 * inp_dim, context_dim, num_layers_film, act)
+        self.second_mlp = nn.Sequential(
+            act(),
+            nn.Linear(4 * inp_dim, out_dim),
+        )
+
+    def forward(self, x: Tensor, context: Tensor):
+        # x: (b, m, *, d), context: (m, context_dim)
+        out = self.first_mlp(x)
+        out = self.film_layer(out, context, per_mode=True)
+        return self.second_mlp(out)
+
+
+class FiLMHead(nn.Module):
+    
+    def __init__(
+        self,
+        embed_size: int,
+        context_dim: int,
+        out_dim: int,
+        act: nn.Module = nn.ReLU,
+        dropout: float = 0.0,
+        num_layers_film: int = 2,
+        layernorm: bool = False,
+        pool: str = "mean",  # 'mean' | 'max' | 'concat'
+        seq_len: int = None,  # required for 'concat'
+    ):
+        super().__init__()
+        if pool not in ("mean", "max", "concat"):
+            raise ValueError(f"pool must be 'mean', 'max' or 'concat', got {pool!r}")
+        if pool == "concat" and seq_len is None:
+            raise ValueError("pool='concat' needs seq_len")
+        self.pool = pool
+        head_dim = embed_size * seq_len if pool == "concat" else embed_size
+        self.layernorm = layernorm
+        if layernorm:
+            self.ln = nn.LayerNorm(head_dim)
+        self.film = FiLMLayer(head_dim, context_dim, num_layers_film, act)
+        self.dropout = nn.Dropout(dropout)
+        self.out = nn.Linear(head_dim, out_dim)
+
+    def forward(self, x: Tensor, context: Tensor):
+        if self.pool == "mean":
+            pooled = x.mean(dim=2)  # (b, m, d)
+        elif self.pool == "max":
+            pooled = x.max(dim=2)[0]  # (b, m, d)
+        else:
+            pooled = x.flatten(2)  # (b, m, l * d)
+        if self.layernorm:
+            pooled = self.ln(pooled)
+        pooled = self.film(pooled, context, per_mode=True)  # (b, m, d)
+        return self.out(self.dropout(pooled))  # (b, m, out_dim)
 
 
 class FiLMAttention(nn.Module):
@@ -56,6 +127,7 @@ class FiLMAttention(nn.Module):
         act: nn.Module = nn.ReLU, 
         num_layers_film: int = 2, 
         residual: bool = False,
+        film_values: bool = False,
         *args,
         **kwargs,
     ):
@@ -72,6 +144,7 @@ class FiLMAttention(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.temp = temp
         self.hard = hard
+        self.bias = 0.5
         self.residual = residual
 
         self.queries_mask = FiLMLayer(embed_size, context_dim, num_layers_film, act)
@@ -79,7 +152,13 @@ class FiLMAttention(nn.Module):
 
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
-        self.values = nn.Linear(embed_size, embed_size)
+        # with film_values the modes get their own value space (FiLMLayer already
+        # includes the linear projection); otherwise values are shared across modes
+        self.film_values = film_values
+        if film_values:
+            self.values = FiLMLayer(embed_size, context_dim, num_layers_film, act)
+        else:
+            self.values = nn.Linear(embed_size, embed_size)
         self.projection = nn.Linear(embed_size, embed_size)
 
     def forward(
@@ -93,7 +172,10 @@ class FiLMAttention(nn.Module):
     ):
         queries = self.queries(queries)  # (b, m, l, d)
         keys = self.keys(keys)
-        values = self.values(values)
+        if self.film_values:
+            values = self.values(values, context, per_mode=True)  # (b, m, l, d)
+        else:
+            values = self.values(values)
         queries_mask = self.queries_mask(queries, context, per_mode=True) # (b, m, l, d)
         keys_mask = self.keys_mask(keys, context, per_mode=True)
 
@@ -167,8 +249,9 @@ class FiLMAttention(nn.Module):
             self.dk
         ) # (b*h, m, l, l)
         mask_logits = mask_logits.reshape(-1, seq_len ** 2) # (b*h*m, l*l)
+        # mask_logits = mask_logits.clamp(min=-5)
         edges_logit = torch.stack(
-            [torch.zeros_like(mask_logits), mask_logits], dim=-1
+            [torch.zeros_like(mask_logits), mask_logits + self.bias], dim=-1
         )
         A = gumbel_softmax(
             edges_logit, tau=self.temp, hard=self.hard

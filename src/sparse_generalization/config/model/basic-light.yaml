@@ -1,15 +1,18 @@
-_target_: sparse_generalization.models.mlp.BasicMLPLit
+_target_: sparse_generalization.models.mlp.MLPBaseline
 _partial_: true
 
-input_dim: 25
-out_dim: 1 
+inp_dim: 25  # one-hot channels when embedding_inp is false
+out_dim: 1
 hidden_dims: [32, 40]
 embedding_inp: false
 model_dim: 32
-inp_size: 5 
+inp_size: 5
+dropout: 0.0
 
 lr: 5e-4
 wd: 0.0
+val_freq: 5
+device: cpu
 
 module:
   _partial_: true
