@@ -64,22 +64,19 @@ def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str = "
     return path.sum(dim=(1, 2)).mean().item()
 
 
-def compute_attn_mean_ens(all_attn: Tensor, threshold: float = 0.01, device: str = None):
-    thresh = (all_attn > threshold).float()
-    num_models, num_layers, batch_size, seq_len, _ = thresh.size()
-    path = torch.eye(seq_len, device=device or all_attn.device).repeat(
-        num_models * batch_size, 1, 1
-    )
-    # (m, n, b, l, l) -> (n, m * b, l, l); the batch axis has to travel with the
-    # model axis, a plain view would fold layers into the batch dimension instead
-    thresh = thresh.permute(1, 0, 2, 3, 4).reshape(
-        num_layers, num_models * batch_size, seq_len, seq_len
-    )
-    for idx in range(num_layers):
-        attn = thresh[idx]
-        path = torch.bmm(attn, path)
+@torch.no_grad()
+def compute_attn_mean_ens(all_attn: Tensor, threshold: float = 0.01, device: str = "cuda"):
+    model_means = []
+    for model_layers in all_attn:
+        batch_size, seq_len, _ = model_layers[0].size()
+        path = torch.eye(seq_len, device=device).repeat(batch_size, 1, 1)
 
-    return path.sum(dim=(1, 2)).mean().item()
+        for layer_attn in model_layers:
+            thresh = (layer_attn > threshold).float().to(device).squeeze(1)
+            path = torch.bmm(thresh, path)
+        model_means.append(path.sum(dim=(1, 2)).mean().item())
+
+    return sum(model_means) / len(model_means)
 
 
 def compute_mask_mean(all_masks: Tensor):
