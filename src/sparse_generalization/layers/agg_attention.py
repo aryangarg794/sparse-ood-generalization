@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.functional import softmax, gumbel_softmax
 from typing import Self
+from sparse_generalization.utils.util_funcs import get_device
 
 
 class AggregationAttention(nn.Module):
@@ -19,16 +20,18 @@ class AggregationAttention(nn.Module):
         dropout: float = 0.0,
         residual: bool = True,
         act: nn.Module = nn.ReLU,
-        device: str = "cuda",
+        device: str | None = None,
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
         bias: float = 0.5,
         use_mlp: bool = True,
         temp: float = 1.0,
+        train_query: bool = True,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super().__init__(*args, **kwargs)
         if embed_size % num_heads != 0:
             raise SyntaxError(
@@ -45,7 +48,7 @@ class AggregationAttention(nn.Module):
         self.bias = bias
         self.use_mlp = use_mlp
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size), device=device))
+        self.query = nn.Parameter(torch.zeros((1, embed_size), device=device), requires_grad=train_query)
         nn.init.uniform_(self.query)
 
         self.queries = nn.Linear(embed_size, embed_size)
@@ -56,7 +59,7 @@ class AggregationAttention(nn.Module):
         if self.separate_mask:
             self.queries_mask = nn.Linear(embed_size, embed_size)
             self.keys_mask = nn.Linear(embed_size, embed_size)
-            self.query_mask = nn.Parameter(torch.rand((1, embed_size), device=device))
+            self.query_mask = nn.Parameter(torch.rand((1, embed_size), device=device), requires_grad=train_query)
 
         self.ln = nn.LayerNorm(embed_size)
 

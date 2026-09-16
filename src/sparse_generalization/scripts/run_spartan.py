@@ -70,7 +70,7 @@ def main(cfg: DictConfig):
 
         model = instantiate(cfg.model)
         model.logger = logger
-        print(summary(model, (10, 10, 3), device="cuda"))
+        print(summary(model, (10, 10, 3), device=model.device))
         model.fit(dataloader=train_loader, num_epochs=cfg.trainer.max_epochs)
 
         if cfg.save:
@@ -132,7 +132,7 @@ def main(cfg: DictConfig):
             anti_loader = DataLoader(anti_dataset, 1024)
 
             model = instantiate(cfg.model)(val_to_name=cfg.data.val_to_name)
-            model = model.to(cfg.model.device)
+            model = model.to(model.device)
             model.logger = logger
             # print(summary(model, input_size=(16, 5, 5, cfg.model.inp_dim), depth=1))
             if flow_model:

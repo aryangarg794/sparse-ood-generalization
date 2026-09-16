@@ -13,7 +13,7 @@ from typing import List
 from sparse_generalization.models.blocks import MHABlockBern, MHABlockOracle
 from sparse_generalization.layers.agg_attention import AggregationAttention
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
-from sparse_generalization.utils.util_funcs import positionalencoding2d
+from sparse_generalization.utils.util_funcs import positionalencoding2d, get_device
 
 
 class SPARTAN(nn.Module):
@@ -52,11 +52,12 @@ class SPARTAN(nn.Module):
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
         num_embeddings: int = 64,
-        device: str = "cuda",
+        device: str | None = None,
         beta1: float = 0.9,
         beta2: float = 0.999,
         threshold: float = 0.01,
         separate_mask: bool = False,
+        train_query: bool = True,
         *args,
         **kwargs,
     ):
@@ -66,6 +67,7 @@ class SPARTAN(nn.Module):
         for key in ["self", "__class__", "args", "kwargs"]:
             del self.hyper_params[key]
 
+        device = get_device(device)
         self.device = device
         self.logger = logger
         self.model_dim = model_dim
@@ -129,6 +131,7 @@ class SPARTAN(nn.Module):
                 separate_mask=separate_mask,
                 dropout=dropout,
                 layernorm=layernorm,
+                train_query=train_query,
             )
         elif self.token_pool:
             self.cls = nn.Parameter(torch.rand(1, self.embed_size, device=self.device))
@@ -566,11 +569,12 @@ class OracleTransformer(nn.Module):
         dropout: float = 0.1,
         use_grid: bool = True,
         act: nn.Module = nn.ReLU,
-        device: str = "cuda",
+        device: str | None = None,
         logger: WandbLogger = None,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super().__init__(*args, **kwargs)
 
         self.logger = logger

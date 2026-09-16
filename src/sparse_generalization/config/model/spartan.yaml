@@ -4,15 +4,15 @@ _partial_: true
 inp_dim: 25
 out_dim: 1 
 layernorm: true
-agg_pool: false 
+agg_pool: true 
 model_dim: 32
 embedding_inp: false
 num_heads: 1
 num_layers: 1
-include_sparsity: false
+include_sparsity: true
 lr: 5e-4
 token_pool: false
-alpha: 0.1
+alpha: 0.05
 compute_mask: false
 residual: true
 mask_res: false
@@ -26,9 +26,11 @@ target_loss: 0.115
 cma: 0.9
 step_size: 5e-1
 dropout: 0.0
-device: cuda
 alpha_res: false
 separate_mask: false
-beta1: 0.99
+beta1: 0.9
 beta2: 0.999
+train_query: false
+
+
 

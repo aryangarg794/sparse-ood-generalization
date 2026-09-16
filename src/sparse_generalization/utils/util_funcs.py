@@ -5,8 +5,21 @@ import math
 from torch import Tensor
 
 
+def get_device(device: str | torch.device | None = None) -> str:
+    """Resolve the compute device. An explicit `device` wins; otherwise pick
+    cuda > mps > cpu based on what is available on this machine."""
+    if device is not None:
+        return str(device)
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 # https://github.com/wzlxjtu/PositionalEncoding2D/blob/master/positionalembedding2d.py
-def positionalencoding2d(d_model, height, width, device="cuda"):
+def positionalencoding2d(d_model, height, width, device=None):
+    device = get_device(device)
     if d_model % 4 != 0:
         raise ValueError(
             "Cannot use sin/cos positional encoding with "
@@ -54,7 +67,8 @@ def vae_log_prob(x: Tensor, mu: Tensor, sig: Tensor):
     ).sum(-1)
 
 
-def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str = "cuda"):
+def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str | None = None):
+    device = get_device(device)
     thresh_list = [(attn > threshold).float() for attn in all_attn]  # list of (b, l, l)
     batch_size, seq_len, _ = thresh_list[0].size()
     path = torch.eye(seq_len, device=device).repeat(batch_size, 1, 1)
@@ -65,7 +79,8 @@ def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str = "
 
 
 @torch.no_grad()
-def compute_attn_mean_ens(all_attn: Tensor, threshold: float = 0.01, device: str = "cuda"):
+def compute_attn_mean_ens(all_attn: Tensor, threshold: float = 0.01, device: str | None = None):
+    device = get_device(device)
     model_means = []
     for model_layers in all_attn:
         batch_size, seq_len, _ = model_layers[0].size()

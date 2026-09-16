@@ -12,6 +12,7 @@ from typing import Self
 
 from sparse_generalization.layers.priors import LaplacePrior, NormalPrior
 from sparse_generalization.layers.vae import FlowVAE
+from sparse_generalization.utils.util_funcs import get_device
 
 
 class FlowMasking(nn.Module):
@@ -26,7 +27,7 @@ class FlowMasking(nn.Module):
         residual: bool = False,
         bias: float = 0.5,
         prior_type: str = "laplace",
-        device: str = "cuda",
+        device: str | None = None,
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
@@ -35,6 +36,7 @@ class FlowMasking(nn.Module):
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super(FlowMasking, self).__init__(*args, **kwargs)
 
         if embed_size % num_heads != 0:
@@ -200,7 +202,7 @@ class FlowMHA(nn.Module):
         residual: bool = False,
         prior_type: str = "laplace",
         per_mask_prior: bool = False,
-        device: str = "cuda",
+        device: str | None = None,
         layernorm: bool = True,
         separate_mask: bool = False,
         force_vae_gaussian: bool = False,
@@ -208,6 +210,7 @@ class FlowMHA(nn.Module):
         *args,
         **kwargs,
     ):
+        device = get_device(device)
 
         super(FlowMHA, self).__init__(*args, **kwargs)
 
@@ -383,13 +386,14 @@ class FlowDirectA(nn.Module):
         residual: bool = False,
         prior_type: str = "laplace",
         per_mask_prior: bool = False,
-        device: str = "cuda",
+        device: str | None = None,
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
 
         super(FlowDirectA, self).__init__(*args, **kwargs)
 
@@ -542,13 +546,14 @@ class FlowOnlyQK(nn.Module):
         prior_type: str = "laplace",
         force_vae_gaussian: bool = False, 
         per_mask_prior: bool = False,
-        device: str = "cuda",
+        device: str | None = None,
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
 
         super(FlowOnlyQK, self).__init__(*args, **kwargs)
 

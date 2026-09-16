@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch import Tensor
+from einops import rearrange
 
 class CosineDiv(nn.Module):
 
@@ -65,6 +66,31 @@ class MaskOverlapDiv(nn.Module):
 
         return overlap[mask].mean()
 
+class MutualInfDiv(nn.Module):
+
+    def __init__(
+        self, 
+        *args, 
+        **kwargs
+    ):
+        """From the DivDis paper
+        """
+        super().__init__(*args, **kwargs)
+
+    def forward(self, probs: Tensor, binary: bool = True):
+        if binary:
+            probs = torch.cat([1-probs, probs], dim=-1)
+
+        B, H, D = probs.shape # B=batch_size, H=heads, D=pred_dim
+        marginal_p = probs.mean(dim=0) # H, D
+        marginal_p = torch.einsum("hd,ge->hgde", marginal_p, marginal_p) # H, H, D, D
+        marginal_p = rearrange(marginal_p, "h g d e -> (h g) (d e)") # H^2, D^2
+        joint_p = torch.einsum("bhd,bge->bhgde", probs, probs).mean(dim=0) # H, H, D, D
+        joint_p = rearrange(joint_p, "h g d e -> (h g) (d e)") # H^2, D^2
+        kl_divs = joint_p * (joint_p.log() - marginal_p.log())
+        kl_grid = rearrange(kl_divs.sum(dim=-1), "(h g) -> h g", h=H) # H, H
+        pairwise_mis = torch.triu(kl_grid, diagonal=1) # Get only off-diagonal KL divergences
+        return pairwise_mis.mean()
 
 class L2DistanceDiv(nn.Module):
 
@@ -84,7 +110,6 @@ class L2DistanceDiv(nn.Module):
         cos_mat = (attns_vec_1 - attns_vec_2).pow(2).mean(dim=-1).mean(dim=-1)
 
         return -cos_mat.mean()
-
 
 class JensenShannonDiv(nn.Module):
 

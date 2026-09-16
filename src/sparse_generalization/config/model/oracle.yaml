@@ -9,4 +9,3 @@ num_feature_layers: 1
 num_heads: 1
 residual: true
 num_layers: 1
-device: cpu

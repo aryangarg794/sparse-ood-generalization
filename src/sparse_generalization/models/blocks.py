@@ -11,8 +11,7 @@ from sparse_generalization.layers.bern_mha import MultiHeadAttentionBern
 from sparse_generalization.layers.oracle import MultiHeadAttentionOracle
 from sparse_generalization.layers.gen_mha import FlowMasking, FlowMHA
 from sparse_generalization.layers.film_attn import FiLMAttention, FiLMLayer, FiLMMLP
-from sparse_generalization.layers.masknet import HyperMaskAttention
-
+from sparse_generalization.utils.util_funcs import get_device
 
 class MHABlock(nn.Module):
 
@@ -185,10 +184,11 @@ class MHABlockGen(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         prior_type: str = "laplace",
         per_mask_prior: bool = False,
-        device: str = "cuda",
+        device: str | None = None,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super(MHABlockGen, self).__init__(*args, **kwargs)
         self.residual = residual
         self.layernorm = layernorm
@@ -273,10 +273,11 @@ class MHABlockCond(nn.Module):
         num_layers_film: int = 2,
         film_mlp: bool = False,
         film_values: bool = False,
-        device: str = "cuda",
+        device: str | None = None,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super(MHABlockCond, self).__init__(*args, **kwargs)
         self.residual = residual
         self.layernorm = layernorm
@@ -392,42 +393,3 @@ class MHABlockOracle(MHABlockBern):
             out = self.ln2(out)
 
         return out, attn_masks, attn_scores
-
-
-class HyperMaskBlock(nn.Module):
-    """Transformer block around HyperMaskAttention (no mode conditioning anywhere)."""
-
-    def __init__(
-        self: Self,
-        embed_size: int,
-        act: nn.Module,
-        dropout: float,
-        layernorm: bool,
-        residual: bool,
-        num_heads: int = 1,
-    ):
-        super().__init__()
-        self.residual = residual
-        self.layernorm = layernorm
-        self.mha = HyperMaskAttention(embed_size, num_heads=num_heads, dropout=dropout, residual=residual)
-        self.ln1 = nn.LayerNorm(embed_size)
-        self.ln2 = nn.LayerNorm(embed_size)
-        self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
-            nn.Dropout(dropout),
-            act(),
-            nn.Linear(4 * embed_size, embed_size),
-        )
-
-    def forward(self: Self, x: Tensor, mask: Tensor, avg_heads: bool = True):
-        x_in = self.ln1(x) if self.layernorm else x
-        attn_out, attn_masks, masked_attn_scores, attn_scores = self.mha(
-            x_in, mask, avg_attn_heads=avg_heads, avg_mask=avg_heads
-        )
-        if self.residual:
-            attn_out = attn_out + x
-            out = self.mlp(self.ln2(attn_out) if self.layernorm else attn_out)
-            out = out + attn_out
-        else:
-            out = self.mlp(self.ln2(attn_out) if self.layernorm else attn_out)
-        return out, attn_masks, masked_attn_scores, attn_scores

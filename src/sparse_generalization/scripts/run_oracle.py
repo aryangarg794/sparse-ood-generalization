@@ -73,7 +73,7 @@ def main(cfg: DictConfig):
         )
 
         model = instantiate(cfg.model)
-        model = model.to(cfg.model.device)
+        model = model.to(model.device)
         model.logger = logger
         print(f"{'='*60}")
         print(model)
@@ -130,7 +130,7 @@ def main(cfg: DictConfig):
             )
 
             model = instantiate(cfg.model)
-            model = model.to(cfg.model.device)
+            model = model.to(model.device)
             model.logger = logger
             print(f"{'='*60}")
             print(model)

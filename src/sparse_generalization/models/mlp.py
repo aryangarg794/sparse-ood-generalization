@@ -11,7 +11,7 @@ from tqdm import tqdm
 from typing import List, Self
 
 from sparse_generalization.models.cnn import BasicCNN
-from sparse_generalization.utils.util_funcs import positionalencoding2d
+from sparse_generalization.utils.util_funcs import positionalencoding2d, get_device
 
 
 class BasicMLP(nn.Module):
@@ -66,7 +66,7 @@ class MLPBaseline(nn.Module):
         embedding_inp: bool = True,
         num_embeddings: int = 25,
         model_dim: int = 16,
-        device: str = "cuda",
+        device: str | None = None,
         logger: WandbLogger = None,
         module: nn.Module = BasicMLP,
         input_method: str = "concat",  
@@ -79,6 +79,8 @@ class MLPBaseline(nn.Module):
         self.hyper_params = locals()
         for key in ["self", "__class__", "args", "kwargs"]:
             del self.hyper_params[key]
+
+        device = get_device(device)
 
         super().__init__(*args, **kwargs)
 

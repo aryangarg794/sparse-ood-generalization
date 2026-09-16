@@ -8,6 +8,7 @@ from torch.nn.functional import gumbel_softmax, softmax
 from typing import Self, Callable
 
 from sparse_generalization.layers.film_attn import FiLMLayer, FiLMMLP
+from sparse_generalization.utils.util_funcs import get_device
 
 
 class FiLMAggAttention(nn.Module):
@@ -22,15 +23,17 @@ class FiLMAggAttention(nn.Module):
         temp: float = 1.0,
         hard: bool = True,
         layernorm: bool = False,
-        device: str = "cuda",
+        device: str | None = None,
         act: nn.Module = nn.ReLU, 
         num_layers_film: int = 2, 
         residual: bool = False,
         agg_residual: bool = False,
         agg_res_coeff: float = 1.0,
+        train_query: bool = True,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super().__init__(*args, **kwargs)
 
         if embed_size % num_heads != 0:
@@ -54,7 +57,7 @@ class FiLMAggAttention(nn.Module):
         self.queries_mask = FiLMLayer(embed_size, context_dim, num_layers_film, act)
         self.keys_mask = FiLMLayer(embed_size, context_dim, num_layers_film, act)
 
-        self.query = nn.Parameter(torch.zeros((num_modes, embed_size), device=device))
+        self.query = nn.Parameter(torch.zeros((num_modes, embed_size), device=device), requires_grad=train_query)
         nn.init.xavier_uniform_(self.query)
 
         self.queries = nn.Linear(embed_size, embed_size)

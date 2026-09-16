@@ -12,6 +12,7 @@ from zuko.flows import Flow
 
 from sparse_generalization.layers.vae import FlowVAE
 from sparse_generalization.layers.priors import LaplacePrior, NormalPrior
+from sparse_generalization.utils.util_funcs import get_device
 
 
 class AggregationFlowMask(nn.Module):
@@ -34,10 +35,12 @@ class AggregationFlowMask(nn.Module):
         bias: float = 0.5, 
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
-        device: str = "cuda",
+        device: str | None = None,
+        train_query: bool = True,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super().__init__(*args, **kwargs)
         if embed_size % num_heads != 0:
             raise SyntaxError(
@@ -53,7 +56,8 @@ class AggregationFlowMask(nn.Module):
         self.per_mask_prior = per_mask_prior
         self.bias = bias
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size)))
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=train_query)
+        nn.init.uniform_(self.query)
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
         self.values = nn.Linear(embed_size, embed_size)
@@ -88,6 +92,7 @@ class AggregationFlowMask(nn.Module):
             use_mask=use_mask,
             force_vae_gaussian=force_vae_gaussian,
             separate_mask=separate_mask,
+            train_query=train_query,
         )
 
         self.mlp = nn.Sequential(
@@ -196,12 +201,14 @@ class AggregationFlowMHA(nn.Module):
         per_mask_prior: bool = False,
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
-        device: str = "cuda",
+        device: str | None = None,
         separate_mask: bool = False,
         use_mask: bool = False,
+        train_query: bool = True,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super().__init__(*args, **kwargs)
         if embed_size % num_heads != 0:
             raise SyntaxError(
@@ -216,7 +223,7 @@ class AggregationFlowMHA(nn.Module):
         self.layernorm = layernorm
         self.per_mask_prior = per_mask_prior
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size)))
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=train_query)
         nn.init.uniform_(self.query)
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
@@ -263,6 +270,7 @@ class AggregationFlowMHA(nn.Module):
             flow_params=flow_params,
             use_mask=use_mask,
             separate_mask=separate_mask,
+            train_query=train_query,
         )
 
         self.mlp = nn.Sequential(
@@ -383,12 +391,14 @@ class AggregationFlowDirectA(nn.Module):
         per_mask_prior: bool = False,
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
-        device: str = "cuda",
+        device: str | None = None,
         separate_mask: bool = False,
         use_mask: bool = False,
+        train_query: bool = True,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super().__init__(*args, **kwargs)
         if embed_size % num_heads != 0:
             raise SyntaxError(
@@ -403,7 +413,7 @@ class AggregationFlowDirectA(nn.Module):
         self.layernorm = layernorm
         self.per_mask_prior = per_mask_prior
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size)))
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=train_query)
         nn.init.uniform_(self.query)
 
         self.attention_weights = nn.init.xavier_uniform_(
@@ -442,6 +452,7 @@ class AggregationFlowDirectA(nn.Module):
             flow_params=flow_params,
             use_mask=use_mask,
             separate_mask=separate_mask,
+            train_query=train_query,
         )
 
         self.mlp = nn.Sequential(
@@ -544,13 +555,15 @@ class AggregationFlowOnlyQK(nn.Module):
         prior_type: str = "laplace",
         per_mask_prior: bool = False,
         act: nn.Module = nn.ReLU,
-        device: str = "cuda",
+        device: str | None = None,
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
+        train_query: bool = True,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super().__init__(*args, **kwargs)
         if embed_size % num_heads != 0:
             raise SyntaxError(
@@ -564,7 +577,7 @@ class AggregationFlowOnlyQK(nn.Module):
         self.dk = embed_size // num_heads
         self.layernorm = layernorm
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size)))
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=train_query)
         nn.init.uniform_(self.query)
 
         self.per_mask_prior = per_mask_prior
@@ -609,6 +622,7 @@ class AggregationFlowOnlyQK(nn.Module):
             flow_params=flow_params,
             use_mask=use_mask,
             separate_mask=separate_mask,
+            train_query=train_query,
         )
 
         self.mlp = nn.Sequential(

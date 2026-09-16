@@ -15,12 +15,14 @@ from sparse_generalization.models.blocks import MHABlockCond
 from sparse_generalization.layers.film_agg_attn import FiLMAggAttention
 from sparse_generalization.layers.film_attn import FiLMHead
 from sparse_generalization.utils.util_funcs import (
+    get_device,
     positionalencoding2d,
     compute_mask_mean,
     compute_max_paths,
 )
 from sparse_generalization.layers.diversity_losses import (
-    CosineDiv, CosineRepDiv, L2DistanceDiv, MaskOverlapDiv
+    CosineDiv, CosineRepDiv, L2DistanceDiv, MaskOverlapDiv, 
+    MutualInfDiv
 )
 
 class ConditionalSPARTAN(nn.Module):
@@ -38,7 +40,7 @@ class ConditionalSPARTAN(nn.Module):
         num_heads: int = 1,
         dropout: float = 0.0,
         residual: bool = False,
-        device: str = "cuda",
+        device: str | None = None,
         layernorm: bool = True,
         act: nn.Module = nn.ReLU,
         val_freq: int = 10, 
@@ -65,6 +67,7 @@ class ConditionalSPARTAN(nn.Module):
         output_type: str = "linear",  # 'agg' | 'film' | 'linear'
         head_pool: str = "mean",  # 'mean' | 'max' | 'concat', token pooling for the film/linear heads
         seq_len: int = None,  # number of tokens (grid cells); needed for head_pool='concat', defaults to inp_dim
+        train_query: bool = True,
         *args, 
         **kwargs
     ):
@@ -72,6 +75,8 @@ class ConditionalSPARTAN(nn.Module):
         
         for key in ["self", "__class__", "args", "kwargs"]:
             del self.hyper_params[key]
+
+        device = get_device(device)
 
         super().__init__(*args, **kwargs)
 
@@ -164,6 +169,7 @@ class ConditionalSPARTAN(nn.Module):
                 residual=residual,
                 agg_residual=agg_residual,
                 agg_res_coeff=agg_res_coeff,
+                train_query=train_query,
             )
         elif output_type == "film":
             self.out = FiLMHead(
@@ -290,7 +296,10 @@ class ConditionalSPARTAN(nn.Module):
             out = self.out(pooled)  # (b, e, o)
 
 
-        if num_evals > 1:  # every div loss needs at least two modes to compare
+        if not compute_div:
+            div = div.detach()
+
+        if num_evals > 1:  
             match self.div_loss:
                 case CosineDiv():
                     # list of (b, h, e, l, l) -> (e, b, n, h, l, l)
@@ -300,9 +309,8 @@ class ConditionalSPARTAN(nn.Module):
                     div = self.div_loss(x_attn.transpose(0, 1))  # (e, b, l, d)
                 case MaskOverlapDiv():
                     div = self.div_loss(path_matrix.transpose(0, 1))  # (e, b, l, l)
-
-        if not compute_div:
-            div = div.detach()
+                case MutualInfDiv():
+                    div = self.div_loss(torch.sigmoid(out).view(batch_size, num_evals, -1))
 
         out = out.transpose(0, 1).reshape(-1, out.size(-1))
         path_matrix = path_matrix.transpose(0, 1).reshape(-1, path_matrix.size(-2), seq_len)

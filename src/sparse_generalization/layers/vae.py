@@ -7,6 +7,7 @@ from torch import Tensor
 from torch.distributions import Distribution, Independent, Normal
 
 from sparse_generalization.layers.agg_attention import AggregationAttention
+from sparse_generalization.utils.util_funcs import get_device
 
 
 class Encoder(zuko.lazy.LazyDistribution):
@@ -39,15 +40,17 @@ class FlowVAE(nn.Module):
         encoder_heads: bool = False,
         force_vae_gaussian: bool = False, 
         use_encoder: bool = True,
-        device: str = "cuda",
+        device: str | None = None,
         layernorm: bool = True,
         flow_params: dict = {"n_flows": 3, "hidden_features": [256, 256]},
         separate_mask: bool = False,
         use_mask: bool = False,
         act: nn.Module = nn.ReLU,
+        train_query: bool = True,
         *args,
         **kwargs,
     ):
+        device = get_device(device)
         super().__init__(*args, **kwargs)
         self.device = device
         self.num_heads = num_heads
@@ -66,6 +69,7 @@ class FlowVAE(nn.Module):
             separate_mask=separate_mask,
             use_mask=use_mask,
             act=act,
+            train_query=train_query,
         )
 
         self.normalizing_flow = zuko.flows.NSF(
@@ -148,18 +152,12 @@ class FlowVAE(nn.Module):
                 dtype=output.dtype,
             )
 
+        if self.encoder_heads and self.use_encoder:
+            output = output.view(eff_batch, -1)
+            ladj = ladj.view(eff_batch, self.num_heads).sum(dim=-1)
+
         log_prob_z = log_prior_base - ladj
         if self.force_vae_gaussian:
             log_prob_z = log_prob_z - vae_prior
-
-        if self.encoder_heads and self.use_encoder:
-            output = (
-                output.view(eff_batch, self.num_heads, -1)
-                .reshape(eff_batch, -1)
-            )
-
-            log_prob_z = (
-                log_prob_z.view(eff_batch, self.num_heads,).sum(dim=-1)
-            )
 
         return output, log_prob_z

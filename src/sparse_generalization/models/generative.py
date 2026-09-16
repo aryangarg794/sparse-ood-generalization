@@ -25,6 +25,7 @@ from sparse_generalization.layers.gen_agg_attn import (
 )
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
 from sparse_generalization.utils.util_funcs import (
+    get_device,
     positionalencoding2d,
     compute_attn_mean,
     compute_mask_mean,
@@ -69,10 +70,11 @@ class FlowSpartan(nn.Module):
         logger: WandbLogger = None,
         force_vae_gaussian: bool = False,
         num_embeddings: int = 25,
-        device: str = "cuda",
+        device: str | None = None,
         beta1: float = 0.9,
         beta2: float = 0.999,
         threshold: float = 0.01,
+        train_query: bool = True,
         *args,
         **kwargs,
     ):
@@ -80,6 +82,8 @@ class FlowSpartan(nn.Module):
 
         for key in ["self", "__class__", "args", "kwargs"]:
             del self.hyper_params[key]
+
+        device = get_device(device)
 
         super().__init__(*args, **kwargs)
         self.device = device
@@ -192,6 +196,7 @@ class FlowSpartan(nn.Module):
                 residual=residual,
                 layernorm=layernorm,
                 device=device,
+                train_query=train_query,
             )
         else:
             self.out = nn.Linear(self.embed_size, out_dim)

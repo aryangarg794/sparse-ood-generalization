@@ -15,6 +15,7 @@ from sparse_generalization.models.blocks import MHABlockBern, MHABlock
 from sparse_generalization.layers.agg_attention import AggregationAttention
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
 from sparse_generalization.utils.util_funcs import (
+    get_device,
     positionalencoding2d,
     compute_attn_mean_ens,
     compute_mask_mean,
@@ -39,11 +40,13 @@ class EnsembleMember(nn.Module):
         agg_pool: bool = False,
         sinusoidal: bool = True,
         positional_encoding: bool = True,
-        device: str = 'cpu', 
+        device: str | None = None,
         spartan: bool = False, 
+        train_query: bool = True,
         *args, 
         **kwargs
     ):
+        device = get_device(device)
         super().__init__(
             *args, 
             **kwargs
@@ -122,6 +125,7 @@ class EnsembleMember(nn.Module):
                 separate_mask=False,
                 dropout=dropout,
                 layernorm=layernorm,
+                train_query=train_query,
             )
         else:
             self.out = nn.Linear(self.embed_size, out_dim)
@@ -222,12 +226,14 @@ class Ensemble(nn.Module):
         act: nn.Module = nn.ReLU,
         logger: WandbLogger = None,
         num_embeddings: int = 64,
-        device: str = "cuda",
+        device: str | None = None,
         beta1: float = 0.9,
         beta2: float = 0.999,
+        train_query: bool = True,
         *args, 
         **kwargs
     ):
+        device = get_device(device)
         super().__init__(*args, **kwargs)
 
         self.models = nn.ModuleList()
@@ -261,7 +267,8 @@ class Ensemble(nn.Module):
                     sinusoidal=sinusoidal,
                     positional_encoding=pe,
                     device=device,
-                    spartan=spartan
+                    spartan=spartan,
+                    train_query=train_query,
                 )
             )
 
