@@ -2,7 +2,8 @@ _target_: sparse_generalization.models.ensemble.Ensemble
 _partial_: true
 
 inp_dim: 25
-out_dim: 1 
+out_dim: 2  
+loss_type: ce  # ce | bce
 layernorm: true
 agg_pool: false 
 model_dim: 32

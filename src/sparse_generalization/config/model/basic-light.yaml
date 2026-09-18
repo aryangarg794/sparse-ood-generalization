@@ -1,8 +1,9 @@
 _target_: sparse_generalization.models.mlp.MLPBaseline
 _partial_: true
 
-inp_dim: 25  # one-hot channels when embedding_inp is false
-out_dim: 1
+inp_dim: 25  
+out_dim: 2   
+loss_type: ce  # ce | bce
 hidden_dims: [32, 40]
 embedding_inp: false
 model_dim: 32

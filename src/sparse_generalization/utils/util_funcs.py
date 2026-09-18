@@ -6,8 +6,6 @@ from torch import Tensor
 
 
 def get_device(device: str | torch.device | None = None) -> str:
-    """Resolve the compute device. An explicit `device` wins; otherwise pick
-    cuda > mps > cpu based on what is available on this machine."""
     if device is not None:
         return str(device)
     if torch.cuda.is_available():

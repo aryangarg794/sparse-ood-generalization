@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 from copy import deepcopy
 from torch import Tensor
-from torchmetrics.classification import BinaryAccuracy
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -20,6 +19,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_mask_mean,
     compute_max_paths,
 )
+from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.layers.diversity_losses import (
     CosineDiv, CosineRepDiv, L2DistanceDiv, MaskOverlapDiv, 
     MutualInfDiv
@@ -30,7 +30,8 @@ class ConditionalSPARTAN(nn.Module):
     def __init__(
         self, 
         inp_dim: int = 3,
-        out_dim: int = 1, 
+        out_dim: int = 2,  # head size: 2 for ce (softmax classes), 1 for bce (single sigmoid logit)
+        loss_type: str = "ce",  # 'ce' | 'bce'
         include_sparsity: bool = False,
         alpha: float = 0.1,
         num_modes: int = 3, 
@@ -96,6 +97,7 @@ class ConditionalSPARTAN(nn.Module):
         self.head_pool = head_pool
         self.seq_len = inp_dim if seq_len is None else seq_len
         self.num_eval_samples = num_eval_samples
+        self.criterion = Criterion(loss_type)
         self.out_dim = out_dim
 
         if div_coeff != 0:
@@ -190,8 +192,7 @@ class ConditionalSPARTAN(nn.Module):
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
         )
-        self.accuracy = BinaryAccuracy()
-        self.loss = nn.BCEWithLogitsLoss()
+        self.loss = self.criterion.loss
         self.global_step = 0
         self.threshold = threshold
 
@@ -310,14 +311,18 @@ class ConditionalSPARTAN(nn.Module):
                 case MaskOverlapDiv():
                     div = self.div_loss(path_matrix.transpose(0, 1))  # (e, b, l, l)
                 case MutualInfDiv():
-                    div = self.div_loss(torch.sigmoid(out).view(batch_size, num_evals, -1))
+                    # (b, e, c) class probabilities; a single sigmoid column is expanded to [1-p, p] inside
+                    div = self.div_loss(
+                        self.criterion.probs(out).view(batch_size, num_evals, -1),
+                        binary=self.criterion.loss_type == "bce",
+                    )
 
         out = out.transpose(0, 1).reshape(-1, out.size(-1))
         path_matrix = path_matrix.transpose(0, 1).reshape(-1, path_matrix.size(-2), seq_len)
         attn_matrix = attn_matrix.transpose(0, 1).reshape(-1, attn_matrix.size(-2), seq_len)
 
         if evaluate:
-            out = torch.sigmoid(out).view(num_evals, batch_size, -1)
+            out = self.criterion.probs(out).view(num_evals, batch_size, -1)  # (e, b, c) class probabilities
             path_matrix = path_matrix.view(num_evals, batch_size, -1, seq_len)
             attn_matrix = attn_matrix.view(num_evals, batch_size, -1, seq_len)
             if ret_mean:
@@ -355,13 +360,10 @@ class ConditionalSPARTAN(nn.Module):
                 x = x.to(self.device)
                 y = y.to(self.device)
                 out, masks, attns, div = self(x)  # list of (b, l, l)
-                out = out.view(self.num_modes, -1, self.out_dim)
-                pointwise_losses = F.binary_cross_entropy_with_logits(
-                    out,
-                    y.unsqueeze(0).expand_as(out),
-                    reduction="none",
-                )
-                loss_per_model = pointwise_losses.mean(dim=(1, 2))
+                out = out.view(self.num_modes, -1, self.out_dim)  # (e, b, c) logits
+                y_modes = y.unsqueeze(0).expand(self.num_modes, -1, -1)  # (e, b, 1)
+                pointwise_losses = self.criterion.loss(out, y_modes, reduction="none")  # (e, b)
+                loss_per_model = pointwise_losses.mean(dim=1)
                 rec_loss = loss_per_model.mean()
 
                 if self.include_sparsity:
@@ -379,7 +381,7 @@ class ConditionalSPARTAN(nn.Module):
                 epoch_div += div.item()
 
                 with torch.no_grad():
-                    acc = self.accuracy(out, y.expand_as(out))
+                    acc = self.criterion.accuracy(out, y_modes)
                     epoch_acc += acc.item()
             
                     attn_running += compute_mask_mean(attns)
@@ -472,11 +474,11 @@ class ConditionalSPARTAN(nn.Module):
             x = x.to(self.device)
             y = y.to(self.device)
             out, masks, attns = self(x, evaluate=True)
-            loss = F.binary_cross_entropy(out, y)
+            loss = self.criterion.loss_from_probs(out, y)
 
             epoch_loss += loss.item()
             with torch.no_grad():
-                acc = self.accuracy(out, y)
+                acc = self.criterion.accuracy_from_probs(out, y)
                 epoch_acc += acc.item()
                 attn_running += compute_mask_mean(attns)
                 mask_running += compute_mask_mean(masks)
@@ -530,13 +532,15 @@ class ConditionalSPARTAN(nn.Module):
         size = preds.size(0)
         midpoint = size // 2
 
-        total_acc = self.accuracy(preds, trues)
+        acc = self.criterion.accuracy_from_probs
+        total_acc = acc(preds, trues)
         results["total_acc"] = total_acc.item()
 
-        acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
-        acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
-        conf_a = preds[:midpoint].mean()
-        conf_b = preds[midpoint:].mean()
+        acc_a = acc(preds[:midpoint], trues[:midpoint])
+        acc_b = acc(preds[midpoint:], trues[midpoint:])
+        # confidence = mean probability assigned to the positive class
+        conf_a = self.criterion.confidence(preds[:midpoint])
+        conf_b = self.criterion.confidence(preds[midpoint:])
 
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()
@@ -562,8 +566,8 @@ class ConditionalSPARTAN(nn.Module):
             loss = float('inf')
             acc = float('-inf')
             for out in outs:
-                loss = min(F.binary_cross_entropy(out, y), loss)
-                acc = max(self.accuracy(out, y), acc)
+                loss = min(self.criterion.loss_from_probs(out, y), loss)
+                acc = max(self.criterion.accuracy_from_probs(out, y), acc)
 
             attn_running += compute_mask_mean(attns)
             mask_running += compute_mask_mean(masks)

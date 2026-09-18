@@ -2,9 +2,8 @@ _target_: sparse_generalization.models.generative.FlowSpartan
 _partial_: true
 
 inp_dim: 25
-out_dim: 1 
-layernorm: false
-agg_pool: false 
+out_dim: 2  # head size: 2 for ce (softmax classes), 1 for bce (single sigmoid logit)
+loss_type: ce  # ce | bce
 model_dim: 32
 seq_len: 25
 embedding_inp: false

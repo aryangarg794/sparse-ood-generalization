@@ -2,8 +2,8 @@ _target_: sparse_generalization.models.spartan.SPARTAN
 _partial_: true
 
 inp_dim: 25
-out_dim: 1 
-layernorm: true
+out_dim: 2  
+loss_type: ce  # ce | bce
 agg_pool: true 
 model_dim: 32
 embedding_inp: false

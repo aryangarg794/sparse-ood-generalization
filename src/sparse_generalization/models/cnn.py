@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 
 from torch import Tensor
-from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
 
 

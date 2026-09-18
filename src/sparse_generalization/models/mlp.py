@@ -4,13 +4,13 @@ import torch.nn.functional as F
 
 from copy import deepcopy
 from torch import Tensor
-from torchmetrics.classification import BinaryAccuracy
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import List, Self
 
 from sparse_generalization.models.cnn import BasicCNN
+from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.utils.util_funcs import positionalencoding2d, get_device
 
 
@@ -52,7 +52,8 @@ class MLPBaseline(nn.Module):
     def __init__(
         self: Self,
         inp_dim: int = 1,  # per-cell feature size when not embedding (1 for raw ids, 25 for one-hot)
-        out_dim: int = 1,
+        out_dim: int = 2,  # head size: 2 for ce (softmax classes), 1 for bce (single sigmoid logit)
+        loss_type: str = "ce",  # 'ce' | 'bce'
         seq_len: int = 25,
         hidden_dims: List = [64, 128, 64],
         act: nn.Module = nn.ReLU,
@@ -89,6 +90,7 @@ class MLPBaseline(nn.Module):
         self.val_freq = val_freq
         self.val_to_name = val_to_name
         self.embedding_inp = embedding_inp
+        self.criterion = Criterion(loss_type)
         self.out_dim = out_dim
         self.seq_len = seq_len
         self.use_optimal_test = use_optimal_test
@@ -135,8 +137,7 @@ class MLPBaseline(nn.Module):
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=wd
         )
-        self.accuracy = BinaryAccuracy()
-        self.loss = nn.BCEWithLogitsLoss()
+        self.loss = self.criterion.loss
         self.global_step = 0
 
     def _tokens(self: Self, x: Tensor):
@@ -165,7 +166,7 @@ class MLPBaseline(nn.Module):
                 inp = tokens.max(dim=1)[0]
             out = self.model(inp)  # (b, o)
         if evaluate:
-            return torch.sigmoid(out)
+            return self.criterion.probs(out)
         return out
 
     def fit(self: Self, dataloader: DataLoader, num_epochs: int, testloaders: List):
@@ -200,7 +201,7 @@ class MLPBaseline(nn.Module):
 
                 epoch_loss += loss.item()
                 with torch.no_grad():
-                    epoch_acc += self.accuracy(out, y).item()
+                    epoch_acc += self.criterion.accuracy(out, y).item()
 
                 self.global_step += 1
 
@@ -259,8 +260,8 @@ class MLPBaseline(nn.Module):
             x = x.to(self.device)
             y = y.to(self.device)
             out = self(x, evaluate=True)
-            epoch_loss += F.binary_cross_entropy(out, y).item()
-            epoch_acc += self.accuracy(out, y).item()
+            epoch_loss += self.criterion.loss_from_probs(out, y).item()
+            epoch_acc += self.criterion.accuracy_from_probs(out, y).item()
 
         epoch_loss /= len(dataloader)
         epoch_acc /= len(dataloader)
@@ -295,11 +296,13 @@ class MLPBaseline(nn.Module):
         size = preds.size(0)
         midpoint = size // 2
 
-        results["total_acc"] = self.accuracy(preds, trues).item()
-        results["acc_a"] = self.accuracy(preds[:midpoint], trues[:midpoint]).item()
-        results["acc_b"] = self.accuracy(preds[midpoint:], trues[midpoint:]).item()
-        results["conf_a"] = preds[:midpoint].mean().item()
-        results["conf_b"] = preds[midpoint:].mean().item()
+        acc = self.criterion.accuracy_from_probs
+        results["total_acc"] = acc(preds, trues).item()
+        results["acc_a"] = acc(preds[:midpoint], trues[:midpoint]).item()
+        results["acc_b"] = acc(preds[midpoint:], trues[midpoint:]).item()
+        # confidence = mean probability assigned to the positive class
+        results["conf_a"] = self.criterion.confidence(preds[:midpoint]).item()
+        results["conf_b"] = self.criterion.confidence(preds[midpoint:]).item()
 
         self.train()
         return results

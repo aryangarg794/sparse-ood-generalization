@@ -2,48 +2,58 @@ _target_: sparse_generalization.models.hypernet.HyperNetSpartan
 _partial_: true
 
 inp_dim: 25
-out_dim: 1 
-layernorm: true
-model_dim: 16
+out_dim: 2  #
+loss_type: ce  # ce | bce
 seq_len: 25
-embedding_inp: false
+model_dim: 16
 num_heads: 1
-hyper_type: qk
 num_mha_layers: 1
 include_agg_layer: true
-forward_evals: 2
+hyper_type: qk  # mask | mha | qk
+layernorm: false
+residual: true
+dropout: 0.0
+embedding_inp: false
+num_embeddings: 25
+pe_type: sin  # sin | coord | learned
 separate_mask: false
 use_mask: false
-flow_params:
-  n_flows: 3
-  hidden_features: [64, 64]
+train_query: false
+
+weight_gen:
+  _partial_: true
+  _target_: sparse_generalization.layers.vae.FlowVAE
+  force_vae_gaussian: false
+  flow_params:
+    n_flows: 3
+    hidden_features: [32, 32]
+  prior_func:
+    _partial_: true
+    _target_: sparse_generalization.layers.priors.make_unit_gaussian
+    k: 10
+  
+# weight_gen:
+#   _partial_: true
+#   _target_: sparse_generalization.layers.vhypernet.VHyperNet
+#   hidden_features: [128, 128]
+
+prior_type: nf  # uniform | normal | laplace | nf
 prior_params:
   n_flows: 3
   hidden_features: [32, 32]
-prior_type: normal
-include_sparsity: false
-lr: 1e-3
-force_vae_gaussian: false
-alpha: 0.1
-residual: true
-num_embeddings: 25
-pe_type: sin  # sin | coord | learned
-beta: 1.0
-val_freq: 5
+beta: 1e-2
+forward_evals: 1
 num_eval_samples: 5
-div_coeff: 1.0
 use_optimal_test: true
-dropout: 0.0
-beta1: 0.9
-beta2: 0.999
-train_query: false
+include_sparsity: false
+alpha: 0.1
+div_coeff: 0.0
 
-prior_func: 
-  _partial_: true
-  _target_: sparse_generalization.layers.priors.make_unit_gaussian
-  k: 10
-
-div_loss: 
+div_loss:
   _partial_: true
   _target_: sparse_generalization.layers.diversity_losses.CosineRepDiv
 
+lr: 1e-3
+beta1: 0.9
+beta2: 0.999
+val_freq: 5

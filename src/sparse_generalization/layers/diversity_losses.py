@@ -77,7 +77,8 @@ class MutualInfDiv(nn.Module):
         """
         super().__init__(*args, **kwargs)
 
-    def forward(self, probs: Tensor, binary: bool = True):
+    def forward(self, probs: Tensor, binary: bool = False):
+        # probs: (b, h, c) softmax class probabilities; binary=True expands a single P(y=1) column
         if binary:
             probs = torch.cat([1-probs, probs], dim=-1)
 

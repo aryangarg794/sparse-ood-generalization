@@ -11,12 +11,12 @@ import wandb
 from copy import deepcopy
 from hydra.utils import instantiate
 from torch import Tensor
-from torchmetrics.classification import BinaryAccuracy
 from typing import List, Self
 from torch.utils.data import DataLoader
 
 from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
 from sparse_generalization.losses.sparse_loss import L1SparsityWeights
+from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.utils.util_funcs import noise_scheduler
 from sparse_generalization.models.blocks import MHABlock
 from sparse_generalization.layers.agg_attention import AggregationAttention
@@ -35,7 +35,8 @@ class TransformerLit(pl.LightningModule):
         self: Self,
         inp_dim: int = 3,
         model_dim: int = 64,
-        out_dim: int = 1,
+        out_dim: int = 2,  # head size: 2 for ce (softmax classes), 1 for bce (single sigmoid logit)
+        loss_type: str = "ce",  # 'ce' | 'bce'
         num_heads: int = 1,  # for the toy example just keep it one
         agg_pool: bool = False,
         token_pool: bool = False,
@@ -53,7 +54,6 @@ class TransformerLit(pl.LightningModule):
         positional_encoding: bool = True,
         sinusoidal: bool = True,
         num_embeddings: int = 64,
-        loss: nn.Module = nn.BCEWithLogitsLoss,
         lagrangian: bool = False,
         target_loss: float = 0.05,
         start_lambda: float = 1e7,
@@ -74,7 +74,9 @@ class TransformerLit(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         self.betas = (beta1, beta2)
-        self.loss = loss()
+        self.criterion = Criterion(loss_type)
+        self.out_dim = out_dim
+        self.loss = self.criterion.loss
         self.sparse = include_sparsity
         self.noisy_grads = noisy_grads
         self.eta = eta
@@ -153,8 +155,6 @@ class TransformerLit(pl.LightningModule):
             self.out = nn.Linear(self.embed_size, out_dim)
         else:
             self.out = nn.Linear(self.embed_size, out_dim)
-
-        self.accuracy = BinaryAccuracy()
 
         self.val_to_name = val_to_name
         self.test_name = "placeholder"
@@ -242,7 +242,7 @@ class TransformerLit(pl.LightningModule):
         x, y = batch
         y_hat, path_matrix = self(x)
         loss = self.loss(y_hat, y)
-        acc = self.accuracy(y_hat, y)
+        acc = self.criterion.accuracy(y_hat, y)
         return loss, acc, path_matrix
 
     def training_step(self, batch, batch_idx):
@@ -450,7 +450,7 @@ class TransformerLit(pl.LightningModule):
             x = x.to(self.device)
             y = y.to(self.device)
             out, _ = self(x)
-            probs = F.sigmoid(out)
+            probs = self.criterion.probs(out)
             labels.append(probs)
             true_labels.append(y)
 
@@ -459,12 +459,14 @@ class TransformerLit(pl.LightningModule):
         size = preds.size(0)
         midpoint = size // 2
 
-        total_acc = self.accuracy(preds, trues)
+        acc = self.criterion.accuracy_from_probs
+        total_acc = acc(preds, trues)
         results["total_acc"] = total_acc.item()
-        acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
-        acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
-        conf_a = preds[:midpoint].mean()
-        conf_b = preds[midpoint:].mean()
+        acc_a = acc(preds[:midpoint], trues[:midpoint])
+        acc_b = acc(preds[midpoint:], trues[midpoint:])
+        # confidence = mean probability assigned to the positive class
+        conf_a = self.criterion.confidence(preds[:midpoint])
+        conf_b = self.criterion.confidence(preds[midpoint:])
 
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()

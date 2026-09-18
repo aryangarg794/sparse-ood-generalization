@@ -22,7 +22,7 @@ class AggregationFlowMask(nn.Module):
         seq_len: int,
         base_dist: zuko.lazy.LazyDistribution,
         num_heads: int = 1,
-        out_dim: int = 1,
+        out_dim: int = 2,  # softmax classes
         separate_mask: bool = False,
         use_mask: bool = False,
         dropout: float = 0.0,
@@ -192,7 +192,7 @@ class AggregationFlowMHA(nn.Module):
         seq_len: int,
         base_dist: zuko.lazy.LazyDistribution,
         num_heads: int = 1,
-        out_dim: int = 1,
+        out_dim: int = 2,  # softmax classes
         dropout: float = 0.0,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
@@ -382,7 +382,7 @@ class AggregationFlowDirectA(nn.Module):
         seq_len: int,
         base_dist: zuko.lazy.LazyDistribution,
         num_heads: int = 1,
-        out_dim: int = 1,
+        out_dim: int = 2,  # softmax classes
         dropout: float = 0.0,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
@@ -547,7 +547,7 @@ class AggregationFlowOnlyQK(nn.Module):
         base_dist: zuko.lazy.LazyDistribution,
         seq_len: int,
         num_heads: int = 1,
-        out_dim: int = 1,
+        out_dim: int = 2,  # softmax classes
         dropout: float = 0.0,
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},

@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from copy import deepcopy
 from lightning.pytorch.loggers import WandbLogger
 from torch import Tensor
-from torchmetrics.classification import BinaryAccuracy
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import List
@@ -31,6 +30,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_mask_mean,
     compute_max_paths,
 )
+from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.layers.priors import LaplacePrior, make_unit_gaussian
 
 
@@ -40,7 +40,8 @@ class FlowSpartan(nn.Module):
         self,
         inp_dim: int = 3,
         seq_len: int = 25,
-        out_dim: int = 1,
+        out_dim: int = 2,  # head size: 2 for ce (softmax classes), 1 for bce (single sigmoid logit)
+        loss_type: str = "ce",  # 'ce' | 'bce'
         model_dim: int = 32,
         num_heads: int = 1,
         num_layers: int = 4,
@@ -89,6 +90,8 @@ class FlowSpartan(nn.Module):
         self.device = device
         self.logger = logger
         self.model_dim = model_dim
+        self.criterion = Criterion(loss_type)
+        self.out_dim = out_dim
         self.num_heads = num_heads
         self.num_layers = num_layers
         self.agg_pool = agg_pool
@@ -204,8 +207,7 @@ class FlowSpartan(nn.Module):
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
         )
-        self.accuracy = BinaryAccuracy()
-        self.loss = nn.BCEWithLogitsLoss()
+        self.loss = self.criterion.loss
         self.global_step = 0
         self.threshold = threshold
 
@@ -354,7 +356,7 @@ class FlowSpartan(nn.Module):
 
                 epoch_loss += rec_loss.item()
                 with torch.no_grad():
-                    acc = self.accuracy(out, y)
+                    acc = self.criterion.accuracy(out, y)
                     epoch_acc += acc.item()
                     
                     attn_running += compute_attn_mean(
@@ -451,7 +453,7 @@ class FlowSpartan(nn.Module):
 
             epoch_loss += loss.item()
             with torch.no_grad():
-                acc = self.accuracy(out, y)
+                acc = self.criterion.accuracy(out, y)
                 epoch_acc += acc.item()
                 attn_running += compute_attn_mean(attn, self.threshold, self.device)
                 mask_running += compute_mask_mean(masks)
@@ -497,7 +499,7 @@ class FlowSpartan(nn.Module):
             x = x.to(self.device)
             y = y.to(self.device)
             out, mask, attn, _ = self(x)
-            probs = F.sigmoid(out)
+            probs = self.criterion.probs(out)
             labels.append(probs)
             true_labels.append(y)
 
@@ -506,13 +508,15 @@ class FlowSpartan(nn.Module):
         size = preds.size(0)
         midpoint = size // 2
 
-        total_acc = self.accuracy(preds, trues)
+        acc = self.criterion.accuracy_from_probs
+        total_acc = acc(preds, trues)
         results["total_acc"] = total_acc.item()
 
-        acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
-        acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
-        conf_a = preds[:midpoint].mean()
-        conf_b = preds[midpoint:].mean()
+        acc_a = acc(preds[:midpoint], trues[:midpoint])
+        acc_b = acc(preds[midpoint:], trues[midpoint:])
+        # confidence = mean probability assigned to the positive class
+        conf_a = self.criterion.confidence(preds[:midpoint])
+        conf_b = self.criterion.confidence(preds[midpoint:])
 
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()

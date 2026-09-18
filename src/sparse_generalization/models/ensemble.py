@@ -6,7 +6,6 @@ from copy import deepcopy
 from functools import partial
 from lightning.pytorch.loggers import WandbLogger
 from torch import Tensor
-from torchmetrics.classification import BinaryAccuracy
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import List
@@ -21,6 +20,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_mask_mean,
     compute_max_paths,
 )
+from sparse_generalization.losses.criterion import Criterion
 
 class EnsembleMember(nn.Module):
 
@@ -28,7 +28,8 @@ class EnsembleMember(nn.Module):
         self, 
         inp_dim: int = 3,
         model_dim: int = 64,
-        out_dim: int = 1,
+        out_dim: int = 2,
+        criterion: Criterion = Criterion("ce"),  # shared with the Ensemble
         num_heads: int = 1,
         act: nn.Module = nn.ReLU,
         dropout: float = 0.0,
@@ -55,6 +56,7 @@ class EnsembleMember(nn.Module):
         self.agg_pool = agg_pool
         self.residual = residual
         self.device = device
+        self.criterion = criterion
 
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
@@ -195,14 +197,15 @@ class EnsembleMember(nn.Module):
 
     def predict(self, x: Tensor):
         out, mask, mask_attn, attn, _ = self(x)
-        return F.sigmoid(out), mask, mask_attn, attn
+        return self.criterion.probs(out), mask, mask_attn, attn
 
 class Ensemble(nn.Module):
 
     def __init__(
         self, 
         inp_dim: int = 3,
-        out_dim: int = 1,
+        out_dim: int = 2,  # head size: 2 for ce (softmax classes), 1 for bce (single sigmoid logit)
+        loss_type: str = "ce",  # 'ce' | 'bce'
         num_models: int = 5, 
         spartan: bool = False, 
         model_dim: int = 64,
@@ -242,6 +245,8 @@ class Ensemble(nn.Module):
         self.alpha = alpha
         self.device = device
         self.logger = logger
+        self.criterion = Criterion(loss_type)
+        self.out_dim = out_dim
         self.use_optimal_test = use_optimal_test
         self.ensemble_loss = ensemble_loss
 
@@ -255,6 +260,7 @@ class Ensemble(nn.Module):
                     inp_dim=inp_dim, 
                     model_dim=model_dim,
                     out_dim=out_dim,
+                    criterion=self.criterion,
                     num_heads=num_heads,
                     act=act,
                     dropout=dropout,
@@ -275,8 +281,7 @@ class Ensemble(nn.Module):
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
         )
-        self.accuracy = BinaryAccuracy()
-        self.loss = nn.BCEWithLogitsLoss(reduction='none')
+        self.loss = partial(self.criterion.loss, reduction="none")
         self.global_step = 0
         self.sparse_loss = L1SparsityAdjacency()
         self.max_paths = None
@@ -313,7 +318,7 @@ class Ensemble(nn.Module):
     def predict(self, x: Tensor, ret_mean: bool = True):
         out, mask, mask_attn, attn = self(x)
         if ret_mean:
-            return F.sigmoid(out).mean(dim=1), mask, mask_attn, attn
+            return self.criterion.probs(out).mean(dim=1), mask, mask_attn, attn
         return out, mask, mask_attn, attn
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
@@ -347,6 +352,7 @@ class Ensemble(nn.Module):
                 y = y.to(self.device)
                 out, masks, mask_attns, attns = self(x)  # list of (b, l, l)
 
+                # (b, m, c) logits vs (b, m, 1) labels -> (b, m) per-member losses
                 rec_loss = self.loss(out, y.unsqueeze(dim=1).expand(-1, self.num_models, -1))
                 if self.ensemble_loss == "mean":
                     rec_loss = rec_loss.mean()
@@ -366,7 +372,7 @@ class Ensemble(nn.Module):
 
                 epoch_loss += rec_loss.item()
                 with torch.no_grad():
-                    acc = self.accuracy(self.predict(x)[0], y)
+                    acc = self.criterion.accuracy_from_probs(self.predict(x)[0], y)
                     epoch_acc += acc.item()
 
                     threshold = 1 / (x.size(1) * x.size(2)) 
@@ -491,11 +497,11 @@ class Ensemble(nn.Module):
             y = y.to(self.device)
             out, mask, mask_attn, attn = model.predict(x)
 
-            loss = F.binary_cross_entropy(out, y, reduction="mean")
+            loss = self.criterion.loss_from_probs(out, y)
             epoch_loss += loss.item()
 
             with torch.no_grad():
-                acc = self.accuracy(out, y)
+                acc = self.criterion.accuracy_from_probs(out, y)
                 epoch_acc += acc.item()
 
                 threshold = 1 / (x.size(1) * x.size(2)) 
@@ -544,7 +550,7 @@ class Ensemble(nn.Module):
             out, _, _, _ = model.predict(x)
 
             with torch.no_grad():
-                acc = self.accuracy(out, y)
+                acc = self.criterion.accuracy_from_probs(out, y)
                 epoch_acc += acc.item()
 
         epoch_acc /= len(dataloader)
@@ -570,13 +576,15 @@ class Ensemble(nn.Module):
         size = preds.size(0)
         midpoint = size // 2
 
-        total_acc = self.accuracy(preds, trues)
+        acc = self.criterion.accuracy_from_probs
+        total_acc = acc(preds, trues)
         results["total_acc"] = total_acc.item()
 
-        acc_a = self.accuracy(preds[:midpoint], trues[:midpoint])
-        acc_b = self.accuracy(preds[midpoint:], trues[midpoint:])
-        conf_a = preds[:midpoint].mean()
-        conf_b = preds[midpoint:].mean()
+        acc_a = acc(preds[:midpoint], trues[:midpoint])
+        acc_b = acc(preds[midpoint:], trues[midpoint:])
+        # confidence = mean probability assigned to the positive class
+        conf_a = self.criterion.confidence(preds[:midpoint])
+        conf_b = self.criterion.confidence(preds[midpoint:])
 
         results["acc_a"] = acc_a.item()
         results["acc_b"] = acc_b.item()
@@ -598,12 +606,12 @@ class Ensemble(nn.Module):
             x = x.to(self.device)
             y = y.to(self.device)
             outs, masks, mask_attn, attns = model.predict(x, ret_mean=False)
-            outs = outs.transpose(0, 1)
+            outs = outs.transpose(0, 1)  # (m, b, c) logits
             loss = float('inf')
             acc = float('-inf')
             for out in outs:
-                loss = min(F.binary_cross_entropy_with_logits(out, y), loss)
-                acc = max(self.accuracy(out, y), acc)
+                loss = min(self.criterion.loss(out, y), loss)
+                acc = max(self.criterion.accuracy(out, y), acc)
 
             threshold = 1 / (x.size(1) * x.size(2)) 
             attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device)

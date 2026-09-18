@@ -2,6 +2,8 @@ _target_: sparse_generalization.models.mlp.MLPBaseline
 _partial_: true
 
 inp_dim: 25
+out_dim: 2 
+loss_type: ce  # ce | bce
 seq_len: 25
 hidden_dims: [128, 128]
 dropout: 0.0

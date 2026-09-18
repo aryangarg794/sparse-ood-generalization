@@ -35,7 +35,8 @@ class FlowVAE(nn.Module):
         self,
         input_dim: int,
         output_dim: int,
-        base_dist: Distribution,
+        base_dist: Distribution = None,
+        prior_func = None,  
         num_heads: int = 1,
         encoder_heads: bool = False,
         force_vae_gaussian: bool = False, 
@@ -47,11 +48,12 @@ class FlowVAE(nn.Module):
         use_mask: bool = False,
         act: nn.Module = nn.ReLU,
         train_query: bool = True,
-        *args,
-        **kwargs,
+        **kwargs,  
     ):
         device = get_device(device)
-        super().__init__(*args, **kwargs)
+        super().__init__()
+        if base_dist is None:
+            base_dist = prior_func(output_dim)
         self.device = device
         self.num_heads = num_heads
         self.use_encoder = use_encoder

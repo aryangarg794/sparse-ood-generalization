@@ -1,8 +1,9 @@
-_target_: sparse_generalization.models.spartan.OracleTransformer
+_target_: sparse_generalization.models.oracle.OracleTransformer
 _partial_: true
 
 embed_size: 3
-out_dim: 1
+out_dim: 2  
+loss_type: ce  # ce | bce
 hidden_dims_ffn: [64, 64]
 model_dim: 14
 num_feature_layers: 1
