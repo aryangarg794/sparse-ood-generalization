@@ -17,6 +17,8 @@ lr: 1e-3
 wd: 0.0
 beta1: 0.9
 beta2: 0.999
+lr_decay: none  # none | linear | cosine
+lr_warmup: false
 val_freq: 5
 use_optimal_test: false
 

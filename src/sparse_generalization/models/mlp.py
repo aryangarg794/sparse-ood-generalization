@@ -11,7 +11,11 @@ from typing import List, Self
 
 from sparse_generalization.models.cnn import BasicCNN
 from sparse_generalization.losses.criterion import Criterion
-from sparse_generalization.utils.util_funcs import positionalencoding2d, get_device
+from sparse_generalization.utils.util_funcs import (
+    positionalencoding2d,
+    get_device,
+    build_lr_scheduler,
+)
 
 
 class BasicMLP(nn.Module):
@@ -62,6 +66,8 @@ class MLPBaseline(nn.Module):
         wd: float = 0.0,
         beta1: float = 0.9,
         beta2: float = 0.999,
+        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_warmup: bool = False,
         val_freq: int = 10,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
         embedding_inp: bool = True,
@@ -99,6 +105,10 @@ class MLPBaseline(nn.Module):
 
         if input_method not in ("concat", "mean", "max"):
             raise ValueError(f"input_method must be 'concat', 'mean' or 'max', got {input_method!r}")
+        if lr_decay not in ("none", "linear", "cosine"):
+            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+        self.lr_decay = lr_decay
+        self.lr_warmup = lr_warmup
 
         module_cls = module.func if hasattr(module, "func") else module  # unwrap hydra partials
         self.is_cnn = isinstance(module_cls, type) and issubclass(module_cls, BasicCNN)
@@ -137,6 +147,7 @@ class MLPBaseline(nn.Module):
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2), weight_decay=wd
         )
+        self.scheduler = None
         self.loss = self.criterion.loss
         self.global_step = 0
 
@@ -183,6 +194,10 @@ class MLPBaseline(nn.Module):
 
         postfix = {"loss": 0.0, "acc": 0.0}
 
+        self.scheduler = build_lr_scheduler(
+            self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
+        )
+
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
             epoch_loss = 0.0
@@ -198,6 +213,8 @@ class MLPBaseline(nn.Module):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
 
                 epoch_loss += loss.item()
                 with torch.no_grad():

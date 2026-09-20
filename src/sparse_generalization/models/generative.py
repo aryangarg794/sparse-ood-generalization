@@ -29,6 +29,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_attn_mean,
     compute_mask_mean,
     compute_max_paths,
+    build_lr_scheduler,
 )
 from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.layers.priors import LaplacePrior, make_unit_gaussian
@@ -64,6 +65,8 @@ class FlowSpartan(nn.Module):
         embedding_inp: bool = True,
         beta: float = 1.0,
         lr: float = 1e-3,
+        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_warmup: bool = False,
         prior_func = make_unit_gaussian,
         dropout: float = 0.1,
         layernorm: bool = True,
@@ -84,10 +87,15 @@ class FlowSpartan(nn.Module):
         for key in ["self", "__class__", "args", "kwargs"]:
             del self.hyper_params[key]
 
+        if lr_decay not in ("none", "linear", "cosine"):
+            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+
         device = get_device(device)
 
         super().__init__(*args, **kwargs)
         self.device = device
+        self.lr_decay = lr_decay
+        self.lr_warmup = lr_warmup
         self.logger = logger
         self.model_dim = model_dim
         self.criterion = Criterion(loss_type)
@@ -207,6 +215,7 @@ class FlowSpartan(nn.Module):
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
         )
+        self.scheduler = None
         self.loss = self.criterion.loss
         self.global_step = 0
         self.threshold = threshold
@@ -324,6 +333,10 @@ class FlowSpartan(nn.Module):
         losses_test = deepcopy(attn_test)
         accs_test = deepcopy(attn_test)
 
+        self.scheduler = build_lr_scheduler(
+            self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
+        )
+
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
             epoch_loss = 0.0
@@ -353,12 +366,14 @@ class FlowSpartan(nn.Module):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
 
                 epoch_loss += rec_loss.item()
                 with torch.no_grad():
                     acc = self.criterion.accuracy(out, y)
                     epoch_acc += acc.item()
-                    
+
                     attn_running += compute_attn_mean(
                         attns, self.threshold, self.device
                     )

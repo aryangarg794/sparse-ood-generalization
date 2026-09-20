@@ -51,6 +51,35 @@ def noise_scheduler(start_eta: float, step: int, gamma: float = 0.55):
     return start_eta / (1 + step) ** gamma
 
 
+def build_lr_scheduler(
+    optimizer: torch.optim.Optimizer,
+    total_steps: int,
+    lr_decay: str = "none",
+    warmup: bool = False,
+    warmup_ratio: float = 0.1,
+):
+    if lr_decay not in ("none", "linear", "cosine"):
+        raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+
+    if lr_decay == "none" and not warmup:
+        return None
+
+    warmup_steps = max(1, int(warmup_ratio * total_steps)) if warmup else 0
+
+    def lr_lambda(step: int):
+        if warmup and step < warmup_steps:
+            return step / warmup_steps
+        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        progress = min(max(progress, 0.0), 1.0)
+        if lr_decay == "linear":
+            return 1.0 - progress
+        if lr_decay == "cosine":
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+        return 1.0
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+
 def reparametrize(mu: Tensor, sig: Tensor):
     std = torch.exp(0.5 * sig)
     eps = torch.randn_like(std)

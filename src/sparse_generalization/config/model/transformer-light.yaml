@@ -16,6 +16,8 @@ l1_weight: 0.0001
 positional_encoding: true
 sinusoidal: true
 lr: 1e-3
+lr_decay: none  # none | linear | cosine
+lr_warmup: false
 lagrangian: false
 start_lambda: 5e6
 target_loss: 0.15

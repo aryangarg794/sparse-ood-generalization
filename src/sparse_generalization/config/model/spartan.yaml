@@ -11,6 +11,8 @@ num_heads: 1
 num_layers: 1
 include_sparsity: true
 lr: 5e-4
+lr_decay: none  # none | linear | cosine
+lr_warmup: false
 token_pool: false
 alpha: 0.05
 compute_mask: false

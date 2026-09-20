@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
 from sparse_generalization.losses.sparse_loss import L1SparsityWeights
 from sparse_generalization.losses.criterion import Criterion
-from sparse_generalization.utils.util_funcs import noise_scheduler
+from sparse_generalization.utils.util_funcs import noise_scheduler, build_lr_scheduler
 from sparse_generalization.models.blocks import MHABlock
 from sparse_generalization.layers.agg_attention import AggregationAttention
 from sparse_generalization.models.mlp import BasicMLP
@@ -46,6 +46,8 @@ class TransformerLit(pl.LightningModule):
         act: nn.Module = nn.ReLU,
         dropout: float = 0.0,
         lr: float = 1e-3,
+        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_warmup: bool = False,
         embedding_inp: bool = True,
         residual: bool = True,
         include_sparsity: bool = False,
@@ -71,9 +73,15 @@ class TransformerLit(pl.LightningModule):
         var: float = 1.0,
         train_query: bool = True,
     ):
+        if lr_decay not in ("none", "linear", "cosine"):
+            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+
         super().__init__()
         self.save_hyperparameters()
         self.betas = (beta1, beta2)
+        self.lr_decay = lr_decay
+        self.lr_warmup = lr_warmup
+        self.scheduler = None
         self.criterion = Criterion(loss_type)
         self.out_dim = out_dim
         self.loss = self.criterion.loss
@@ -318,6 +326,8 @@ class TransformerLit(pl.LightningModule):
             )
 
         opt.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
 
         if self.lagrangian:
             self.lambd = torch.exp(self.step_size * self.ema_loss) * self.lambd
@@ -511,4 +521,8 @@ class TransformerLit(pl.LightningModule):
 
     def configure_optimizers(self: Self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, betas=self.betas)
+        total_steps = self.trainer.estimated_stepping_batches
+        self.scheduler = build_lr_scheduler(
+            optimizer, total_steps, self.lr_decay, self.lr_warmup
+        )
         return optimizer

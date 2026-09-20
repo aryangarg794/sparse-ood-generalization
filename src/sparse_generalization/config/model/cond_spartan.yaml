@@ -21,6 +21,8 @@ film_mlp: false
 film_values: false  # per-mode FiLM on the attention values
 include_sparsity: false
 lr: 1e-3
+lr_decay: none  # none | linear | cosine
+lr_warmup: false
 alpha: 0.1
 residual: true
 num_embeddings: 25

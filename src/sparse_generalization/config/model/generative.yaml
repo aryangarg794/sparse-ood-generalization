@@ -20,6 +20,8 @@ prior_params:
 prior_type: uniform
 include_sparsity: false
 lr: 5e-4
+lr_decay: none  # none | linear | cosine
+lr_warmup: false
 token_pool: false
 per_mask_prior: false
 force_vae_gaussian: false

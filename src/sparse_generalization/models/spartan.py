@@ -13,7 +13,11 @@ from sparse_generalization.models.blocks import MHABlockBern
 from sparse_generalization.layers.agg_attention import AggregationAttention
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
 from sparse_generalization.losses.criterion import Criterion
-from sparse_generalization.utils.util_funcs import positionalencoding2d, get_device
+from sparse_generalization.utils.util_funcs import (
+    positionalencoding2d,
+    get_device,
+    build_lr_scheduler,
+)
 
 
 class SPARTAN(nn.Module):
@@ -44,6 +48,8 @@ class SPARTAN(nn.Module):
         sinusoidal: bool = True,
         embedding_inp: bool = True,
         lr: float = 1e-3,
+        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_warmup: bool = False,
         dropout: float = 0.0,
         compute_mask: bool = False,
         layernorm: bool = False,
@@ -68,8 +74,13 @@ class SPARTAN(nn.Module):
         for key in ["self", "__class__", "args", "kwargs"]:
             del self.hyper_params[key]
 
+        if lr_decay not in ("none", "linear", "cosine"):
+            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+
         device = get_device(device)
         self.device = device
+        self.lr_decay = lr_decay
+        self.lr_warmup = lr_warmup
         self.logger = logger
         self.model_dim = model_dim
         self.num_heads = num_heads
@@ -145,6 +156,7 @@ class SPARTAN(nn.Module):
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
         )
+        self.scheduler = None
         self.loss = self.criterion.loss
         self.global_step = 0
         self.threshold = threshold
@@ -253,6 +265,10 @@ class SPARTAN(nn.Module):
         losses_test = deepcopy(attn_test)
         accs_test = deepcopy(attn_test)
 
+        self.scheduler = build_lr_scheduler(
+            self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
+        )
+
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
             epoch_loss = 0.0
@@ -306,6 +322,8 @@ class SPARTAN(nn.Module):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
 
                 if self.lagrangian:
                     self.lambd = torch.exp(self.step_size * self.ema_loss) * self.lambd

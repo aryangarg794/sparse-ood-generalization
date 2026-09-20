@@ -9,7 +9,7 @@ from typing import List
 
 from sparse_generalization.models.blocks import MHABlockOracle
 from sparse_generalization.losses.criterion import Criterion
-from sparse_generalization.utils.util_funcs import get_device
+from sparse_generalization.utils.util_funcs import get_device, build_lr_scheduler
 
 
 class OracleTransformer(nn.Module):
@@ -25,6 +25,8 @@ class OracleTransformer(nn.Module):
         residual: bool,
         pe: bool = True,
         lr: float = 1e-3,
+        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_warmup: bool = False,
         dropout: float = 0.1,
         use_grid: bool = True,
         act: nn.Module = nn.ReLU,
@@ -35,9 +37,14 @@ class OracleTransformer(nn.Module):
         *args,
         **kwargs,
     ):
+        if lr_decay not in ("none", "linear", "cosine"):
+            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+
         device = get_device(device)
         super().__init__(*args, **kwargs)
 
+        self.lr_decay = lr_decay
+        self.lr_warmup = lr_warmup
         self.logger = logger
         self.model_dim = model_dim
         self.criterion = Criterion(loss_type)
@@ -95,6 +102,7 @@ class OracleTransformer(nn.Module):
         self.ffn = nn.Linear(self.embed_size, out_dim)
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        self.scheduler = None
         self.loss = self.criterion.loss
         self.global_step = 0
         self.device = device
@@ -131,6 +139,9 @@ class OracleTransformer(nn.Module):
         )
 
     def fit(self, dataloader: DataLoader, num_epochs: int):
+        self.scheduler = build_lr_scheduler(
+            self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
+        )
 
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
@@ -146,6 +157,8 @@ class OracleTransformer(nn.Module):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
 
                 epoch_loss += loss.item()
                 with torch.no_grad():

@@ -19,6 +19,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_attn_mean_ens,
     compute_mask_mean,
     compute_max_paths,
+    build_lr_scheduler,
 )
 from sparse_generalization.losses.criterion import Criterion
 
@@ -222,8 +223,10 @@ class Ensemble(nn.Module):
         sinusoidal: bool = True,
         embedding_inp: bool = True,
         lr: float = 1e-3,
+        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_warmup: bool = False,
         dropout: float = 0.0,
-        val_freq: int = 10, 
+        val_freq: int = 10,
         per_ensemble_test: int = 10, 
         layernorm: bool = False,
         act: nn.Module = nn.ReLU,
@@ -236,9 +239,14 @@ class Ensemble(nn.Module):
         *args, 
         **kwargs
     ):
+        if lr_decay not in ("none", "linear", "cosine"):
+            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+
         device = get_device(device)
         super().__init__(*args, **kwargs)
 
+        self.lr_decay = lr_decay
+        self.lr_warmup = lr_warmup
         self.models = nn.ModuleList()
         self.include_sparsity = include_sparsity
         assert not include_sparsity or spartan, "Ensemble sparsity only for spartan"
@@ -281,6 +289,7 @@ class Ensemble(nn.Module):
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
         )
+        self.scheduler = None
         self.loss = partial(self.criterion.loss, reduction="none")
         self.global_step = 0
         self.sparse_loss = L1SparsityAdjacency()
@@ -338,6 +347,10 @@ class Ensemble(nn.Module):
             "acc": 0.0,
         }
 
+        self.scheduler = build_lr_scheduler(
+            self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
+        )
+
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
             epoch_loss = 0.0
@@ -369,6 +382,8 @@ class Ensemble(nn.Module):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
 
                 epoch_loss += rec_loss.item()
                 with torch.no_grad():

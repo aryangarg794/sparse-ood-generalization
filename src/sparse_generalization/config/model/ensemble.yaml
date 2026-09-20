@@ -12,6 +12,8 @@ num_heads: 1
 num_layers: 1
 include_sparsity: false
 lr: 1e-3
+lr_decay: none  # none | linear | cosine
+lr_warmup: false
 ensemble_loss: mean
 num_models: 3
 val_freq: 1

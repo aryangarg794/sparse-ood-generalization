@@ -54,6 +54,8 @@ div_loss:
   _target_: sparse_generalization.layers.diversity_losses.CosineRepDiv
 
 lr: 1e-3
+lr_decay: none  # none | linear | cosine
+lr_warmup: false
 beta1: 0.9
 beta2: 0.999
 val_freq: 5

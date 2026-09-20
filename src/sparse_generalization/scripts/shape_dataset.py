@@ -134,7 +134,8 @@ def generate_grid_row(size=6, label_A=False, mode="train"):
                 remaining.remove(shape)
 
             for shapeA, shapeB in [("heart", "star"), ("circle", "square")]:
-                posA = random.choice(coords)
+                rows_with_room = [r for r in range(size) if positions[r].sum() <= size - 2]
+                posA = random.choice([c for c in coords if c[0] in rows_with_room])
                 positions[*posA] = True
                 coords.remove(posA)
 
@@ -268,6 +269,8 @@ def generate_grid_same_row(size=6, label_A=False, mode="train"):
 
     if label_A:
         if mode == "train":
+            assert size >= 4, "generate_grid_same_row needs room for 4 shapes in one row (size >= 4)"
+
             for shape in ["heart", "star", "circle", "square"]:
                 remaining.remove(shape)
 
