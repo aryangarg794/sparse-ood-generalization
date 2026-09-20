@@ -47,7 +47,8 @@ class FlowVAE(nn.Module):
         separate_mask: bool = False,
         use_mask: bool = False,
         act: nn.Module = nn.ReLU,
-        train_query: bool = True,
+        train_query: str = "train",
+        agg_ema: float = 0.99,
         **kwargs,  
     ):
         device = get_device(device)
@@ -72,6 +73,7 @@ class FlowVAE(nn.Module):
             use_mask=use_mask,
             act=act,
             train_query=train_query,
+            agg_ema=agg_ema,
         )
 
         self.normalizing_flow = zuko.flows.NSF(

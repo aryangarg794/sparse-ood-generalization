@@ -2,8 +2,8 @@ _target_: sparse_generalization.models.cond_spartan.ConditionalSPARTAN
 _partial_: true
 
 inp_dim: 25
-out_dim: 2  # head size: 2 for ce (softmax classes), 1 for bce (single sigmoid logit)
-loss_type: ce  # ce | bce
+out_dim: 1  
+loss_type: bce  # ce | bce
 layernorm: false
 model_dim: 16
 embedding_inp: false
@@ -39,4 +39,5 @@ div_loss:
   _partial_: true
   _target_: sparse_generalization.layers.diversity_losses.MutualInfDiv
 
-train_query: true
+train_query: train  # fixed | train | ema
+agg_ema: 0.99  # ema coefficient of the agg query's gradient; only used when train_query == ema

@@ -12,7 +12,7 @@ from zuko.flows import Flow
 
 from sparse_generalization.layers.vae import FlowVAE
 from sparse_generalization.layers.priors import LaplacePrior, NormalPrior
-from sparse_generalization.utils.util_funcs import get_device
+from sparse_generalization.utils.util_funcs import get_device, resolve_train_query, register_query_grad_ema
 
 
 class AggregationFlowMask(nn.Module):
@@ -36,7 +36,8 @@ class AggregationFlowMask(nn.Module):
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
         device: str | None = None,
-        train_query: bool = True,
+        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
+        agg_ema: float = 0.99,  # ema coefficient of the query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -56,8 +57,12 @@ class AggregationFlowMask(nn.Module):
         self.per_mask_prior = per_mask_prior
         self.bias = bias
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=train_query)
+        self.train_query = resolve_train_query(train_query)
+        self.agg_ema = agg_ema
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=self.train_query != "fixed")
         nn.init.uniform_(self.query)
+        if self.train_query == "ema":
+            register_query_grad_ema(self, "query", agg_ema)
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
         self.values = nn.Linear(embed_size, embed_size)
@@ -93,6 +98,7 @@ class AggregationFlowMask(nn.Module):
             force_vae_gaussian=force_vae_gaussian,
             separate_mask=separate_mask,
             train_query=train_query,
+            agg_ema=agg_ema,
         )
 
         self.mlp = nn.Sequential(
@@ -204,7 +210,8 @@ class AggregationFlowMHA(nn.Module):
         device: str | None = None,
         separate_mask: bool = False,
         use_mask: bool = False,
-        train_query: bool = True,
+        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
+        agg_ema: float = 0.99,  # ema coefficient of the query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -223,8 +230,12 @@ class AggregationFlowMHA(nn.Module):
         self.layernorm = layernorm
         self.per_mask_prior = per_mask_prior
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=train_query)
+        self.train_query = resolve_train_query(train_query)
+        self.agg_ema = agg_ema
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=self.train_query != "fixed")
         nn.init.uniform_(self.query)
+        if self.train_query == "ema":
+            register_query_grad_ema(self, "query", agg_ema)
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
         self.values = nn.Linear(embed_size, embed_size)
@@ -271,6 +282,7 @@ class AggregationFlowMHA(nn.Module):
             use_mask=use_mask,
             separate_mask=separate_mask,
             train_query=train_query,
+            agg_ema=agg_ema,
         )
 
         self.mlp = nn.Sequential(
@@ -394,7 +406,8 @@ class AggregationFlowDirectA(nn.Module):
         device: str | None = None,
         separate_mask: bool = False,
         use_mask: bool = False,
-        train_query: bool = True,
+        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
+        agg_ema: float = 0.99,  # ema coefficient of the query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -413,8 +426,12 @@ class AggregationFlowDirectA(nn.Module):
         self.layernorm = layernorm
         self.per_mask_prior = per_mask_prior
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=train_query)
+        self.train_query = resolve_train_query(train_query)
+        self.agg_ema = agg_ema
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=self.train_query != "fixed")
         nn.init.uniform_(self.query)
+        if self.train_query == "ema":
+            register_query_grad_ema(self, "query", agg_ema)
 
         self.attention_weights = nn.init.xavier_uniform_(
             nn.Parameter(torch.zeros(1, seq_len))
@@ -453,6 +470,7 @@ class AggregationFlowDirectA(nn.Module):
             use_mask=use_mask,
             separate_mask=separate_mask,
             train_query=train_query,
+            agg_ema=agg_ema,
         )
 
         self.mlp = nn.Sequential(
@@ -559,7 +577,8 @@ class AggregationFlowOnlyQK(nn.Module):
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
-        train_query: bool = True,
+        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
+        agg_ema: float = 0.99,  # ema coefficient of the query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -577,8 +596,12 @@ class AggregationFlowOnlyQK(nn.Module):
         self.dk = embed_size // num_heads
         self.layernorm = layernorm
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=train_query)
+        self.train_query = resolve_train_query(train_query)
+        self.agg_ema = agg_ema
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=self.train_query != "fixed")
         nn.init.uniform_(self.query)
+        if self.train_query == "ema":
+            register_query_grad_ema(self, "query", agg_ema)
 
         self.per_mask_prior = per_mask_prior
 
@@ -623,6 +646,7 @@ class AggregationFlowOnlyQK(nn.Module):
             use_mask=use_mask,
             separate_mask=separate_mask,
             train_query=train_query,
+            agg_ema=agg_ema,
         )
 
         self.mlp = nn.Sequential(

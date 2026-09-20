@@ -2,8 +2,8 @@ _target_: sparse_generalization.models.transformer.TransformerLit
 _partial_: true
 
 inp_dim: 25
-out_dim: 2  
-loss_type: ce  # ce | bce
+out_dim: 1 
+loss_type: bce  # ce | bce
 layernorm: false
 embedding_inp: false
 agg_pool: false
@@ -32,7 +32,8 @@ beta2: 0.999
 foopt: false
 residual: True
 dropout: 0.0
-train_query: false
+train_query: fixed  # fixed | train | ema
+agg_ema: 0.99   
 
 mha_layer:
   _partial_: true

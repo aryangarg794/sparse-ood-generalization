@@ -2,8 +2,8 @@ _target_: sparse_generalization.models.hypernet.HyperNetSpartan
 _partial_: true
 
 inp_dim: 25
-out_dim: 2  #
-loss_type: ce  # ce | bce
+out_dim: 1  #
+loss_type: bce  # ce | bce
 seq_len: 25
 model_dim: 16
 num_heads: 1
@@ -18,7 +18,8 @@ num_embeddings: 25
 pe_type: sin  # sin | coord | learned
 separate_mask: false
 use_mask: false
-train_query: false
+train_query: fixed  # fixed | train | ema
+agg_ema: 0.99  
 
 weight_gen:
   _partial_: true

@@ -47,9 +47,37 @@ def positionalencoding2d(d_model, height, width, device=None):
     return pe.detach()
 
 
+QUERY_MODES = ("fixed", "train", "ema")
+
+
+def resolve_train_query(train_query: str | bool) -> str:
+    if isinstance(train_query, bool):
+        train_query = "train" if train_query else "fixed"
+    if train_query not in QUERY_MODES:
+        raise ValueError(f"train_query must be one of {QUERY_MODES}, got {train_query!r}")
+    return train_query
+
+# bias-corrected ema for the query 
+def register_query_grad_ema(module: torch.nn.Module, name: str, alpha: float):
+    param = getattr(module, name)
+    buffer_name = f"{name}_grad_ema"
+    step_name = f"{name}_grad_ema_step"
+    module.register_buffer(buffer_name, torch.zeros_like(param.detach()))
+    module.register_buffer(step_name, torch.tensor(0, dtype=torch.long))
+
+    def hook(grad: Tensor) -> Tensor:
+        buf = getattr(module, buffer_name)
+        step = getattr(module, step_name)
+        step.add_(1)
+        buf.mul_(alpha).add_(grad.detach(), alpha=1 - alpha)
+        bias_correction = 1.0 - (alpha ** step.item())
+        return buf.clone() / bias_correction
+
+    param.register_hook(hook)
+
+
 def noise_scheduler(start_eta: float, step: int, gamma: float = 0.55):
     return start_eta / (1 + step) ** gamma
-
 
 def build_lr_scheduler(
     optimizer: torch.optim.Optimizer,

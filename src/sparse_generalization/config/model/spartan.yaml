@@ -2,8 +2,8 @@ _target_: sparse_generalization.models.spartan.SPARTAN
 _partial_: true
 
 inp_dim: 25
-out_dim: 2  
-loss_type: ce  # ce | bce
+out_dim: 1 
+loss_type: bce  # ce | bce
 agg_pool: true 
 model_dim: 32
 embedding_inp: false
@@ -32,7 +32,6 @@ alpha_res: false
 separate_mask: false
 beta1: 0.9
 beta2: 0.999
-train_query: false
-
-
+train_query: fixed  # fixed | train | ema
+agg_ema: 0.99 
 

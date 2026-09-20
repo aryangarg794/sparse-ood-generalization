@@ -8,7 +8,7 @@ from torch.nn.functional import gumbel_softmax, softmax
 from typing import Self, Callable
 
 from sparse_generalization.layers.film_attn import FiLMLayer, FiLMMLP
-from sparse_generalization.utils.util_funcs import get_device
+from sparse_generalization.utils.util_funcs import get_device, resolve_train_query, register_query_grad_ema
 
 
 class FiLMAggAttention(nn.Module):
@@ -29,7 +29,8 @@ class FiLMAggAttention(nn.Module):
         residual: bool = False,
         agg_residual: bool = False,
         agg_res_coeff: float = 1.0,
-        train_query: bool = True,
+        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
+        agg_ema: float = 0.99,  # ema coefficient of the query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -53,12 +54,16 @@ class FiLMAggAttention(nn.Module):
         self.agg_residual = agg_residual
         self.agg_res_coeff = agg_res_coeff
         self.bias = 1.0
+        self.train_query = resolve_train_query(train_query)
+        self.agg_ema = agg_ema
 
         self.queries_mask = FiLMLayer(embed_size, context_dim, num_layers_film, act)
         self.keys_mask = FiLMLayer(embed_size, context_dim, num_layers_film, act)
 
-        self.query = nn.Parameter(torch.zeros((num_modes, embed_size), device=device), requires_grad=train_query)
+        self.query = nn.Parameter(torch.zeros((num_modes or 1, embed_size), device=device), requires_grad=self.train_query != "fixed")
         nn.init.xavier_uniform_(self.query)
+        if self.train_query == "ema":
+            register_query_grad_ema(self, "query", agg_ema)
 
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
