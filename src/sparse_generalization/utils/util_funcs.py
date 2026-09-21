@@ -122,9 +122,15 @@ def vae_log_prob(x: Tensor, mu: Tensor, sig: Tensor):
     ).sum(-1)
 
 
-def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str | None = None):
+def with_residual_edges(edges: Tensor, residual: bool) -> Tensor:
+    if residual and edges.size(-2) == edges.size(-1):
+        return edges + torch.eye(edges.size(-1), device=edges.device, dtype=edges.dtype)
+    return edges
+
+
+def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str | None = None, residual: bool = False):
     device = get_device(device)
-    thresh_list = [(attn > threshold).float() for attn in all_attn]  # list of (b, l, l)
+    thresh_list = [with_residual_edges((attn > threshold).float(), residual) for attn in all_attn]  # list of (b, l, l)
     batch_size, seq_len, _ = thresh_list[0].size()
     path = torch.eye(seq_len, device=device).repeat(batch_size, 1, 1)
     for attn in thresh_list:
@@ -134,7 +140,7 @@ def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str | N
 
 
 @torch.no_grad()
-def compute_attn_mean_ens(all_attn: Tensor, threshold: float = 0.01, device: str | None = None):
+def compute_attn_mean_ens(all_attn: Tensor, threshold: float = 0.01, device: str | None = None, residual: bool = False):
     device = get_device(device)
     model_means = []
     for model_layers in all_attn:
@@ -143,7 +149,7 @@ def compute_attn_mean_ens(all_attn: Tensor, threshold: float = 0.01, device: str
 
         for layer_attn in model_layers:
             thresh = (layer_attn > threshold).float().to(device).squeeze(1)
-            path = torch.bmm(thresh, path)
+            path = torch.bmm(with_residual_edges(thresh, residual), path)
         model_means.append(path.sum(dim=(1, 2)).mean().item())
 
     return sum(model_means) / len(model_means)

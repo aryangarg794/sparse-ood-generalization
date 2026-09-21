@@ -221,6 +221,7 @@ class FlowSpartan(nn.Module):
         self.loss = self.criterion.loss
         self.global_step = 0
         self.threshold = threshold
+        self.residual = residual
 
         self.sparse_loss = L1SparsityAdjacency()
         self.alpha = alpha
@@ -377,7 +378,7 @@ class FlowSpartan(nn.Module):
                     epoch_acc += acc.item()
 
                     attn_running += compute_attn_mean(
-                        attns, self.threshold, self.device
+                        attns, self.threshold, self.device, self.residual
                     )
                     mask_running += compute_mask_mean(masks)
 
@@ -472,7 +473,7 @@ class FlowSpartan(nn.Module):
             with torch.no_grad():
                 acc = self.criterion.accuracy(out, y)
                 epoch_acc += acc.item()
-                attn_running += compute_attn_mean(attn, self.threshold, self.device)
+                attn_running += compute_attn_mean(attn, self.threshold, self.device, self.residual)
                 mask_running += compute_mask_mean(masks)
 
         epoch_loss /= len(dataloader)

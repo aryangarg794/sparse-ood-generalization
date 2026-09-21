@@ -10,7 +10,7 @@ from torch.nn.functional import softmax, gumbel_softmax
 from sparse_generalization.layers.priors import LaplacePrior, NormalPrior, make_unit_gaussian
 from sparse_generalization.layers.vae import FlowVAE
 from sparse_generalization.layers.vhypernet import VHyperNet
-from sparse_generalization.utils.util_funcs import get_device, resolve_train_query, register_query_grad_ema
+from sparse_generalization.utils.util_funcs import get_device, resolve_train_query, register_query_grad_ema, with_residual_edges
 from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.layers.diversity_losses import CosineRepDiv, L2DistanceDiv
 
@@ -243,7 +243,8 @@ class HyperNet(nn.Module):
             mha_func = self._mha_func(i, layer_weights[i], agg_layer, avg_heads, num_evals)
             out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
             attn_maps.append(adj)  # (e * b [* h], l, l)
-            attn_matrix = torch.bmm((adj > threshold).float(), attn_matrix)
+            edges = with_residual_edges((adj > threshold).float(), self.residual)
+            attn_matrix = torch.bmm(edges, attn_matrix)
             path_matrix = torch.bmm(mask, path_matrix)
             x = out
 

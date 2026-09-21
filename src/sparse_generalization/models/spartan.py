@@ -17,6 +17,7 @@ from sparse_generalization.utils.util_funcs import (
     positionalencoding2d,
     get_device,
     build_lr_scheduler,
+    with_residual_edges,
 )
 
 
@@ -533,7 +534,7 @@ class SPARTAN(nn.Module):
 
     def _compute_attn_mean(self, all_attn: Tensor):
         thresh_list = [
-            (attn > 1 / attn.size(-1)).float() for attn in all_attn
+            with_residual_edges((attn > 1 / attn.size(-1)).float(), self.residual) for attn in all_attn
         ]  # list of (b, l, l)
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)

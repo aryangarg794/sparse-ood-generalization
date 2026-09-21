@@ -19,6 +19,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_mask_mean,
     compute_max_paths,
     build_lr_scheduler,
+    with_residual_edges,
 )
 from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.layers.diversity_losses import (
@@ -206,6 +207,7 @@ class ConditionalSPARTAN(nn.Module):
         self.loss = self.criterion.loss
         self.global_step = 0
         self.threshold = threshold
+        self.residual = residual
 
         self.sparse_loss = L1SparsityAdjacency()
         self.alpha = alpha
@@ -286,7 +288,7 @@ class ConditionalSPARTAN(nn.Module):
             if not self.avg_heads:  # (b, h, e, l, l) -> (b, e, l, l)
                 mask = mask.sum(dim=1)
                 mask_attn = mask_attn.sum(dim=1)
-            thresh = (mask_attn > self.threshold).float()
+            thresh = with_residual_edges((mask_attn > self.threshold).float(), self.residual)
             attn_matrix = torch.matmul(thresh, attn_matrix)
             path_matrix = torch.matmul(mask, path_matrix)
 

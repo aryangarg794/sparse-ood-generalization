@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
 from sparse_generalization.losses.sparse_loss import L1SparsityWeights
 from sparse_generalization.losses.criterion import Criterion
-from sparse_generalization.utils.util_funcs import noise_scheduler, build_lr_scheduler
+from sparse_generalization.utils.util_funcs import noise_scheduler, build_lr_scheduler, with_residual_edges
 from sparse_generalization.models.blocks import MHABlock
 from sparse_generalization.layers.agg_attention import AggregationAttention
 from sparse_generalization.models.mlp import BasicMLP
@@ -510,7 +510,7 @@ class TransformerLit(pl.LightningModule):
         self.test_attn_matrices.clear()
 
     def _compute_thresh_path(self: Self, attn_list: List):
-        thresh_list = [(attn > 1 / attn.size(-1)).float() for attn in attn_list]
+        thresh_list = [with_residual_edges((attn > 1 / attn.size(-1)).float(), self.residual) for attn in attn_list]
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
         for attn in thresh_list:

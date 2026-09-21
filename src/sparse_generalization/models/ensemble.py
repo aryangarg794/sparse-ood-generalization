@@ -395,7 +395,7 @@ class Ensemble(nn.Module):
                     epoch_acc += acc.item()
 
                     threshold = 1 / (x.size(1) * x.size(2)) 
-                    attn_running += compute_attn_mean_ens(mask_attns, threshold=threshold, device=self.device)
+                    attn_running += compute_attn_mean_ens(mask_attns, threshold=threshold, device=self.device, residual=self.residual)
                     mask_running += compute_mask_mean(masks)
 
                 self.global_step += 1
@@ -524,7 +524,7 @@ class Ensemble(nn.Module):
                 epoch_acc += acc.item()
 
                 threshold = 1 / (x.size(1) * x.size(2)) 
-                attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device)
+                attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device, residual=self.residual)
                 mask_running += compute_mask_mean(mask)
 
         epoch_loss /= len(dataloader)
@@ -633,7 +633,7 @@ class Ensemble(nn.Module):
                 acc = max(self.criterion.accuracy(out, y), acc)
 
             threshold = 1 / (x.size(1) * x.size(2)) 
-            attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device)
+            attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device, residual=self.residual)
             mask_running += compute_mask_mean(masks)
 
             epoch_loss += loss.item()
