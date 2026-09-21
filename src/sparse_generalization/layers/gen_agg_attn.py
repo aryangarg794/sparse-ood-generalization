@@ -12,7 +12,7 @@ from zuko.flows import Flow
 
 from sparse_generalization.layers.vae import FlowVAE
 from sparse_generalization.layers.priors import LaplacePrior, NormalPrior
-from sparse_generalization.utils.util_funcs import get_device, resolve_train_query, register_query_grad_ema
+from sparse_generalization.utils.util_funcs import get_device
 
 
 class AggregationFlowMask(nn.Module):
@@ -36,8 +36,6 @@ class AggregationFlowMask(nn.Module):
         act: nn.Module = nn.ReLU,
         layernorm: bool = True,
         device: str | None = None,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  # ema coefficient of the query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -57,12 +55,8 @@ class AggregationFlowMask(nn.Module):
         self.per_mask_prior = per_mask_prior
         self.bias = bias
 
-        self.train_query = resolve_train_query(train_query)
-        self.agg_ema = agg_ema
-        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=self.train_query != "fixed")
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=False)
         nn.init.uniform_(self.query)
-        if self.train_query == "ema":
-            register_query_grad_ema(self, "query", agg_ema)
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
         self.values = nn.Linear(embed_size, embed_size)
@@ -97,8 +91,6 @@ class AggregationFlowMask(nn.Module):
             use_mask=use_mask,
             force_vae_gaussian=force_vae_gaussian,
             separate_mask=separate_mask,
-            train_query=train_query,
-            agg_ema=agg_ema,
         )
 
         self.mlp = nn.Sequential(
@@ -107,6 +99,8 @@ class AggregationFlowMask(nn.Module):
             act(),
             nn.Linear(4 * embed_size, out_dim),
         )
+        if layernorm:
+            self.ln = nn.LayerNorm(embed_size)
 
     def forward(self, x: Tensor, sum_heads: bool = True):
         ladj, prior = 0, 0
@@ -158,6 +152,8 @@ class AggregationFlowMask(nn.Module):
             masks = masks.sum(dim=1)
             attention_probs = attention_probs.sum(dim=1)
 
+        if self.layernorm:
+            attention_repr = self.ln(attention_repr)
         out = self.mlp(attention_repr.squeeze(dim=1))
 
         if self.training:
@@ -210,8 +206,6 @@ class AggregationFlowMHA(nn.Module):
         device: str | None = None,
         separate_mask: bool = False,
         use_mask: bool = False,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  # ema coefficient of the query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -230,12 +224,8 @@ class AggregationFlowMHA(nn.Module):
         self.layernorm = layernorm
         self.per_mask_prior = per_mask_prior
 
-        self.train_query = resolve_train_query(train_query)
-        self.agg_ema = agg_ema
-        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=self.train_query != "fixed")
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=False)
         nn.init.uniform_(self.query)
-        if self.train_query == "ema":
-            register_query_grad_ema(self, "query", agg_ema)
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
         self.values = nn.Linear(embed_size, embed_size)
@@ -281,8 +271,6 @@ class AggregationFlowMHA(nn.Module):
             flow_params=flow_params,
             use_mask=use_mask,
             separate_mask=separate_mask,
-            train_query=train_query,
-            agg_ema=agg_ema,
         )
 
         self.mlp = nn.Sequential(
@@ -291,6 +279,8 @@ class AggregationFlowMHA(nn.Module):
             act(),
             nn.Linear(4 * embed_size, out_dim),
         )
+        if layernorm:
+            self.ln = nn.LayerNorm(embed_size)
 
     def _split_heads(self: Self, x: Tensor):
         batch_size, seq_len, _ = x.size()
@@ -342,6 +332,8 @@ class AggregationFlowMHA(nn.Module):
             masks = masks.sum(dim=1)
             attention_probs = attention_probs.sum(dim=1)
 
+        if self.layernorm:
+            attention_repr = self.ln(attention_repr)
         out = self.mlp(attention_repr.squeeze(dim=1))
         if self.training:
             return out, masks, attention_probs, prior, ladj
@@ -406,8 +398,6 @@ class AggregationFlowDirectA(nn.Module):
         device: str | None = None,
         separate_mask: bool = False,
         use_mask: bool = False,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  # ema coefficient of the query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -426,12 +416,8 @@ class AggregationFlowDirectA(nn.Module):
         self.layernorm = layernorm
         self.per_mask_prior = per_mask_prior
 
-        self.train_query = resolve_train_query(train_query)
-        self.agg_ema = agg_ema
-        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=self.train_query != "fixed")
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=False)
         nn.init.uniform_(self.query)
-        if self.train_query == "ema":
-            register_query_grad_ema(self, "query", agg_ema)
 
         self.attention_weights = nn.init.xavier_uniform_(
             nn.Parameter(torch.zeros(1, seq_len))
@@ -469,8 +455,6 @@ class AggregationFlowDirectA(nn.Module):
             flow_params=flow_params,
             use_mask=use_mask,
             separate_mask=separate_mask,
-            train_query=train_query,
-            agg_ema=agg_ema,
         )
 
         self.mlp = nn.Sequential(
@@ -479,6 +463,8 @@ class AggregationFlowDirectA(nn.Module):
             act(),
             nn.Linear(4 * embed_size, out_dim),
         )
+        if layernorm:
+            self.ln = nn.LayerNorm(embed_size)
 
     def _split_heads(self: Self, x: Tensor):
         batch_size, seq_len, _ = x.size()
@@ -524,6 +510,8 @@ class AggregationFlowDirectA(nn.Module):
             masks = masks.sum(dim=1)
             attention_probs = attention_probs.sum(dim=1)
 
+        if self.layernorm:
+            attention_repr = self.ln(attention_repr)
         out = self.mlp(attention_repr.squeeze(dim=1))
         if self.training:
             return out, masks, attention_probs, prior, ladj
@@ -577,8 +565,6 @@ class AggregationFlowOnlyQK(nn.Module):
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  # ema coefficient of the query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -596,12 +582,8 @@ class AggregationFlowOnlyQK(nn.Module):
         self.dk = embed_size // num_heads
         self.layernorm = layernorm
 
-        self.train_query = resolve_train_query(train_query)
-        self.agg_ema = agg_ema
-        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=self.train_query != "fixed")
+        self.query = nn.Parameter(torch.zeros((1, embed_size)), requires_grad=False)
         nn.init.uniform_(self.query)
-        if self.train_query == "ema":
-            register_query_grad_ema(self, "query", agg_ema)
 
         self.per_mask_prior = per_mask_prior
 
@@ -645,8 +627,6 @@ class AggregationFlowOnlyQK(nn.Module):
             flow_params=flow_params,
             use_mask=use_mask,
             separate_mask=separate_mask,
-            train_query=train_query,
-            agg_ema=agg_ema,
         )
 
         self.mlp = nn.Sequential(
@@ -655,6 +635,8 @@ class AggregationFlowOnlyQK(nn.Module):
             act(),
             nn.Linear(4 * embed_size, out_dim),
         )
+        if layernorm:
+            self.ln = nn.LayerNorm(embed_size)
 
     def _split_heads(self: Self, x: Tensor):
         batch_size, seq_len, _ = x.size()
@@ -699,6 +681,8 @@ class AggregationFlowOnlyQK(nn.Module):
             masks = masks.sum(dim=1)
             attention_probs = attention_probs.sum(dim=1)
 
+        if self.layernorm:
+            attention_repr = self.ln(attention_repr)
         out = self.mlp(attention_repr.squeeze(dim=1))
         if self.training:
             return out, masks, attention_probs, prior, ladj

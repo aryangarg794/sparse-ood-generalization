@@ -78,8 +78,6 @@ class FlowSpartan(nn.Module):
         beta1: float = 0.9,
         beta2: float = 0.999,
         threshold: float = 0.01,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  # ema coefficient of the agg query's gradient; only used when train_query == 'ema'
         *args,
         **kwargs,
     ):
@@ -210,8 +208,6 @@ class FlowSpartan(nn.Module):
                 residual=residual,
                 layernorm=layernorm,
                 device=device,
-                train_query=train_query,
-                agg_ema=agg_ema,
             )
         else:
             self.out = nn.Linear(self.embed_size, out_dim)

@@ -68,8 +68,6 @@ class HyperNetSpartan(nn.Module):
         beta1: float = 0.9,
         beta2: float = 0.999,
         threshold: float = 0.01,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99, 
         *args,
         **kwargs
     ):
@@ -146,8 +144,6 @@ class HyperNetSpartan(nn.Module):
             separate_mask=separate_mask,
             use_mask=use_mask,
             act=act,
-            train_query=train_query,
-            agg_ema=agg_ema,
             forward_evals=forward_evals,
         )
 

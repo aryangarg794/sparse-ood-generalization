@@ -33,8 +33,6 @@ beta: 1.0
 dropout: 0.0
 beta1: 0.9
 beta2: 0.999
-train_query: fixed  # fixed | train | ema
-agg_ema: 0.99  
 
 prior_func: 
   _partial_: true

@@ -53,7 +53,7 @@ class SPARTAN(nn.Module):
         lr_warmup: bool = False,
         dropout: float = 0.0,
         compute_mask: bool = False,
-        layernorm: bool = False,
+        layernorm: bool = True,
         epsilon_greedy: bool = False,
         start_eps: float = 0.5,
         end_eps: float = 0.05,
@@ -65,8 +65,7 @@ class SPARTAN(nn.Module):
         beta2: float = 0.999,
         threshold: float = 0.01,
         separate_mask: bool = False,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  # ema coefficient of the agg query's gradient; only used when train_query == 'ema'
+        mask_bias: float = 0.5,
         *args,
         **kwargs,
     ):
@@ -134,6 +133,7 @@ class SPARTAN(nn.Module):
                     separate_mask=separate_mask,
                     act=act,
                     alpha_res=alpha_res,
+                    mask_bias=mask_bias,
                 )
             )
 
@@ -149,8 +149,7 @@ class SPARTAN(nn.Module):
                 separate_mask=separate_mask,
                 dropout=dropout,
                 layernorm=layernorm,
-                train_query=train_query,
-                agg_ema=agg_ema,
+                bias=mask_bias,
             )
         elif self.token_pool:
             self.cls = nn.Parameter(torch.rand(1, self.embed_size, device=self.device))

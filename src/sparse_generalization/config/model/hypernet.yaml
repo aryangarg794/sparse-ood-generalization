@@ -18,8 +18,6 @@ num_embeddings: 25
 pe_type: sin  # sin | coord | learned | none
 separate_mask: false
 use_mask: false
-train_query: fixed  # fixed | train | ema
-agg_ema: 0.99  
 
 weight_gen:
   _partial_: true

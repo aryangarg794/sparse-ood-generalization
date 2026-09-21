@@ -71,8 +71,6 @@ class TransformerLit(pl.LightningModule):
         foopt: bool = False,
         eps: float = 1e-3,
         var: float = 1.0,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  # ema coefficient of the agg query's gradient; only used when train_query == 'ema'
     ):
         if lr_decay not in ("none", "linear"):
             raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
@@ -160,8 +158,6 @@ class TransformerLit(pl.LightningModule):
                 device=self.device,
                 use_mask=False,
                 layernorm=layernorm,
-                train_query=train_query,
-                agg_ema=agg_ema,
             )
         elif self.token_pool:
             self.cls = nn.Parameter(torch.rand(1, self.embed_size, device=self.device))

@@ -94,6 +94,7 @@ class MHABlockBern(nn.Module):
         mask_res: bool = False,
         separate_mask: bool = False,
         alpha_res: bool = False,
+        mask_bias: float = 0.5,
         *args,
         **kwargs,
     ):
@@ -116,6 +117,7 @@ class MHABlockBern(nn.Module):
             mask_res=mask_res,
             separate_mask=separate_mask,
             residual=residual,
+            mask_bias=mask_bias,
         )
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)

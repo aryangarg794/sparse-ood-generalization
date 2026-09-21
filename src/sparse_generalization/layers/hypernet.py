@@ -10,7 +10,7 @@ from torch.nn.functional import softmax, gumbel_softmax
 from sparse_generalization.layers.priors import LaplacePrior, NormalPrior, make_unit_gaussian
 from sparse_generalization.layers.vae import FlowVAE
 from sparse_generalization.layers.vhypernet import VHyperNet
-from sparse_generalization.utils.util_funcs import get_device, resolve_train_query, register_query_grad_ema, with_residual_edges
+from sparse_generalization.utils.util_funcs import get_device, with_residual_edges
 from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.layers.diversity_losses import CosineRepDiv, L2DistanceDiv
 
@@ -38,8 +38,6 @@ class HyperNet(nn.Module):
         separate_mask: bool = False,
         use_mask: bool = False,
         act: nn.Module = nn.ReLU,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  # ema coefficient of the agg query's gradient; only used when train_query == 'ema'
         forward_evals: int = 1,
         *args,
         **kwargs,
@@ -87,13 +85,9 @@ class HyperNet(nn.Module):
             self.agg_dist_size = self.base_dist_size
             use_encoder = encoder_heads = False
 
-        self.train_query = resolve_train_query(train_query)
-        self.agg_ema = agg_ema
         self.queries = nn.init.uniform_(
-            nn.Parameter(torch.zeros((1, embed_size), device=device), requires_grad=self.train_query != "fixed")
+            nn.Parameter(torch.zeros((1, embed_size), device=device), requires_grad=False)
         )
-        if self.train_query == "ema":
-            register_query_grad_ema(self, "queries", agg_ema)
         self.total_mha_size = self.num_mha_layers * self.base_dist_size
         self.total_agg_size = self.num_agg_layers * self.agg_dist_size
         self.total_dist_size = self.total_mha_size + self.total_agg_size
@@ -121,8 +115,6 @@ class HyperNet(nn.Module):
             use_mask=use_mask,
             separate_mask=separate_mask,
             layernorm=layernorm,
-            train_query=train_query,
-            agg_ema=agg_ema,
             act=act,
             num_modes=forward_evals,
             device=device,

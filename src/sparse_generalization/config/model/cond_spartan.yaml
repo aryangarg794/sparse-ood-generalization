@@ -39,5 +39,3 @@ div_loss:
   _partial_: true
   _target_: sparse_generalization.layers.diversity_losses.MutualInfDiv
 
-train_query: train  # fixed | train | ema
-agg_ema: 0.99  # ema coefficient of the agg query's gradient; only used when train_query == ema

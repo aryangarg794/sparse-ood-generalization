@@ -25,6 +25,7 @@ class MultiHeadAttentionBern(nn.Module):
         temp: float = 1.0,
         hard: bool = True,
         bias: float = 0.5,
+        mask_bias: float = 0.5,
         zeros: bool = False,
         residual: bool = False,
         separate_mask: bool = False,
@@ -47,6 +48,7 @@ class MultiHeadAttentionBern(nn.Module):
         self.residual = residual
         self.zeros = zeros
         self.bias = bias
+        self.mask_bias = mask_bias
         self.mask_res = mask_res
 
         self.queries = nn.Linear(embed_size, embed_size, bias=bias)
@@ -149,7 +151,7 @@ class MultiHeadAttentionBern(nn.Module):
             )
             mask_logits = mask_logits.view(batch_heads, -1)
             edges_logit = torch.stack(
-                [torch.zeros_like(mask_logits), mask_logits + self.bias], dim=-1
+                [torch.zeros_like(mask_logits), mask_logits + self.mask_bias], dim=-1
             )
             A = gumbel_softmax(
                 edges_logit, tau=self.temp, hard=self.hard
@@ -158,7 +160,7 @@ class MultiHeadAttentionBern(nn.Module):
         else:
             edges_logit = attention_logits.view(batch_heads, -1)  # (b*h, l*l)
             edges_logit = torch.stack(
-                [torch.zeros_like(edges_logit), edges_logit + self.bias], dim=-1
+                [torch.zeros_like(edges_logit), edges_logit + self.mask_bias], dim=-1
             )
             A = gumbel_softmax(
                 edges_logit, tau=self.temp, hard=self.hard

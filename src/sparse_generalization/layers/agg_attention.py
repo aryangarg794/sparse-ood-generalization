@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch.nn.functional import softmax, gumbel_softmax
 from typing import Self
-from sparse_generalization.utils.util_funcs import get_device, resolve_train_query, register_query_grad_ema
+from sparse_generalization.utils.util_funcs import get_device
 
 
 class AggregationAttention(nn.Module):
@@ -27,8 +27,6 @@ class AggregationAttention(nn.Module):
         bias: float = 0.5,
         use_mlp: bool = True,
         temp: float = 1.0,
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  
         *args,
         **kwargs,
     ):
@@ -48,14 +46,9 @@ class AggregationAttention(nn.Module):
         self.temp = temp
         self.bias = bias
         self.use_mlp = use_mlp
-        self.train_query = resolve_train_query(train_query)
-        self.agg_ema = agg_ema
-        learn_query = self.train_query != "fixed"
 
-        self.query = nn.Parameter(torch.zeros((1, embed_size), device=device), requires_grad=learn_query)
+        self.query = nn.Parameter(torch.zeros((1, embed_size), device=device), requires_grad=False)
         nn.init.uniform_(self.query)
-        if self.train_query == "ema":
-            register_query_grad_ema(self, "query", agg_ema)
 
         self.queries = nn.Linear(embed_size, embed_size)
         self.keys = nn.Linear(embed_size, embed_size)
@@ -65,7 +58,7 @@ class AggregationAttention(nn.Module):
         if self.separate_mask:
             self.queries_mask = nn.Linear(embed_size, embed_size)
             self.keys_mask = nn.Linear(embed_size, embed_size)
-            self.query_mask = nn.Parameter(torch.rand((1, embed_size), device=device), requires_grad=learn_query)
+            self.query_mask = nn.Parameter(torch.rand((1, embed_size), device=device), requires_grad=False)
 
         self.ln = nn.LayerNorm(embed_size)
 

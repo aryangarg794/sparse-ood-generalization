@@ -14,7 +14,7 @@ lr: 5e-4
 lr_decay: linear  # none | linear
 lr_warmup: false
 token_pool: false
-alpha: 0.05
+alpha: 0.1
 compute_mask: false
 residual: true
 mask_res: false
@@ -27,10 +27,9 @@ target_loss: 0.115
 cma: 0.9
 step_size: 5e-1
 dropout: 0.0
+layernorm: true
 alpha_res: false
 separate_mask: false
-beta1: 0.9
+beta1: 0.95
 beta2: 0.999
-train_query: fixed  # fixed | train | ema
-agg_ema: 0.99 
-
+mask_bias: 0.0

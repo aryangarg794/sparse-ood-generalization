@@ -72,8 +72,6 @@ class ConditionalSPARTAN(nn.Module):
         output_type: str = "linear",  # 'agg' | 'film' | 'linear'
         head_pool: str = "mean",  # 'mean' | 'max' | 'concat', token pooling for the film/linear heads
         seq_len: int = None,  # number of tokens (grid cells); needed for head_pool='concat', defaults to inp_dim
-        train_query: str = "train",  # 'fixed' | 'train' | 'ema'
-        agg_ema: float = 0.99,  # ema coefficient of the agg query's gradient; only used when train_query == 'ema'
         *args, 
         **kwargs
     ):
@@ -181,8 +179,6 @@ class ConditionalSPARTAN(nn.Module):
                 residual=residual,
                 agg_residual=agg_residual,
                 agg_res_coeff=agg_res_coeff,
-                train_query=train_query,
-                agg_ema=agg_ema,
             )
         elif output_type == "film":
             self.out = FiLMHead(
