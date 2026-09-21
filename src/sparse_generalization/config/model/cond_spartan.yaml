@@ -18,10 +18,10 @@ context_dim: 8
 temp: 0.5
 num_layers_film: 2
 film_mlp: false
-film_values: false  # per-mode FiLM on the attention values
+film_values: false  
 include_sparsity: false
 lr: 1e-3
-lr_decay: none  # none | linear | cosine
+lr_decay: linear  # none | linear
 lr_warmup: false
 alpha: 0.1
 residual: true
@@ -30,7 +30,7 @@ val_freq: 5
 num_eval_samples: 5
 div_coeff: 0.5
 use_optimal_test: true
-pe_type: sin  # sin | coord | learned
+pe_type: sin  # sin | coord | learned | none
 dropout: 0.0
 beta1: 0.9
 beta2: 0.999

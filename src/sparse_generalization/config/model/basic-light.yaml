@@ -11,7 +11,7 @@ inp_size: 5
 dropout: 0.0
 
 lr: 5e-4
-lr_decay: none  # none | linear | cosine
+lr_decay: linear  # none | linear
 lr_warmup: false
 wd: 0.0
 val_freq: 5

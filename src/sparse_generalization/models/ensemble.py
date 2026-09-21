@@ -40,8 +40,8 @@ class EnsembleMember(nn.Module):
         num_embeddings: int = 64,
         layernorm: bool = True,
         agg_pool: bool = False,
-        sinusoidal: bool = True,
-        positional_encoding: bool = True,
+        pe_type: str = "sin",  # 'sin' | 'coord' | 'learned' | 'none'
+        max_grid_size: int = 5,
         device: str | None = None,
         spartan: bool = False, 
         train_query: str = "train",  # 'fixed' | 'train' | 'ema'
@@ -71,15 +71,18 @@ class EnsembleMember(nn.Module):
             # nn.Identity()
         )
 
-        if positional_encoding:
-            if sinusoidal:
-                model_dim = model_dim
-            else:
-                model_dim += 2
+        if pe_type not in ("sin", "coord", "learned", "none"):
+            raise ValueError(f"pe_type must be 'sin', 'coord', 'learned' or 'none', got {pe_type!r}")
 
-        self.embed_size = model_dim
-        self.pe = positional_encoding
-        self.sinusoidal = sinusoidal
+        embed_size = model_dim
+        if pe_type == "coord":
+            embed_size = model_dim + 2
+        if pe_type == "learned":
+            self.pe_row = nn.Embedding(max_grid_size, model_dim)
+            self.pe_col = nn.Embedding(max_grid_size, model_dim)
+
+        self.embed_size = embed_size
+        self.pe_type = pe_type
         self.embedding_inp = embedding_inp
         self.spartan = spartan
 
@@ -147,23 +150,27 @@ class EnsembleMember(nn.Module):
 
         x_features = self.feature_map(x)
         masks = torch.eye(width * height, device=self.device).repeat(batch_size, 1, 1)
-        if self.pe:
-            device = x.device
-            if self.sinusoidal:
-                embeddings = positionalencoding2d(
-                    self.embed_size, height=height, width=width, device=self.device
-                ).permute(2, 1, 0)
-                x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
-                x_attn = x_attn.view(-1, width * height, self.embed_size)
-            else:
-                xs = torch.arange(width, device=device)
-                ys = torch.arange(height, device=device)
-                coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
-                coords = coords.expand(batch_size, width, height, 2)
-                x_attn = torch.cat([x_features, coords], dim=-1)
-                x_attn = x_attn.view(-1, width * height, self.embed_size)
+        if self.pe_type == "sin":
+            embeddings = positionalencoding2d(
+                self.embed_size, height=height, width=width, device=self.device
+            ).permute(  # returns (dim, h, w)
+                2, 1, 0
+            )
+            x_attn = x_features + embeddings.repeat(batch_size, 1, 1, 1)
+        elif self.pe_type == "learned":
+            rows = self.pe_row(torch.arange(width, device=self.device))  # (w, d)
+            cols = self.pe_col(torch.arange(height, device=self.device))  # (h, d)
+            embeddings = rows.unsqueeze(1) + cols.unsqueeze(0)  # (w, h, d)
+            x_attn = x_features + embeddings.unsqueeze(0)
+        elif self.pe_type == "coord":
+            xs = torch.arange(width, device=self.device)
+            ys = torch.arange(height, device=self.device)
+            coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
+            coords = coords.expand(batch_size, width, height, 2)
+            x_attn = torch.cat([x_features, coords], dim=-1)
         else:
-            x_attn = x_features.view(-1, width * height, self.embed_size)
+            x_attn = x_features
+        x_attn = x_attn.view(-1, width * height, self.embed_size)
 
         if self.spartan:
             for layer in self.layers:
@@ -221,11 +228,11 @@ class Ensemble(nn.Module):
         ensemble_loss: str = "mean",
         alpha: float = 0.1,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
-        pe: bool = True,
-        sinusoidal: bool = True,
+        pe_type: str = "sin",  # 'sin' | 'coord' | 'learned' | 'none'
+        max_grid_size: int = 5,
         embedding_inp: bool = True,
         lr: float = 1e-3,
-        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_decay: str = "none",  # 'none' | 'linear'
         lr_warmup: bool = False,
         dropout: float = 0.0,
         val_freq: int = 10,
@@ -242,8 +249,8 @@ class Ensemble(nn.Module):
         *args, 
         **kwargs
     ):
-        if lr_decay not in ("none", "linear", "cosine"):
-            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+        if lr_decay not in ("none", "linear"):
+            raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
 
         device = get_device(device)
         super().__init__(*args, **kwargs)
@@ -281,8 +288,8 @@ class Ensemble(nn.Module):
                     num_embeddings=num_embeddings,
                     layernorm=layernorm,
                     agg_pool=agg_pool,
-                    sinusoidal=sinusoidal,
-                    positional_encoding=pe,
+                    pe_type=pe_type,
+                    max_grid_size=max_grid_size,
                     device=device,
                     spartan=spartan,
                     train_query=train_query,

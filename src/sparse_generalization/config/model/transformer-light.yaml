@@ -13,10 +13,9 @@ num_layers: 1
 num_heads: 1
 include_sparsity: false
 l1_weight: 0.0001
-positional_encoding: true
-sinusoidal: true
+pe_type: sin  # sin | coord | learned | none
 lr: 1e-3
-lr_decay: none  # none | linear | cosine
+lr_decay: linear  # none | linear
 lr_warmup: false
 lagrangian: false
 start_lambda: 5e6

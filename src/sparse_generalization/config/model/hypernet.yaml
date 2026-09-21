@@ -15,7 +15,7 @@ residual: true
 dropout: 0.0
 embedding_inp: false
 num_embeddings: 25
-pe_type: sin  # sin | coord | learned
+pe_type: sin  # sin | coord | learned | none
 separate_mask: false
 use_mask: false
 train_query: fixed  # fixed | train | ema
@@ -55,7 +55,7 @@ div_loss:
   _target_: sparse_generalization.layers.diversity_losses.CosineRepDiv
 
 lr: 1e-3
-lr_decay: none  # none | linear | cosine
+lr_decay: linear  # none | linear
 lr_warmup: false
 beta1: 0.9
 beta2: 0.999

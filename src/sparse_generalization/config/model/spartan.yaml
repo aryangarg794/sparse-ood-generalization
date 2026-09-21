@@ -11,7 +11,7 @@ num_heads: 1
 num_layers: 1
 include_sparsity: true
 lr: 5e-4
-lr_decay: none  # none | linear | cosine
+lr_decay: linear  # none | linear
 lr_warmup: false
 token_pool: false
 alpha: 0.05
@@ -20,8 +20,7 @@ residual: true
 mask_res: false
 zeros: false
 num_embeddings: 25
-pe: true
-sinusoidal: true
+pe_type: sin  # sin | coord | learned | none
 lagrangian: false
 start_lambda: 1e15
 target_loss: 0.115

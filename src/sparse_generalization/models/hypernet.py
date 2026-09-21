@@ -54,11 +54,11 @@ class HyperNetSpartan(nn.Module):
         val_freq: int = 10,
         div_coeff: float = 0.1,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
-        pe_type: str = None,  # 'sin' | 'coord' | 'learned'
+        pe_type: str = "sin",  # 'sin' | 'coord' | 'learned' | 'none'
         max_grid_size: int = 5,
         embedding_inp: bool = True,
         lr: float = 1e-3,
-        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_decay: str = "none",  # 'none' | 'linear'
         lr_warmup: bool = False,
         beta: float = 1.0,
         logger: WandbLogger = None,
@@ -78,8 +78,8 @@ class HyperNetSpartan(nn.Module):
         for key in ["self", "__class__", "args", "kwargs"]:
             del self.hyper_params[key]
 
-        if lr_decay not in ("none", "linear", "cosine"):
-            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+        if lr_decay not in ("none", "linear"):
+            raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
 
         device = get_device(device)
 
@@ -112,8 +112,8 @@ class HyperNetSpartan(nn.Module):
             nn.Linear(bottleneck, model_dim),
         )
 
-        if pe_type not in ("sin", "coord", "learned"):
-            raise ValueError(f"pe_type must be 'sin', 'coord' or 'learned', got {pe_type!r}")
+        if pe_type not in ("sin", "coord", "learned", "none"):
+            raise ValueError(f"pe_type must be 'sin', 'coord', 'learned' or 'none', got {pe_type!r}")
 
         embed_size = model_dim
         if pe_type == "coord":
@@ -208,6 +208,8 @@ class HyperNetSpartan(nn.Module):
             coords = torch.cartesian_prod(xs, ys).view(width, height, 2)
             coords = coords.expand(batch_size, width, height, 2)
             x_attn = torch.cat([x_features, coords], dim=-1)
+        else:
+            x_attn = x_features
         x_attn = x_attn.view(-1, width * height, self.embed_size)
 
         if evaluate:

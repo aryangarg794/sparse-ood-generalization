@@ -10,5 +10,5 @@ num_feature_layers: 1
 num_heads: 1
 residual: true
 num_layers: 1
-lr_decay: none  # none | linear | cosine
+lr_decay: linear  # none | linear
 lr_warmup: false

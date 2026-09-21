@@ -20,7 +20,7 @@ prior_params:
 prior_type: uniform
 include_sparsity: false
 lr: 5e-4
-lr_decay: none  # none | linear | cosine
+lr_decay: linear  # none | linear
 lr_warmup: false
 token_pool: false
 per_mask_prior: false
@@ -28,9 +28,8 @@ force_vae_gaussian: false
 alpha: 0.25
 residual: true
 num_embeddings: 25
-pe: true
+pe_type: sin  # sin | coord | learned | none
 beta: 1.0
-sinusoidal: true
 dropout: 0.0
 beta1: 0.9
 beta2: 0.999

@@ -86,8 +86,8 @@ def build_lr_scheduler(
     warmup: bool = False,
     warmup_ratio: float = 0.1,
 ):
-    if lr_decay not in ("none", "linear", "cosine"):
-        raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+    if lr_decay not in ("none", "linear"):
+        raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
 
     if lr_decay == "none" and not warmup:
         return None
@@ -101,8 +101,6 @@ def build_lr_scheduler(
         progress = min(max(progress, 0.0), 1.0)
         if lr_decay == "linear":
             return 1.0 - progress
-        if lr_decay == "cosine":
-            return 0.5 * (1.0 + math.cos(math.pi * progress))
         return 1.0
 
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)

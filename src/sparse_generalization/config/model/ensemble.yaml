@@ -12,7 +12,7 @@ num_heads: 1
 num_layers: 1
 include_sparsity: false
 lr: 1e-3
-lr_decay: none  # none | linear | cosine
+lr_decay: linear  # none | linear
 lr_warmup: false
 ensemble_loss: mean
 num_models: 3
@@ -22,9 +22,8 @@ spartan: false
 alpha: 0.1
 residual: true
 num_embeddings: 25
-pe: true
+pe_type: sin  # sin | coord | learned | none
 use_optimal_test: true
-sinusoidal: true
 dropout: 0.0
 beta1: 0.9
 beta2: 0.999

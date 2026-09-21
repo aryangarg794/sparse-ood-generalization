@@ -66,7 +66,7 @@ class MLPBaseline(nn.Module):
         wd: float = 0.0,
         beta1: float = 0.9,
         beta2: float = 0.999,
-        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_decay: str = "none",  # 'none' | 'linear'
         lr_warmup: bool = False,
         val_freq: int = 10,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
@@ -105,8 +105,8 @@ class MLPBaseline(nn.Module):
 
         if input_method not in ("concat", "mean", "max"):
             raise ValueError(f"input_method must be 'concat', 'mean' or 'max', got {input_method!r}")
-        if lr_decay not in ("none", "linear", "cosine"):
-            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+        if lr_decay not in ("none", "linear"):
+            raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
         self.lr_decay = lr_decay
         self.lr_warmup = lr_warmup
 

@@ -25,7 +25,7 @@ class OracleTransformer(nn.Module):
         residual: bool,
         pe: bool = True,
         lr: float = 1e-3,
-        lr_decay: str = "none",  # 'none' | 'linear' | 'cosine'
+        lr_decay: str = "none",  # 'none' | 'linear'
         lr_warmup: bool = False,
         dropout: float = 0.1,
         use_grid: bool = True,
@@ -37,8 +37,8 @@ class OracleTransformer(nn.Module):
         *args,
         **kwargs,
     ):
-        if lr_decay not in ("none", "linear", "cosine"):
-            raise ValueError(f"lr_decay must be 'none', 'linear' or 'cosine', got {lr_decay!r}")
+        if lr_decay not in ("none", "linear"):
+            raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
 
         device = get_device(device)
         super().__init__(*args, **kwargs)
