@@ -19,6 +19,11 @@ prior_params:
   hidden_features: [128, 128]
 prior_type: uniform
 include_sparsity: false
+sparse_anneal: false
+sparse_start_coef: 1.0
+sparse_end_coef: 1.0
+sparse_start_decay: 0.0
+sparse_end_decay: 1.0
 lr: 5e-4
 lr_decay: linear  # none | linear
 lr_warmup: false

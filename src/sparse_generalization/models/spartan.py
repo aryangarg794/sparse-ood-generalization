@@ -18,6 +18,7 @@ from sparse_generalization.utils.util_funcs import (
     get_device,
     build_lr_scheduler,
     with_residual_edges,
+    SparsityAnnealer,
 )
 
 
@@ -66,6 +67,11 @@ class SPARTAN(nn.Module):
         threshold: float = 0.01,
         separate_mask: bool = False,
         mask_bias: float = 0.5,
+        sparse_anneal: bool = False,
+        sparse_start_coef: float = 1.0,
+        sparse_end_coef: float = 1.0,
+        sparse_start_decay: float = 0.0,
+        sparse_end_decay: float = 1.0,
         *args,
         **kwargs,
     ):
@@ -169,6 +175,13 @@ class SPARTAN(nn.Module):
         self.lagrangian = lagrangian
         self.alpha = alpha
         self.include_sparsity = include_sparsity if not self.lagrangian else True
+        self.sparse_annealer = SparsityAnnealer(
+            sparse_anneal,
+            sparse_start_coef,
+            sparse_end_coef,
+            sparse_start_decay,
+            sparse_end_decay,
+        )
         self.max_paths = None
         self.lambd = start_lambda
         self.target_loss = target_loss
@@ -276,12 +289,14 @@ class SPARTAN(nn.Module):
         self.scheduler = build_lr_scheduler(
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
         )
+        self.sparse_annealer.total_steps = num_epochs * len(dataloader)
 
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
             epoch_loss = 0.0
             epoch_acc = 0.0
             epoch_sparse = 0.0
+            sparse_coef = 1.0
             attn_running = 0.0
             mask_running = 0.0
             epoch_masks = []
@@ -315,12 +330,13 @@ class SPARTAN(nn.Module):
                                 * (rec_loss - self.target_loss).detach()
                             )
 
+                    sparse_coef = self.sparse_annealer.coef(self.global_step)
                     if self.lagrangian:
                         sparse_loss = self.sparse_loss(path_matrix)
-                        loss = rec_loss + sparse_loss / self.lambd
+                        loss = rec_loss + sparse_coef * sparse_loss / self.lambd
                     else:
                         sparse_loss = self._enforce_sparsity(path_matrix)
-                        loss = rec_loss + sparse_loss
+                        loss = rec_loss + sparse_coef * sparse_loss
 
                     epoch_sparse += sparse_loss.item()
 
@@ -379,7 +395,9 @@ class SPARTAN(nn.Module):
 
             if self.include_sparsity:
                 self.logger.log_metrics({"train/sparse_loss": epoch_sparse}, step=step)
+                self.logger.log_metrics({"train/sparse_coef": sparse_coef}, step=step)
                 postfix["sparse_loss"] = epoch_sparse
+                postfix["sparse_coef"] = sparse_coef
 
             if self.lagrangian:
                 log_lam = self.lambd.log().item()

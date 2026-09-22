@@ -20,6 +20,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_max_paths,
     build_lr_scheduler,
     with_residual_edges,
+    SparsityAnnealer,
 )
 from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.layers.diversity_losses import (
@@ -72,6 +73,11 @@ class ConditionalSPARTAN(nn.Module):
         output_type: str = "linear",  # 'agg' | 'film' | 'linear'
         head_pool: str = "mean",  # 'mean' | 'max' | 'concat', token pooling for the film/linear heads
         seq_len: int = None,  # number of tokens (grid cells); needed for head_pool='concat', defaults to inp_dim
+        sparse_anneal: bool = False,
+        sparse_start_coef: float = 1.0,
+        sparse_end_coef: float = 1.0,
+        sparse_start_decay: float = 0.0,
+        sparse_end_decay: float = 1.0,
         *args, 
         **kwargs
     ):
@@ -210,6 +216,13 @@ class ConditionalSPARTAN(nn.Module):
         self.include_sparsity = include_sparsity
         self.max_paths = None
         self.val_to_name = val_to_name
+        self.sparse_annealer = SparsityAnnealer(
+            sparse_anneal,
+            sparse_start_coef,
+            sparse_end_coef,
+            sparse_start_decay,
+            sparse_end_decay,
+        )
 
     def _enforce_sparsity(self, attns):
         num_edges = attns.sum(dim=(1, 2)) / self.max_paths
@@ -356,6 +369,7 @@ class ConditionalSPARTAN(nn.Module):
         self.scheduler = build_lr_scheduler(
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
         )
+        self.sparse_annealer.total_steps = num_epochs * len(dataloader)
 
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
@@ -363,6 +377,7 @@ class ConditionalSPARTAN(nn.Module):
             epoch_div = 0.0
             epoch_acc = 0.0
             epoch_sparse = 0.0
+            sparse_coef = 1.0
             attn_running = 0.0
             mask_running = 0.0
 
@@ -378,9 +393,10 @@ class ConditionalSPARTAN(nn.Module):
                 rec_loss = loss_per_model.mean()
 
                 if self.include_sparsity:
+                    sparse_coef = self.sparse_annealer.coef(self.global_step)
                     sparse_loss = self._enforce_sparsity(masks)
                     epoch_sparse += sparse_loss.item()
-                    loss = rec_loss + sparse_loss + self.div_coeff * div
+                    loss = rec_loss + sparse_coef * sparse_loss + self.div_coeff * div
                 else:
                     loss = rec_loss + self.div_coeff * div
 
@@ -425,7 +441,9 @@ class ConditionalSPARTAN(nn.Module):
 
             if self.include_sparsity:
                 self.logger.log_metrics({"train/sparse_loss": epoch_sparse}, step=step)
+                self.logger.log_metrics({"train/sparse_coef": sparse_coef}, step=step)
                 postfix["sparse_loss"] = epoch_sparse
+                postfix["sparse_coef"] = sparse_coef
 
             self.logger.log_metrics(
                 {f"train/attn_edges_train": attn_running}, step=self.global_step

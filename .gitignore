@@ -7,3 +7,4 @@
 plots
 job_scripts
 data/mnist
+notebooks/wandb

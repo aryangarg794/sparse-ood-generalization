@@ -45,6 +45,11 @@ forward_evals: 1
 num_eval_samples: 5
 use_optimal_test: true
 include_sparsity: false
+sparse_anneal: false
+sparse_start_coef: 1.0
+sparse_end_coef: 1.0
+sparse_start_decay: 0.0
+sparse_end_decay: 1.0
 alpha: 0.1
 div_coeff: 0.0
 

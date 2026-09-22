@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
 from sparse_generalization.losses.sparse_loss import L1SparsityWeights
 from sparse_generalization.losses.criterion import Criterion
-from sparse_generalization.utils.util_funcs import noise_scheduler, build_lr_scheduler, with_residual_edges
+from sparse_generalization.utils.util_funcs import noise_scheduler, build_lr_scheduler, with_residual_edges, SparsityAnnealer
 from sparse_generalization.models.blocks import MHABlock
 from sparse_generalization.layers.agg_attention import AggregationAttention
 from sparse_generalization.models.mlp import BasicMLP
@@ -71,6 +71,11 @@ class TransformerLit(pl.LightningModule):
         foopt: bool = False,
         eps: float = 1e-3,
         var: float = 1.0,
+        sparse_anneal: bool = False,
+        sparse_start_coef: float = 1.0,
+        sparse_end_coef: float = 1.0,
+        sparse_start_decay: float = 0.0,
+        sparse_end_decay: float = 1.0,
     ):
         if lr_decay not in ("none", "linear"):
             raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
@@ -171,6 +176,13 @@ class TransformerLit(pl.LightningModule):
         self.lagrangian = lagrangian
 
         self.lambd = start_lambda
+        self.sparse_annealer = SparsityAnnealer(
+            sparse_anneal,
+            sparse_start_coef,
+            sparse_end_coef,
+            sparse_start_decay,
+            sparse_end_decay,
+        )
         self.target_loss = target_loss
         self.step_size = step_size
         self.ema_step = cma
@@ -281,12 +293,13 @@ class TransformerLit(pl.LightningModule):
                         + (1 - self.ema_step) * (rec_loss - self.target_loss).detach()
                     )
 
+            sparse_coef = self.sparse_annealer.coef(self.global_step)
             if self.lagrangian:
                 sparse_loss = self.l1_loss(attn)
-                loss = rec_loss + sparse_loss / self.lambd
+                loss = rec_loss + sparse_coef * sparse_loss / self.lambd
             else:
                 sparse_loss = self.l1_weight * self.l1_loss(attn)
-                loss = rec_loss + sparse_loss
+                loss = rec_loss + sparse_coef * sparse_loss
 
             self.log(
                 "train/sparse_loss",
@@ -294,6 +307,12 @@ class TransformerLit(pl.LightningModule):
                 on_step=False,
                 on_epoch=True,
                 prog_bar=True,
+            )
+            self.log(
+                "train/sparse_coef",
+                sparse_coef,
+                on_step=False,
+                on_epoch=True,
             )
 
             self.running_sparse += sparse_loss.item()
@@ -530,4 +549,5 @@ class TransformerLit(pl.LightningModule):
         self.scheduler = build_lr_scheduler(
             optimizer, total_steps, self.lr_decay, self.lr_warmup
         )
+        self.sparse_annealer.total_steps = total_steps
         return optimizer

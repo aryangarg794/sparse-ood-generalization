@@ -20,6 +20,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_mask_mean,
     compute_max_paths,
     build_lr_scheduler,
+    SparsityAnnealer,
 )
 from sparse_generalization.losses.criterion import Criterion
 
@@ -239,6 +240,11 @@ class Ensemble(nn.Module):
         num_embeddings: int = 64,
         device: str | None = None,
         beta1: float = 0.9,
+        sparse_anneal: bool = False,
+        sparse_start_coef: float = 1.0,
+        sparse_end_coef: float = 1.0,
+        sparse_start_decay: float = 0.0,
+        sparse_end_decay: float = 1.0,
         beta2: float = 0.999,
         *args, 
         **kwargs
@@ -255,6 +261,13 @@ class Ensemble(nn.Module):
         self.include_sparsity = include_sparsity
         assert not include_sparsity or spartan, "Ensemble sparsity only for spartan"
         self.alpha = alpha
+        self.sparse_annealer = SparsityAnnealer(
+            sparse_anneal,
+            sparse_start_coef,
+            sparse_end_coef,
+            sparse_start_decay,
+            sparse_end_decay,
+        )
         self.device = device
         self.logger = logger
         self.criterion = Criterion(loss_type)
@@ -353,12 +366,14 @@ class Ensemble(nn.Module):
         self.scheduler = build_lr_scheduler(
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
         )
+        self.sparse_annealer.total_steps = num_epochs * len(dataloader)
 
         for step in (pbar := tqdm(range(1, num_epochs + 1))):
             self.train()
             epoch_loss = 0.0
             epoch_acc = 0.0
             epoch_sparse = 0.0
+            sparse_coef = 1.0
             attn_running = 0.0
             mask_running = 0.0
 
@@ -376,8 +391,9 @@ class Ensemble(nn.Module):
                     rec_loss = rec_loss.mean(dim=0).sum()
 
                 if self.include_sparsity:
+                    sparse_coef = self.sparse_annealer.coef(self.global_step)
                     sparse_loss = self._enforce_sparsity(masks.mean(dim=1) if self.ensemble_loss == "mean" else masks.sum(dim=1))
-                    loss = rec_loss + sparse_loss
+                    loss = rec_loss + sparse_coef * sparse_loss
                     epoch_sparse += sparse_loss.item()
                 else:
                     loss = rec_loss
@@ -422,7 +438,9 @@ class Ensemble(nn.Module):
 
             if self.include_sparsity:
                 self.logger.log_metrics({"train/sparse_loss": epoch_sparse}, step=step)
+                self.logger.log_metrics({"train/sparse_coef": sparse_coef}, step=step)
                 postfix["sparse_loss"] = epoch_sparse
+                postfix["sparse_coef"] = sparse_coef
 
 
             self.logger.log_metrics(

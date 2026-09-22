@@ -20,6 +20,11 @@ num_layers_film: 2
 film_mlp: false
 film_values: false  
 include_sparsity: false
+sparse_anneal: false
+sparse_start_coef: 1.0
+sparse_end_coef: 1.0
+sparse_start_decay: 0.0
+sparse_end_decay: 1.0
 lr: 1e-3
 lr_decay: linear  # none | linear
 lr_warmup: false
