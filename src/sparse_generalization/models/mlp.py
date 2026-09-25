@@ -6,7 +6,7 @@ from copy import deepcopy
 from torch import Tensor
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from sparse_generalization.utils.parallel import progress_bar
 from typing import List, Self
 
 from sparse_generalization.models.cnn import BasicCNN
@@ -200,10 +200,10 @@ class MLPBaseline(nn.Module):
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
         )
 
-        for step in (pbar := tqdm(range(1, num_epochs + 1))):
+        for step in (pbar := progress_bar(range(1, num_epochs + 1))):
             self.train()
-            epoch_loss = 0.0
-            epoch_acc = 0.0
+            epoch_loss = torch.zeros((), device=self.device)
+            epoch_acc = torch.zeros((), device=self.device)
 
             for batch_idx, batch in enumerate(dataloader):
                 x, y = batch
@@ -218,14 +218,14 @@ class MLPBaseline(nn.Module):
                 if self.scheduler is not None:
                     self.scheduler.step()
 
-                epoch_loss += loss.item()
+                epoch_loss += loss.detach()
                 with torch.no_grad():
-                    epoch_acc += self.criterion.accuracy(out, y).item()
+                    epoch_acc += self.criterion.accuracy(out, y)
 
                 self.global_step += 1
 
-            epoch_loss /= len(dataloader)
-            epoch_acc /= len(dataloader)
+            epoch_loss = (epoch_loss / len(dataloader)).item()
+            epoch_acc = (epoch_acc / len(dataloader)).item()
 
             losses.append(epoch_loss)
             accs.append(epoch_acc)
@@ -271,19 +271,19 @@ class MLPBaseline(nn.Module):
     @torch.no_grad()
     def test(self: Self, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
-        epoch_acc = 0.0
-        epoch_loss = 0.0
+        epoch_acc = torch.zeros((), device=self.device)
+        epoch_loss = torch.zeros((), device=self.device)
 
         for batch_idx, batch in enumerate(dataloader):
             x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
             out = self(x, evaluate=True)
-            epoch_loss += self.criterion.loss_from_probs(out, y).item()
-            epoch_acc += self.criterion.accuracy_from_probs(out, y).item()
+            epoch_loss += self.criterion.loss_from_probs(out, y)
+            epoch_acc += self.criterion.accuracy_from_probs(out, y)
 
-        epoch_loss /= len(dataloader)
-        epoch_acc /= len(dataloader)
+        epoch_loss = (epoch_loss / len(dataloader)).item()
+        epoch_acc = (epoch_acc / len(dataloader)).item()
 
         self.logger.log_metrics(
             {f"{folder}/loss_epoch_{name}": epoch_loss}, step=self.global_step

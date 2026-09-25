@@ -6,7 +6,7 @@ from functools import partial
 from torch import Tensor
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from sparse_generalization.utils.parallel import progress_bar
 from typing import List
 
 from sparse_generalization.losses.sparse_loss import L1SparsityAdjacency
@@ -252,16 +252,16 @@ class HyperNetSpartan(nn.Module):
         )
         self.sparse_annealer.total_steps = num_epochs * len(dataloader)
 
-        for step in (pbar := tqdm(range(1, num_epochs + 1))):
+        for step in (pbar := progress_bar(range(1, num_epochs + 1))):
             self.train()
-            epoch_loss = 0.0
-            epoch_div = 0.0
-            epoch_acc = 0.0
-            epoch_sparse = 0.0
+            epoch_loss = torch.zeros((), device=self.device)
+            epoch_div = torch.zeros((), device=self.device)
+            epoch_acc = torch.zeros((), device=self.device)
+            epoch_sparse = torch.zeros((), device=self.device)
             sparse_coef = 1.0
-            epoch_gen = 0.0
-            attn_running = 0.0
-            mask_running = 0.0
+            epoch_gen = torch.zeros((), device=self.device)
+            attn_running = torch.zeros((), device=self.device)
+            mask_running = torch.zeros((), device=self.device)
 
             for batch_idx, batch in enumerate(dataloader):
                 x, y = batch
@@ -274,13 +274,13 @@ class HyperNetSpartan(nn.Module):
                 pointwise_losses = self.criterion.loss(out, y_evals, reduction="none")  # (e, b)
                 loss_per_model = pointwise_losses.mean(dim=1)
                 rec_loss = loss_per_model.mean()
-                epoch_gen += gen_loss.item()
+                epoch_gen += gen_loss.detach()
 
                 loss = rec_loss + self.beta * gen_loss + self.div_coeff * div
                 if self.include_sparsity:
                     sparse_coef = self.sparse_annealer.coef(self.global_step)
                     sparse_loss = self._enforce_sparsity(masks)
-                    epoch_sparse += sparse_loss.item()
+                    epoch_sparse += sparse_loss.detach()
                     loss = loss + sparse_coef * sparse_loss
 
                 self.optimizer.zero_grad()
@@ -289,25 +289,25 @@ class HyperNetSpartan(nn.Module):
                 if self.scheduler is not None:
                     self.scheduler.step()
 
-                epoch_loss += rec_loss.item()
-                epoch_div += div.item()
+                epoch_loss += rec_loss.detach()
+                epoch_div += div.detach()
 
                 with torch.no_grad():
                     acc = self.criterion.accuracy(out, y_evals)
-                    epoch_acc += acc.item()
+                    epoch_acc += acc
 
                     attn_running += compute_mask_mean(attns)
                     mask_running += compute_mask_mean(masks)
 
                 self.global_step += 1
 
-            epoch_loss /= len(dataloader)
-            epoch_acc /= len(dataloader)
-            epoch_sparse /= len(dataloader)
-            epoch_gen /= len(dataloader)
-            epoch_div /= len(dataloader)
-            attn_running /= len(dataloader)
-            mask_running /= len(dataloader)
+            epoch_loss = (epoch_loss / len(dataloader)).item()
+            epoch_acc = (epoch_acc / len(dataloader)).item()
+            epoch_sparse = (epoch_sparse / len(dataloader)).item()
+            epoch_gen = (epoch_gen / len(dataloader)).item()
+            epoch_div = (epoch_div / len(dataloader)).item()
+            attn_running = (attn_running / len(dataloader)).item()
+            mask_running = (mask_running / len(dataloader)).item()
 
             losses.append(epoch_loss)
             accs.append(epoch_acc)
@@ -382,10 +382,10 @@ class HyperNetSpartan(nn.Module):
 
     def test(self, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
-        attn_running = 0.0
-        mask_running = 0.0
-        epoch_acc = 0.0
-        epoch_loss = 0.0
+        attn_running = torch.zeros((), device=self.device)
+        mask_running = torch.zeros((), device=self.device)
+        epoch_acc = torch.zeros((), device=self.device)
+        epoch_loss = torch.zeros((), device=self.device)
 
         for batch_idx, batch in enumerate(dataloader):
             x, y = batch
@@ -394,17 +394,17 @@ class HyperNetSpartan(nn.Module):
             out, masks, attns = self(x, evaluate=True)
             loss = self.criterion.loss_from_probs(out, y)
 
-            epoch_loss += loss.item()
+            epoch_loss += loss.detach()
             with torch.no_grad():
                 acc = self.criterion.accuracy_from_probs(out, y)
-                epoch_acc += acc.item()
+                epoch_acc += acc
                 attn_running += compute_mask_mean(attns)
                 mask_running += compute_mask_mean(masks)
 
-        epoch_loss /= len(dataloader)
-        epoch_acc /= len(dataloader)
-        attn_running /= len(dataloader)
-        mask_running /= len(dataloader)
+        epoch_loss = (epoch_loss / len(dataloader)).item()
+        epoch_acc = (epoch_acc / len(dataloader)).item()
+        attn_running = (attn_running / len(dataloader)).item()
+        mask_running = (mask_running / len(dataloader)).item()
 
         self.logger.log_metrics({f"{folder}/loss_epoch_{name}": epoch_loss}, step=self.global_step)
         self.logger.log_metrics({f"{folder}/acc_epoch_{name}": epoch_acc}, step=self.global_step)
@@ -460,29 +460,29 @@ class HyperNetSpartan(nn.Module):
     @torch.inference_mode()
     def optimal_test(self, name: str, dataloader: DataLoader, folder: str = 'test'):
         self.eval()
-        attn_running = 0.0
-        mask_running = 0.0
-        epoch_acc = 0.0
-        epoch_loss = 0.0
+        attn_running = torch.zeros((), device=self.device)
+        mask_running = torch.zeros((), device=self.device)
+        epoch_acc = torch.zeros((), device=self.device)
+        epoch_loss = torch.zeros((), device=self.device)
 
         for batch_idx, batch in enumerate(dataloader):
             x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
             outs, masks, attns = self(x, evaluate=True, ret_mean=False)
-            loss = min(self.criterion.loss_from_probs(out, y) for out in outs)
-            acc = max(self.criterion.accuracy_from_probs(out, y) for out in outs)
+            loss = torch.stack([self.criterion.loss_from_probs(out, y) for out in outs]).min()
+            acc = torch.stack([self.criterion.accuracy_from_probs(out, y) for out in outs]).max()
 
             attn_running += compute_mask_mean(attns)
             mask_running += compute_mask_mean(masks)
 
-            epoch_loss += loss.item()
-            epoch_acc += acc.item()
+            epoch_loss += loss
+            epoch_acc += acc
 
-        epoch_loss /= len(dataloader)
-        epoch_acc /= len(dataloader)
-        attn_running /= len(dataloader)
-        mask_running /= len(dataloader)
+        epoch_loss = (epoch_loss / len(dataloader)).item()
+        epoch_acc = (epoch_acc / len(dataloader)).item()
+        attn_running = (attn_running / len(dataloader)).item()
+        mask_running = (mask_running / len(dataloader)).item()
 
         self.logger.log_metrics({f"{folder}/loss_ens_{name}": epoch_loss}, step=self.global_step)
         self.logger.log_metrics({f"{folder}/acc_ens_{name}": epoch_acc}, step=self.global_step)

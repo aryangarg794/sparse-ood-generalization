@@ -141,27 +141,37 @@ def compute_attn_mean(all_attn: Tensor, threshold: float = 0.01, device: str | N
     for attn in thresh_list:
         path = torch.bmm(attn, path)
 
-    return path.sum(dim=(1, 2)).mean().item()
+    return path.sum(dim=(1, 2)).mean()
 
 
 @torch.no_grad()
-def compute_attn_mean_ens(all_attn: Tensor, threshold: float = 0.01, device: str | None = None, residual: bool = False):
+def compute_attn_mean_ens(
+    all_attn: list[list[Tensor]],
+    threshold: float = 0.01,
+    device: str | None = None,
+    residual: bool = False,
+    agg_pool: bool = False,
+):
+    """all_attn: per ensemble member, a list of (b, l, l) layer attns followed by the (b, h, 1, l) agg attn if agg_pool."""
     device = get_device(device)
     model_means = []
     for model_layers in all_attn:
         batch_size, seq_len, _ = model_layers[0].size()
         path = torch.eye(seq_len, device=device).repeat(batch_size, 1, 1)
 
-        for layer_attn in model_layers:
-            thresh = (layer_attn > threshold).float().to(device).squeeze(1)
-            path = torch.bmm(with_residual_edges(thresh, residual), path)
-        model_means.append(path.sum(dim=(1, 2)).mean().item())
+        for i, layer_attn in enumerate(model_layers):
+            if layer_attn.dim() == 4:
+                layer_attn = layer_attn.sum(dim=1)  # sum heads, as for the layer attns
+            edges = (layer_attn > threshold).float().to(device)
+            is_agg_layer = agg_pool and i == len(model_layers) - 1
+            path = torch.bmm(edges if is_agg_layer else with_residual_edges(edges, residual), path)
+        model_means.append(path.sum(dim=(1, 2)).mean())
 
     return sum(model_means) / len(model_means)
 
 
 def compute_mask_mean(all_masks: Tensor):
-    return all_masks.sum(dim=(-2, -1)).mean().item()
+    return all_masks.sum(dim=(-2, -1)).mean()
 
 
 def compute_max_paths(

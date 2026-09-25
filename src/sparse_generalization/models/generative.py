@@ -6,7 +6,7 @@ from copy import deepcopy
 from lightning.pytorch.loggers import WandbLogger
 from torch import Tensor
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from sparse_generalization.utils.parallel import progress_bar
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockGen
@@ -356,15 +356,15 @@ class FlowSpartan(nn.Module):
         )
         self.sparse_annealer.total_steps = num_epochs * len(dataloader)
 
-        for step in (pbar := tqdm(range(1, num_epochs + 1))):
+        for step in (pbar := progress_bar(range(1, num_epochs + 1))):
             self.train()
-            epoch_loss = 0.0
-            epoch_acc = 0.0
-            epoch_sparse = 0.0
+            epoch_loss = torch.zeros((), device=self.device)
+            epoch_acc = torch.zeros((), device=self.device)
+            epoch_sparse = torch.zeros((), device=self.device)
             sparse_coef = 1.0
-            epoch_gen = 0.0
-            attn_running = 0.0
-            mask_running = 0.0
+            epoch_gen = torch.zeros((), device=self.device)
+            attn_running = torch.zeros((), device=self.device)
+            mask_running = torch.zeros((), device=self.device)
             epoch_masks = []
             epochs_trues = []
 
@@ -374,12 +374,12 @@ class FlowSpartan(nn.Module):
                 y = y.to(self.device)
                 out, masks, attns, gen_loss = self(x)  # list of (b, l, l)
                 rec_loss = self.loss(out, y)
-                epoch_gen += gen_loss.item()
+                epoch_gen += gen_loss.detach()
 
                 if self.include_sparsity:
                     sparse_coef = self.sparse_annealer.coef(self.global_step)
                     sparse_loss = self._enforce_sparsity(masks)
-                    epoch_sparse += sparse_loss.item()
+                    epoch_sparse += sparse_loss.detach()
                     loss = rec_loss + self.beta * gen_loss + sparse_coef * sparse_loss
                 else:
                     loss = rec_loss + self.beta * gen_loss
@@ -390,10 +390,10 @@ class FlowSpartan(nn.Module):
                 if self.scheduler is not None:
                     self.scheduler.step()
 
-                epoch_loss += rec_loss.item()
+                epoch_loss += rec_loss.detach()
                 with torch.no_grad():
                     acc = self.criterion.accuracy(out, y)
-                    epoch_acc += acc.item()
+                    epoch_acc += acc
 
                     attn_running += compute_attn_mean(
                         attns, self.threshold, self.device, self.residual
@@ -402,12 +402,12 @@ class FlowSpartan(nn.Module):
 
                 self.global_step += 1
 
-            epoch_loss /= len(dataloader)
-            epoch_acc /= len(dataloader)
-            epoch_sparse /= len(dataloader)
-            epoch_gen /= len(dataloader)
-            attn_running /= len(dataloader)
-            mask_running /= len(dataloader)
+            epoch_loss = (epoch_loss / len(dataloader)).item()
+            epoch_acc = (epoch_acc / len(dataloader)).item()
+            epoch_sparse = (epoch_sparse / len(dataloader)).item()
+            epoch_gen = (epoch_gen / len(dataloader)).item()
+            attn_running = (attn_running / len(dataloader)).item()
+            mask_running = (mask_running / len(dataloader)).item()
 
             losses.append(epoch_loss)
             accs.append(epoch_acc)
@@ -473,10 +473,10 @@ class FlowSpartan(nn.Module):
 
     def test(self, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
-        attn_running = 0.0
-        mask_running = 0.0
-        epoch_acc = 0.0
-        epoch_loss = 0.0
+        attn_running = torch.zeros((), device=self.device)
+        mask_running = torch.zeros((), device=self.device)
+        epoch_acc = torch.zeros((), device=self.device)
+        epoch_loss = torch.zeros((), device=self.device)
         epoch_masks = []
         epochs_trues = []
 
@@ -489,17 +489,17 @@ class FlowSpartan(nn.Module):
 
             epoch_masks.append(masks)
 
-            epoch_loss += loss.item()
+            epoch_loss += loss.detach()
             with torch.no_grad():
                 acc = self.criterion.accuracy(out, y)
-                epoch_acc += acc.item()
+                epoch_acc += acc
                 attn_running += compute_attn_mean(attn, self.threshold, self.device, self.residual)
                 mask_running += compute_mask_mean(masks)
 
-        epoch_loss /= len(dataloader)
-        epoch_acc /= len(dataloader)
-        attn_running /= len(dataloader)
-        mask_running /= len(dataloader)
+        epoch_loss = (epoch_loss / len(dataloader)).item()
+        epoch_acc = (epoch_acc / len(dataloader)).item()
+        attn_running = (attn_running / len(dataloader)).item()
+        mask_running = (mask_running / len(dataloader)).item()
 
         self.logger.log_metrics(
             {f"{folder}/loss_epoch_{name}": epoch_loss}, step=self.global_step

@@ -6,7 +6,7 @@ from copy import deepcopy
 from lightning.pytorch.loggers import WandbLogger
 from torch import Tensor
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from sparse_generalization.utils.parallel import progress_bar
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockBern
@@ -291,14 +291,14 @@ class SPARTAN(nn.Module):
         )
         self.sparse_annealer.total_steps = num_epochs * len(dataloader)
 
-        for step in (pbar := tqdm(range(1, num_epochs + 1))):
+        for step in (pbar := progress_bar(range(1, num_epochs + 1))):
             self.train()
-            epoch_loss = 0.0
-            epoch_acc = 0.0
-            epoch_sparse = 0.0
+            epoch_loss = torch.zeros((), device=self.device)
+            epoch_acc = torch.zeros((), device=self.device)
+            epoch_sparse = torch.zeros((), device=self.device)
             sparse_coef = 1.0
-            attn_running = 0.0
-            mask_running = 0.0
+            attn_running = torch.zeros((), device=self.device)
+            mask_running = torch.zeros((), device=self.device)
             epoch_masks = []
             epochs_trues = []
 
@@ -338,7 +338,7 @@ class SPARTAN(nn.Module):
                         sparse_loss = self._enforce_sparsity(path_matrix)
                         loss = rec_loss + sparse_coef * sparse_loss
 
-                    epoch_sparse += sparse_loss.item()
+                    epoch_sparse += sparse_loss.detach()
 
                 else:
                     loss = rec_loss
@@ -353,21 +353,21 @@ class SPARTAN(nn.Module):
                     self.lambd = torch.exp(self.step_size * self.ema_loss) * self.lambd
                     self.lambd = torch.clamp(self.lambd, min=5e3, max=1e15)
 
-                epoch_loss += rec_loss.item()
+                epoch_loss += rec_loss.detach()
                 with torch.no_grad():
                     acc = self.criterion.accuracy(out, y)
-                    epoch_acc += acc.item()
+                    epoch_acc += acc.detach()
 
                     attn_running += self._compute_attn_mean(attns)
                     mask_running += self._compute_mask_mean(path_matrix)
 
                 self.global_step += 1
 
-            epoch_loss /= len(dataloader)
-            epoch_acc /= len(dataloader)
-            epoch_sparse /= len(dataloader)
-            attn_running /= len(dataloader)
-            mask_running /= len(dataloader)
+            epoch_loss = (epoch_loss / len(dataloader)).item()
+            epoch_acc = (epoch_acc / len(dataloader)).item()
+            epoch_sparse = (epoch_sparse / len(dataloader)).item()
+            attn_running = (attn_running / len(dataloader)).item()
+            mask_running = (mask_running / len(dataloader)).item()
 
             losses.append(epoch_loss)
             accs.append(epoch_acc)
@@ -452,10 +452,10 @@ class SPARTAN(nn.Module):
 
     def test(self, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
-        attn_running = 0.0
-        mask_running = 0.0
-        epoch_acc = 0.0
-        epoch_loss = 0.0
+        attn_running = torch.zeros((), device=self.device)
+        mask_running = torch.zeros((), device=self.device)
+        epoch_acc = torch.zeros((), device=self.device)
+        epoch_loss = torch.zeros((), device=self.device)
         epoch_masks = []
         epochs_trues = []
 
@@ -474,17 +474,17 @@ class SPARTAN(nn.Module):
                 epoch_masks.append(masks)
                 epochs_trues.append(mask)
 
-            epoch_loss += loss.item()
+            epoch_loss += loss.detach()
             with torch.no_grad():
                 acc = self.criterion.accuracy(out, y)
-                epoch_acc += acc.item()
+                epoch_acc += acc.detach()
                 attn_running += self._compute_attn_mean(attn)
                 mask_running += self._compute_mask_mean(masks)
 
-        epoch_loss /= len(dataloader)
-        epoch_acc /= len(dataloader)
-        attn_running /= len(dataloader)
-        mask_running /= len(dataloader)
+        epoch_loss = (epoch_loss / len(dataloader)).item()
+        epoch_acc = (epoch_acc / len(dataloader)).item()
+        attn_running = (attn_running / len(dataloader)).item()
+        mask_running = (mask_running / len(dataloader)).item()
 
         if self.compute_mask:
             epoch_masks = torch.cat(epoch_masks, dim=0)
@@ -556,18 +556,22 @@ class SPARTAN(nn.Module):
         return results
 
     def _compute_attn_mean(self, all_attn: Tensor):
-        thresh_list = [
-            with_residual_edges((attn > 1 / attn.size(-1)).float(), self.residual) for attn in all_attn
-        ]  # list of (b, l, l)
+        thresh_list = []
+        for i, attn in enumerate(all_attn):
+            if attn.dim() == 4:
+                attn = attn.sum(dim=1)
+            edges = (attn > 1 / attn.size(-1)).float()
+            is_agg_layer = self.agg_pool and i == len(all_attn) - 1
+            thresh_list.append(edges if is_agg_layer else with_residual_edges(edges, self.residual))
         batch_size, seq_len, _ = thresh_list[0].size()
         path = torch.eye(seq_len, device=self.device).repeat(batch_size, 1, 1)
         for attn in thresh_list:
-            path = attn @ path
+            path = torch.bmm(attn, path)
 
-        return path.sum(dim=(1, 2)).mean().item()
+        return path.sum(dim=(1, 2)).mean()
 
     def _compute_mask_mean(self, all_masks: Tensor):
-        return all_masks.sum(dim=(1, 2)).mean().item()
+        return all_masks.sum(dim=(1, 2)).mean()
 
     def _compute_max_paths(self, seq_len: int):
         paths = torch.ones((seq_len, seq_len)) * self.num_heads

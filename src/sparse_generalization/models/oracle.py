@@ -4,7 +4,7 @@ import torch.nn as nn
 from lightning.pytorch.loggers import WandbLogger
 from torch import Tensor
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from sparse_generalization.utils.parallel import progress_bar
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockOracle
@@ -143,10 +143,10 @@ class OracleTransformer(nn.Module):
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
         )
 
-        for step in (pbar := tqdm(range(1, num_epochs + 1))):
+        for step in (pbar := progress_bar(range(1, num_epochs + 1))):
             self.train()
-            epoch_loss = 0.0
-            epoch_acc = 0.0
+            epoch_loss = torch.zeros((), device=self.device)
+            epoch_acc = torch.zeros((), device=self.device)
 
             for batch_idx, (x, y, edges) in enumerate(dataloader):
                 x = x.to(self.device)
@@ -160,15 +160,15 @@ class OracleTransformer(nn.Module):
                 if self.scheduler is not None:
                     self.scheduler.step()
 
-                epoch_loss += loss.item()
+                epoch_loss += loss.detach()
                 with torch.no_grad():
                     acc = self.criterion.accuracy(out, y)
-                    epoch_acc += acc.item()
+                    epoch_acc += acc
 
                 self.global_step += 1
 
-            epoch_loss /= len(dataloader)
-            epoch_acc /= len(dataloader)
+            epoch_loss = (epoch_loss / len(dataloader)).item()
+            epoch_acc = (epoch_acc / len(dataloader)).item()
 
             pbar.set_description(
                 f"Epoch: {step} | Loss: {epoch_loss:.4f} | Acc: {epoch_acc:.4f}"
@@ -182,8 +182,8 @@ class OracleTransformer(nn.Module):
         self.eval()
         masks = []
         attns = []
-        epoch_acc = 0.0
-        epoch_loss = 0.0
+        epoch_acc = torch.zeros((), device=self.device)
+        epoch_loss = torch.zeros((), device=self.device)
         for batch_idx, (x, y, edges) in enumerate(dataloader):
             x = x.to(self.device)
             y = y.to(self.device)
@@ -193,13 +193,13 @@ class OracleTransformer(nn.Module):
             masks.append(mask)
             attns.append(attn)
 
-            epoch_loss += loss.item()
+            epoch_loss += loss.detach()
             with torch.no_grad():
                 acc = self.criterion.accuracy(out, y)
-                epoch_acc += acc.item()
+                epoch_acc += acc
 
-        epoch_loss /= len(dataloader)
-        epoch_acc /= len(dataloader)
+        epoch_loss = (epoch_loss / len(dataloader)).item()
+        epoch_acc = (epoch_acc / len(dataloader)).item()
 
         masks = torch.cat(masks, dim=0)
         attns = torch.cat(attns, dim=0)

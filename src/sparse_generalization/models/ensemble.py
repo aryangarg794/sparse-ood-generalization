@@ -7,7 +7,7 @@ from functools import partial
 from lightning.pytorch.loggers import WandbLogger
 from torch import Tensor
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from sparse_generalization.utils.parallel import progress_bar
 from typing import List
 
 from sparse_generalization.models.blocks import MHABlockBern, MHABlock
@@ -194,13 +194,14 @@ class EnsembleMember(nn.Module):
             masks = torch.bmm(final_mask, masks)
             mask_matrices.append(final_mask.detach())
 
+        # a list, not a stack: layer attns are (b, l, l) but the agg attn is (b, h, 1, l)
         return (
             out,
             masks,
-            torch.stack(mask_attn_matrices, dim=0),
+            mask_attn_matrices,
             attn_matrices,
             mask_matrices,
-        ) 
+        )
 
     def predict(self, x: Tensor):
         out, mask, mask_attn, attn, _ = self(x)
@@ -338,7 +339,7 @@ class Ensemble(nn.Module):
             mask_attns.append(mask_attn)
             attns.append(attn)
         
-        return torch.stack(outputs, dim=1), torch.stack(masks, dim=1), torch.stack(mask_attns, dim=0), attns
+        return torch.stack(outputs, dim=1), torch.stack(masks, dim=1), mask_attns, attns
 
     def predict(self, x: Tensor, ret_mean: bool = True):
         out, mask, mask_attn, attn = self(x)
@@ -368,14 +369,14 @@ class Ensemble(nn.Module):
         )
         self.sparse_annealer.total_steps = num_epochs * len(dataloader)
 
-        for step in (pbar := tqdm(range(1, num_epochs + 1))):
+        for step in (pbar := progress_bar(range(1, num_epochs + 1))):
             self.train()
-            epoch_loss = 0.0
-            epoch_acc = 0.0
-            epoch_sparse = 0.0
+            epoch_loss = torch.zeros((), device=self.device)
+            epoch_acc = torch.zeros((), device=self.device)
+            epoch_sparse = torch.zeros((), device=self.device)
             sparse_coef = 1.0
-            attn_running = 0.0
-            mask_running = 0.0
+            attn_running = torch.zeros((), device=self.device)
+            mask_running = torch.zeros((), device=self.device)
 
             for batch_idx, batch in enumerate(dataloader):
                 x, y = batch
@@ -394,7 +395,7 @@ class Ensemble(nn.Module):
                     sparse_coef = self.sparse_annealer.coef(self.global_step)
                     sparse_loss = self._enforce_sparsity(masks.mean(dim=1) if self.ensemble_loss == "mean" else masks.sum(dim=1))
                     loss = rec_loss + sparse_coef * sparse_loss
-                    epoch_sparse += sparse_loss.item()
+                    epoch_sparse += sparse_loss.detach()
                 else:
                     loss = rec_loss
 
@@ -404,22 +405,22 @@ class Ensemble(nn.Module):
                 if self.scheduler is not None:
                     self.scheduler.step()
 
-                epoch_loss += rec_loss.item()
+                epoch_loss += rec_loss.detach()
                 with torch.no_grad():
                     acc = self.criterion.accuracy_from_probs(self.predict(x)[0], y)
-                    epoch_acc += acc.item()
+                    epoch_acc += acc
 
-                    threshold = 1 / (x.size(1) * x.size(2)) 
-                    attn_running += compute_attn_mean_ens(mask_attns, threshold=threshold, device=self.device, residual=self.residual)
+                    threshold = 1 / (x.size(1) * x.size(2))
+                    attn_running += compute_attn_mean_ens(mask_attns, threshold=threshold, device=self.device, residual=self.residual, agg_pool=self.agg_pool)
                     mask_running += compute_mask_mean(masks)
 
                 self.global_step += 1
 
-            epoch_loss /= len(dataloader)
-            epoch_acc /= len(dataloader)
-            epoch_sparse /= len(dataloader)
-            attn_running /= len(dataloader)
-            mask_running /= len(dataloader)
+            epoch_loss = (epoch_loss / len(dataloader)).item()
+            epoch_acc = (epoch_acc / len(dataloader)).item()
+            epoch_sparse = (epoch_sparse / len(dataloader)).item()
+            attn_running = (attn_running / len(dataloader)).item()
+            mask_running = (mask_running / len(dataloader)).item()
 
             losses.append(epoch_loss)
             accs.append(epoch_acc)
@@ -522,10 +523,10 @@ class Ensemble(nn.Module):
     @torch.no_grad()
     def test(self, model, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
-        attn_running = 0.0
-        mask_running = 0.0
-        epoch_acc = 0.0
-        epoch_loss = 0.0
+        attn_running = torch.zeros((), device=self.device)
+        mask_running = torch.zeros((), device=self.device)
+        epoch_acc = torch.zeros((), device=self.device)
+        epoch_loss = torch.zeros((), device=self.device)
 
         for batch_idx, batch in enumerate(dataloader):
             x, y = batch
@@ -534,20 +535,20 @@ class Ensemble(nn.Module):
             out, mask, mask_attn, attn = model.predict(x)
 
             loss = self.criterion.loss_from_probs(out, y)
-            epoch_loss += loss.item()
+            epoch_loss += loss
 
             with torch.no_grad():
                 acc = self.criterion.accuracy_from_probs(out, y)
-                epoch_acc += acc.item()
+                epoch_acc += acc
 
-                threshold = 1 / (x.size(1) * x.size(2)) 
-                attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device, residual=self.residual)
+                threshold = 1 / (x.size(1) * x.size(2))
+                attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device, residual=self.residual, agg_pool=self.agg_pool)
                 mask_running += compute_mask_mean(mask)
 
-        epoch_loss /= len(dataloader)
-        epoch_acc /= len(dataloader)
-        attn_running /= len(dataloader)
-        mask_running /= len(dataloader)
+        epoch_loss = (epoch_loss / len(dataloader)).item()
+        epoch_acc = (epoch_acc / len(dataloader)).item()
+        attn_running = (attn_running / len(dataloader)).item()
+        mask_running = (mask_running / len(dataloader)).item()
 
         self.logger.log_metrics(
             {f"{folder}/loss_epoch_{name}": epoch_loss}, step=self.global_step
@@ -577,7 +578,7 @@ class Ensemble(nn.Module):
     @torch.no_grad()
     def test_member(self, model, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
-        epoch_acc = 0.0
+        epoch_acc = torch.zeros((), device=self.device)
 
         for batch_idx, batch in enumerate(dataloader):
             x, y = batch
@@ -587,9 +588,9 @@ class Ensemble(nn.Module):
 
             with torch.no_grad():
                 acc = self.criterion.accuracy_from_probs(out, y)
-                epoch_acc += acc.item()
+                epoch_acc += acc
 
-        epoch_acc /= len(dataloader)
+        epoch_acc = (epoch_acc / len(dataloader)).item()
         self.train()
 
         return epoch_acc
@@ -632,10 +633,10 @@ class Ensemble(nn.Module):
     @torch.inference_mode()
     def optimal_test(self, model, name: str, dataloader: DataLoader, folder: str = 'test'):
         self.eval()
-        attn_running = 0.0
-        mask_running = 0.0
-        epoch_acc = 0.0
-        epoch_loss = 0.0
+        attn_running = torch.zeros((), device=self.device)
+        mask_running = torch.zeros((), device=self.device)
+        epoch_acc = torch.zeros((), device=self.device)
+        epoch_loss = torch.zeros((), device=self.device)
 
         for batch_idx, batch in enumerate(dataloader):
             x, y = batch
@@ -643,23 +644,20 @@ class Ensemble(nn.Module):
             y = y.to(self.device)
             outs, masks, mask_attn, attns = model.predict(x, ret_mean=False)
             outs = outs.transpose(0, 1)  # (m, b, c) logits
-            loss = float('inf')
-            acc = float('-inf')
-            for out in outs:
-                loss = min(self.criterion.loss(out, y), loss)
-                acc = max(self.criterion.accuracy(out, y), acc)
+            loss = torch.stack([self.criterion.loss(out, y) for out in outs]).min()
+            acc = torch.stack([self.criterion.accuracy(out, y) for out in outs]).max()
 
-            threshold = 1 / (x.size(1) * x.size(2)) 
-            attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device, residual=self.residual)
+            threshold = 1 / (x.size(1) * x.size(2))
+            attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device, residual=self.residual, agg_pool=self.agg_pool)
             mask_running += compute_mask_mean(masks)
 
-            epoch_loss += loss.item()
-            epoch_acc += acc.item()
+            epoch_loss += loss
+            epoch_acc += acc
 
-        epoch_loss /= len(dataloader)
-        epoch_acc /= len(dataloader)
-        attn_running /= len(dataloader)
-        mask_running /= len(dataloader)
+        epoch_loss = (epoch_loss / len(dataloader)).item()
+        epoch_acc = (epoch_acc / len(dataloader)).item()
+        attn_running = (attn_running / len(dataloader)).item()
+        mask_running = (mask_running / len(dataloader)).item()
 
         self.logger.log_metrics(
             {f"{folder}/loss_ens_{name}": epoch_loss}, step=self.global_step

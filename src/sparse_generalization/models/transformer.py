@@ -315,7 +315,7 @@ class TransformerLit(pl.LightningModule):
                 on_epoch=True,
             )
 
-            self.running_sparse += sparse_loss.item()
+            self.running_sparse += sparse_loss.detach()
         else:
             loss = rec_loss
 
@@ -365,7 +365,7 @@ class TransformerLit(pl.LightningModule):
             prog_bar=True,
         )
 
-        self.running_loss += loss.item()
+        self.running_loss += loss.detach()
 
         self.log(
             "train/acc",
@@ -375,12 +375,12 @@ class TransformerLit(pl.LightningModule):
             prog_bar=True,
         )
 
-        self.running_acc += acc.item()
+        self.running_acc += acc.detach()
 
         if self.lagrangian:
             self.log(
                 "train/log_lambda",
-                self.lambd.log().item(),
+                self.lambd.log(),
                 on_step=False,
                 on_epoch=True,
                 prog_bar=True,
@@ -410,8 +410,8 @@ class TransformerLit(pl.LightningModule):
         )
 
         self.val_attn_matrices[dataloader_idx].append(attn.detach().cpu())
-        self.running_loss_test[dataloader_idx] += loss.item()
-        self.running_acc_test[dataloader_idx] += acc.item()
+        self.running_loss_test[dataloader_idx] += loss.detach()
+        self.running_acc_test[dataloader_idx] += acc.detach()
         return loss
 
     def test_step(self, batch):
@@ -443,9 +443,9 @@ class TransformerLit(pl.LightningModule):
 
         self.masks.append(num_attn)
 
-        self.sparses.append(self.running_sparse / self.num_train_batches)
-        self.losses.append(self.running_loss / self.num_train_batches)
-        self.accs.append(self.running_acc / self.num_train_batches)
+        self.sparses.append(float(self.running_sparse / self.num_train_batches))
+        self.losses.append(float(self.running_loss / self.num_train_batches))
+        self.accs.append(float(self.running_acc / self.num_train_batches))
 
         self.running_loss = 0.0
         self.running_sparse = 0.0
@@ -465,8 +465,8 @@ class TransformerLit(pl.LightningModule):
                 on_epoch=True,
             )
 
-            epoch_loss = self.running_loss_test[idx] / self.num_val_batches
-            epoch_acc = self.running_acc_test[idx] / self.num_val_batches
+            epoch_loss = float(self.running_loss_test[idx] / self.num_val_batches)
+            epoch_acc = float(self.running_acc_test[idx] / self.num_val_batches)
             self.losses_test[name].append(epoch_loss)
             self.accs_test[name].append(epoch_acc)
 
