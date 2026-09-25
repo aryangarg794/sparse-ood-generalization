@@ -115,14 +115,14 @@ class TransformerLit(pl.LightningModule):
 
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
-
-        bottleneck = 128
-        self.feature_map = nn.Sequential(
-            nn.Linear(model_dim if embedding_inp else inp_dim, bottleneck),
-            act(),
-            nn.Linear(bottleneck, model_dim),
-            # nn.Identity()
-        )
+        else:
+            bottleneck = 128
+            self.feature_map = nn.Sequential(
+                nn.Linear(inp_dim, bottleneck),
+                act(),
+                nn.Linear(bottleneck, model_dim),
+                # nn.Identity()
+            )
 
         if pe_type not in ("sin", "coord", "learned", "none"):
             raise ValueError(f"pe_type must be 'sin', 'coord', 'learned' or 'none', got {pe_type!r}")
@@ -214,9 +214,9 @@ class TransformerLit(pl.LightningModule):
         batch_size, width, height, _ = x.size()
         if self.embedding_inp:
             assert x.size(3) == 1, "channels is not 1 for shapes input"
-            x = self.embed_layer(x.squeeze(3).int())  # (b, w, h, e)
-
-        x_features = self.feature_map(x)
+            x_features = self.embed_layer(x.squeeze(3).int())  # (b, w, h, e)
+        else:
+            x_features = self.feature_map(x)
 
         if self.pe_type == "sin":
             embeddings = positionalencoding2d(

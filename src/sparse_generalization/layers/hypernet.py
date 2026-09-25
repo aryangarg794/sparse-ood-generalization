@@ -26,7 +26,7 @@ class HyperNet(nn.Module):
         seq_len: int = 1,
         embed_size: int = 32,
         out_dim: int = 2,
-        criterion: Criterion = Criterion("ce"),  # shared with HyperNetSpartan
+        criterion: Criterion = Criterion("ce"),  
         num_heads: int = 1,
         dropout: float = 0.0,
         hyper_type: str = "qk",  
@@ -38,7 +38,9 @@ class HyperNet(nn.Module):
         separate_mask: bool = False,
         use_mask: bool = False,
         act: nn.Module = nn.ReLU,
-        forward_evals: int = 1,
+        num_modes: int = 1,
+        use_proj: bool = True,
+        bern_mask: bool = False,
         *args,
         **kwargs,
     ):
@@ -48,10 +50,16 @@ class HyperNet(nn.Module):
             raise SyntaxError(
                 f"Embed Size not divisible by number of heads, embed_size % num_heads = {embed_size % num_heads}"
             )
-        if hyper_type not in ("mask", "mha", "qk"):
-            raise ValueError(f"hyper_type must be 'mask', 'mha' or 'qk', got {hyper_type!r}")
+        if hyper_type not in ("mask", "mha", "mhao", "qk"):
+            raise ValueError(f"hyper_type must be 'mask', 'mha', 'mhao' or 'qk', got {hyper_type!r}")
+        if hyper_type == "mhao" and not use_proj:
+            raise ValueError("hyper_type 'mhao' generates Wo, so it requires use_proj=True")
+        if hyper_type == "mask" and bern_mask:
+            raise ValueError("bern_mask applies to 'qk', 'mha' and 'mhao'; 'mask' already samples its mask")
 
         self.hyper_type = hyper_type
+        self.use_proj = use_proj
+        self.bern_mask = bern_mask
         self.num_heads = num_heads
         self.residual = residual
         self.criterion = criterion
@@ -70,17 +78,27 @@ class HyperNet(nn.Module):
         def linears():
             return nn.ModuleList([nn.Linear(embed_size, embed_size) for _ in range(self.total_num_layers)])
 
+        def projs():
+            if use_proj:
+                return linears()
+            return nn.ModuleList([nn.Identity() for _ in range(self.total_num_layers)])
+
         if hyper_type == "mask":
             self.query_layers, self.key_layers = linears(), linears()
-            self.value_layers, self.proj_layers = linears(), linears()
+            self.value_layers, self.proj_layers = linears(), projs()
             self.base_dist_size, self.agg_dist_size = seq_len ** 2, seq_len
             use_encoder = encoder_heads = True
         elif hyper_type == "mha":
+            self.proj_layers = projs()
+            self.base_dist_size = 3 * embed_size ** 2
+            self.agg_dist_size = self.base_dist_size
+            use_encoder = encoder_heads = False
+        elif hyper_type == "mhao":
             self.base_dist_size = 4 * embed_size ** 2
             self.agg_dist_size = self.base_dist_size
             use_encoder = encoder_heads = False
         elif hyper_type == "qk":
-            self.value_layers, self.proj_layers = linears(), linears()
+            self.value_layers, self.proj_layers = linears(), projs()
             self.base_dist_size = 2 * embed_size ** 2
             self.agg_dist_size = self.base_dist_size
             use_encoder = encoder_heads = False
@@ -116,11 +134,14 @@ class HyperNet(nn.Module):
             separate_mask=separate_mask,
             layernorm=layernorm,
             act=act,
-            num_modes=forward_evals,
+            num_modes=num_modes,
             device=device,
         )
-        self.fixed_evals = isinstance(self.param_flow, VHyperNet)
-        self.forward_evals = forward_evals
+
+        self.fixed_evals = isinstance(self.param_flow, VHyperNet) or getattr(
+            self.param_flow, "per_mode_prior", False
+        )
+        self.num_modes = num_modes
 
         self.ln1s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(self.total_num_layers)])
         self.ln2s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(self.total_num_layers)])
@@ -145,8 +166,8 @@ class HyperNet(nn.Module):
             self.mlps.append(nn.Sequential(nn.Linear(embed_size, out_dim)))
 
     def effective_evals(self, num_evals: int):
-        # the mode hypernet always produces exactly one weight set per mode (= forward_evals)
-        return self.forward_evals if self.fixed_evals else num_evals
+        # a mode-pinned generator always produces exactly one weight set per mode (= num_modes)
+        return self.num_modes if self.fixed_evals else num_evals
 
     def _split_heads(self, x: Tensor):
         batch_size, seq_len, _ = x.size()
@@ -166,8 +187,7 @@ class HyperNet(nn.Module):
 
     def _layer_weights(self, flow_out: Tensor):
         if self.hyper_type != "mask":
-            return torch.chunk(flow_out, chunks=self.total_num_layers, dim=-1)  # (e, size)
-        # mask weights are generated per head: (e * b, h * D) -> (e * b, h, D)
+            return torch.chunk(flow_out, chunks=self.total_num_layers, dim=-1)  
         flow_out = flow_out.view(flow_out.size(0), self.num_heads, self.total_dist_size)
         mha_out, agg_out = torch.split(flow_out, [self.total_mha_size, self.total_agg_size], dim=-1)
         layers = list(torch.chunk(mha_out, chunks=self.num_mha_layers, dim=-1))
@@ -193,9 +213,18 @@ class HyperNet(nn.Module):
                 **common,
             )
         if self.hyper_type == "mha":
-            Wq, Wk, Wv, Wo = torch.chunk(weights, chunks=4, dim=-1)
+            Wq, Wk, Wv = torch.chunk(weights, chunks=3, dim=-1)
             return partial(
                 self._mha_mha,
+                Wq=view_w(Wq), Wk=view_w(Wk), Wv=view_w(Wv),
+                proj_nn=self.proj_layers[i],
+                query=query,
+                **common,
+            )
+        if self.hyper_type == "mhao":
+            Wq, Wk, Wv, Wo = torch.chunk(weights, chunks=4, dim=-1)
+            return partial(
+                self._mha_mhao,
                 Wq=view_w(Wq), Wk=view_w(Wk), Wv=view_w(Wv), Wo=view_w(Wo),
                 query=query,
                 **common,
@@ -302,6 +331,37 @@ class HyperNet(nn.Module):
             mask = mask.view(-1, shape, seq_len)
         return mask, adjacency
 
+    def _attend(
+        self,
+        queries_split: Tensor,
+        keys_split: Tensor,
+        values_split: Tensor,
+        agg: bool,
+        avg_heads: bool,
+        bias: float = 0.5,
+    ):
+        batch_heads, shape, _ = queries_split.shape
+        seq_len = keys_split.size(1)
+        attention_logits = torch.bmm(queries_split, keys_split.transpose(1, 2)) / math.sqrt(self.dk)
+        attention_probs = softmax(attention_logits, dim=-1)
+
+        if self.bern_mask:
+            attention_probs = attention_probs.clamp(min=0.001, max=0.999)
+            edges_logit = attention_logits.view(batch_heads, -1) + bias
+            edges_logit = torch.stack([torch.zeros_like(edges_logit), edges_logit], dim=-1)
+            A = gumbel_softmax(edges_logit, tau=1.0, hard=True)[:, :, -1].view(batch_heads, shape, seq_len)
+            masked_attention_probs = A * attention_probs
+            if self.residual and not agg:
+                A = A + torch.eye(seq_len, device=A.device).expand_as(A)
+            adj_probs = masked_attention_probs if avg_heads else attention_probs
+        else:
+            A = torch.ones_like(attention_probs)
+            masked_attention_probs = adj_probs = attention_probs
+
+        hidden_repr = torch.bmm(masked_attention_probs, values_split)
+        mask, adjacency = self._mask_and_adjacency(adj_probs, A, shape, seq_len, avg_heads)
+        return hidden_repr, mask, adjacency
+
     def _mha_mask(
         self,
         x: Tensor,
@@ -353,7 +413,7 @@ class HyperNet(nn.Module):
         Wq: Tensor,
         Wk: Tensor,
         Wv: Tensor,
-        Wo: Tensor,
+        proj_nn: nn.Module,
         agg: bool = False,
         query: Tensor = None,
         avg_heads: bool = True,
@@ -370,16 +430,29 @@ class HyperNet(nn.Module):
         keys_split = self._split_heads(keys)
         values_split = self._split_heads(values)
 
-        attention_logits = torch.bmm(queries_split, keys_split.transpose(1, 2)) / math.sqrt(self.dk)  # (b*h*e, l, l)
-        attention_probs = softmax(attention_logits, dim=-1)
-        hidden_repr = torch.bmm(attention_probs, values_split)
+        hidden_repr, mask, adjacency = self._attend(queries_split, keys_split, values_split, agg, avg_heads)
         attention_repr = self._merge_heads(hidden_repr.view(-1, self.num_heads, shape, self.dk))  # (b*e, l, k)
-        attention_repr = self.matmul(attention_repr, Wo, num_evals=num_evals).view(-1, shape, dim)
-
-        mask = torch.ones((batch_evals, self.num_heads, shape, seq_len), device=self.device)
-        mask, adjacency = self._mask_and_adjacency(attention_probs, mask, shape, seq_len, avg_heads)
+        attention_repr = proj_nn(attention_repr).view(-1, shape, dim)
 
         return attention_repr, mask, adjacency
+
+    def _mha_mhao(
+        self,
+        x: Tensor,
+        Wq: Tensor,
+        Wk: Tensor,
+        Wv: Tensor,
+        Wo: Tensor,
+        agg: bool = False,
+        query: Tensor = None,
+        avg_heads: bool = True,
+        num_evals: int = 1
+    ):
+        return self._mha_mha(
+            x, Wq, Wk, Wv,
+            proj_nn=partial(self.matmul, W=Wo, num_evals=num_evals),
+            agg=agg, query=query, avg_heads=avg_heads, num_evals=num_evals,
+        )
 
     def _mha_qk(
         self,
@@ -404,13 +477,8 @@ class HyperNet(nn.Module):
         keys_split = self._split_heads(keys)
         values_split = self._split_heads(values)
 
-        attention_logits = torch.bmm(queries_split, keys_split.transpose(1, 2)) / math.sqrt(self.dk)
-        attention_probs = softmax(attention_logits, dim=-1)
-        hidden_repr = torch.bmm(attention_probs, values_split)
+        hidden_repr, mask, adjacency = self._attend(queries_split, keys_split, values_split, agg, avg_heads)
         attention_repr = self._merge_heads(hidden_repr.view(-1, self.num_heads, shape, self.dk))
         attention_repr = proj_nn(attention_repr)
-
-        mask = torch.ones((batch_evals, self.num_heads, shape, seq_len), device=self.device)
-        mask, adjacency = self._mask_and_adjacency(attention_probs, mask, shape, seq_len, avg_heads)
 
         return attention_repr, mask, adjacency

@@ -47,12 +47,13 @@ class FlowVAE(nn.Module):
         separate_mask: bool = False,
         use_mask: bool = False,
         act: nn.Module = nn.ReLU,
+        num_modes: int = 1,
         **kwargs,  
     ):
         device = get_device(device)
         super().__init__()
         if base_dist is None:
-            base_dist = prior_func(output_dim)
+            base_dist = prior_func(output_dim, num_modes)
         self.device = device
         self.num_heads = num_heads
         self.use_encoder = use_encoder
@@ -85,6 +86,16 @@ class FlowVAE(nn.Module):
         self.is_lazy = (
             True if isinstance(base_dist, zuko.lazy.LazyDistribution) else False
         )
+
+        # a prior that carries its own mode count (DisconnectedPrior) pins the number of
+        # weight sets: one sample per mode, exactly like VHyperNet
+        self.num_modes = getattr(base_dist, "num_modes", None)
+        self.per_mode_prior = self.num_modes is not None
+        if self.per_mode_prior and self.use_encoder:
+            raise ValueError(
+                "a per-mode prior is only used on the unconditional path; "
+                "use_encoder=True would ignore it entirely"
+            )
 
     def forward(self, x: Tensor = None, num_evals: int = 1):
         ladj = 0
@@ -122,13 +133,22 @@ class FlowVAE(nn.Module):
                     eff_batch * self.num_heads, -1
                 )
         else:
-            eff_batch = num_evals
             if self.is_lazy:
                 base_dist = self.base_dist()
             else:
                 base_dist = self.base_dist
 
-            rep = base_dist.sample((eff_batch,))
+            if self.per_mode_prior:
+                if num_evals != self.num_modes:
+                    raise ValueError(
+                        f"per-mode prior yields one sample per mode, got num_evals={num_evals} "
+                        f"!= num_modes={self.num_modes}"
+                    )
+                eff_batch = self.num_modes
+                rep = base_dist.sample()
+            else:
+                eff_batch = num_evals
+                rep = base_dist.sample((eff_batch,))
 
             if self.training:
                 log_prior_base = base_dist.log_prob(rep)

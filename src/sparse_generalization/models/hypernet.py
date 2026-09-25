@@ -47,7 +47,7 @@ class HyperNetSpartan(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
         device: str | None = None,
-        forward_evals: int = 1,
+        num_modes: int = 1,
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
@@ -74,6 +74,8 @@ class HyperNetSpartan(nn.Module):
         sparse_start_decay: float = 0.0,
         sparse_end_decay: float = 1.0,
         threshold: float = 0.01,
+        use_proj: bool = True,
+        bern_mask: bool = False,
         *args,
         **kwargs
     ):
@@ -101,20 +103,20 @@ class HyperNetSpartan(nn.Module):
         self.num_mha_layers = num_mha_layers
         self.include_agg_layer = include_agg_layer
         self.num_eval_samples = num_eval_samples
-        self.forward_evals = forward_evals
+        self.num_modes = num_modes
         self.criterion = Criterion(loss_type)
         self.out_dim = out_dim
         self.avg_heads = div_coeff == 0
 
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
-
-        bottleneck = 128
-        self.feature_map = nn.Sequential(
-            nn.Linear(model_dim if embedding_inp else inp_dim, bottleneck),
-            act(),
-            nn.Linear(bottleneck, model_dim),
-        )
+        else:
+            bottleneck = 128
+            self.feature_map = nn.Sequential(
+                nn.Linear(inp_dim, bottleneck),
+                act(),
+                nn.Linear(bottleneck, model_dim),
+            )
 
         if pe_type not in ("sin", "coord", "learned", "none"):
             raise ValueError(f"pe_type must be 'sin', 'coord', 'learned' or 'none', got {pe_type!r}")
@@ -150,11 +152,13 @@ class HyperNetSpartan(nn.Module):
             separate_mask=separate_mask,
             use_mask=use_mask,
             act=act,
-            forward_evals=forward_evals,
+            num_modes=num_modes,
+            use_proj=use_proj,
+            bern_mask=bern_mask,
         )
 
         if self.hyper_net.fixed_evals:
-            self.num_eval_samples = forward_evals
+            self.num_eval_samples = num_modes
 
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
@@ -196,9 +200,9 @@ class HyperNetSpartan(nn.Module):
 
         if self.embedding_inp:
             assert x.size(3) == 1, "channels is not 1 for shapes input"
-            x = self.embed_layer(x.squeeze(3).int())  # (b, w, h, e)
-
-        x_features = self.feature_map(x)
+            x_features = self.embed_layer(x.squeeze(3).int())  # (b, w, h, e)
+        else:
+            x_features = self.feature_map(x)
         if self.pe_type == "sin":
             embeddings = positionalencoding2d(
                 self.embed_size, height=height, width=width, device=self.device
@@ -225,7 +229,7 @@ class HyperNetSpartan(nn.Module):
             return self.hyper_net.evaluate(x_attn, num_eval_samples=self.num_eval_samples, ret_mean=ret_mean)
 
         return self.hyper_net(
-            x_attn, avg_heads=self.avg_heads, num_evals=self.forward_evals, compute_div=self.div_coeff != 0.0
+            x_attn, avg_heads=self.avg_heads, num_evals=self.num_modes, compute_div=self.div_coeff != 0.0
         )
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
@@ -265,8 +269,8 @@ class HyperNetSpartan(nn.Module):
                 y = y.to(self.device)
                 out, masks, ladj, prior, attns, div = self(x)  # list of (b, l, l)
                 gen_loss = (ladj - prior).mean()
-                out = out.view(self.forward_evals, -1, self.out_dim)  # (e, b, c) logits
-                y_evals = y.unsqueeze(0).expand(self.forward_evals, -1, -1)  # (e, b, 1)
+                out = out.view(self.num_modes, -1, self.out_dim)  # (e, b, c) logits
+                y_evals = y.unsqueeze(0).expand(self.num_modes, -1, -1)  # (e, b, 1)
                 pointwise_losses = self.criterion.loss(out, y_evals, reduction="none")  # (e, b)
                 loss_per_model = pointwise_losses.mean(dim=1)
                 rec_loss = loss_per_model.mean()

@@ -9,7 +9,9 @@ model_dim: 16
 num_heads: 1
 num_mha_layers: 1
 include_agg_layer: true
-hyper_type: qk  # mask | mha | qk
+hyper_type: qk  # mask | mha | mhao | qk
+use_proj: true
+bern_mask: false
 layernorm: false
 residual: true
 dropout: 0.0
@@ -26,10 +28,13 @@ weight_gen:
   flow_params:
     n_flows: 3
     hidden_features: [32, 32]
-  prior_func:
+  prior_func:  # called as prior_func(latent_dim, num_modes)
     _partial_: true
     _target_: sparse_generalization.layers.priors.make_unit_gaussian
-    k: 10
+  # one disjoint Gaussian per mode instead; pins the eval count to num_modes
+  # prior_func:
+  #   _partial_: true
+  #   _target_: sparse_generalization.layers.priors.make_disconnected_prior
   
 # weight_gen:
 #   _partial_: true
@@ -41,7 +46,7 @@ prior_params:
   n_flows: 3
   hidden_features: [32, 32]
 beta: 1e-2
-forward_evals: 1
+num_modes: 1
 num_eval_samples: 5
 use_optimal_test: true
 include_sparsity: false

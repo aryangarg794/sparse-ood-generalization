@@ -128,12 +128,13 @@ class MLPBaseline(nn.Module):
             token_dim = model_dim if embedding_inp else inp_dim
             if embedding_inp:
                 self.embed_layer = nn.Embedding(num_embeddings, model_dim)
-            bottleneck = 128
-            self.feature_map = nn.Sequential(
-                nn.Linear(token_dim, bottleneck),
-                act(),
-                nn.Linear(bottleneck, token_dim),
-            )
+            else:
+                bottleneck = 128
+                self.feature_map = nn.Sequential(
+                    nn.Linear(token_dim, bottleneck),
+                    act(),
+                    nn.Linear(bottleneck, token_dim),
+                )
             self.token_dim = token_dim
             mlp_in = seq_len * token_dim if input_method == "concat" else token_dim
             self.model = module(
@@ -161,7 +162,8 @@ class MLPBaseline(nn.Module):
             x = x + positionalencoding2d(
                 self.token_dim, height=height, width=width, device=x.device
             ).permute(2, 1, 0)  # (dim, h, w) -> (w, h, dim)
-        x = self.feature_map(x)
+        if not self.embedding_inp:
+            x = self.feature_map(x)
         return x.reshape(batch_size, width * height, self.token_dim)
 
     def forward(self: Self, x: Tensor, evaluate: bool = False):
