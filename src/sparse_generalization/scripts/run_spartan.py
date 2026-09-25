@@ -175,6 +175,7 @@ def main(cfg: DictConfig):
                     f"checkpoints/{cfg.run_name}_seed{seed}_{timestamp}.pt",
                 )
 
+            results["hparams"] = model.hyper_params
             results[seed]["train_loss"] = losses
             results[seed]["train_acc"] = accs
             results[seed]["train_sparse"] = sparses

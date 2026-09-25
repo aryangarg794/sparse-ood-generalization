@@ -3,10 +3,22 @@ import numpy as np
 
 from sparse_generalization.data.shapes.shapes import SHAPE_MAP
 
+# SHAPES = list(SHAPE_MAP.keys())
+
+# SHAPES_TO_IDX = {s: i for i, s in enumerate(SHAPES)}
+# IDX_TO_SHAPES = {v: k for k, v in SHAPES_TO_IDX.items()}
+
 SHAPES = list(SHAPE_MAP.keys())
+SHAPES.sort()
+for shape in ['heart','star','circle','square']:
+    SHAPES.remove(shape)
+    SHAPES.insert(0, shape)
+
 
 SHAPES_TO_IDX = {s: i for i, s in enumerate(SHAPES)}
 IDX_TO_SHAPES = {v: k for k, v in SHAPES_TO_IDX.items()}
+for shape in ['heart','star','circle','square']:
+    print(shape, SHAPES_TO_IDX[shape])
 
 SHAPE_COLORS = {
     "square": "blue",

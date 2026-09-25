@@ -1,21 +1,21 @@
 _target_: sparse_generalization.models.spartan.SPARTAN
 _partial_: true
 
-inp_dim: 25
+inp_dim: 1
 out_dim: 1 
 loss_type: bce  # ce | bce
 agg_pool: true 
 model_dim: 32
-embedding_inp: false
+embedding_inp: true
 num_heads: 1
 num_layers: 1
-include_sparsity: true
+include_sparsity: false
 sparse_anneal: false
 sparse_start_coef: 1.0
 sparse_end_coef: 1.0
 sparse_start_decay: 0.0
 sparse_end_decay: 1.0
-lr: 5e-4
+lr: 1e-4
 lr_decay: linear  # none | linear
 lr_warmup: false
 token_pool: false

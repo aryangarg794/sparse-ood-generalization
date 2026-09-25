@@ -4,9 +4,9 @@ _partial_: true
 inp_dim: 25
 out_dim: 1 
 loss_type: bce  # ce | bce
-layernorm: false
+layernorm: true
 embedding_inp: false
-agg_pool: false
+agg_pool: true
 token_pool: false
 model_dim: 32
 num_layers: 1
@@ -19,7 +19,7 @@ sparse_start_decay: 0.0
 sparse_end_decay: 1.0
 l1_weight: 0.0001
 pe_type: sin  # sin | coord | learned | none
-lr: 1e-3
+lr: 1e-4
 lr_decay: linear  # none | linear
 lr_warmup: false
 lagrangian: false
