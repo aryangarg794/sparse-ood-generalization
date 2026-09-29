@@ -9,7 +9,6 @@ from torch.nn.functional import softmax, gumbel_softmax
 
 from sparse_generalization.layers.priors import LaplacePrior, NormalPrior, make_unit_gaussian
 from sparse_generalization.layers.vae import FlowVAE
-from sparse_generalization.layers.vhypernet import VHyperNet
 from sparse_generalization.utils.util_funcs import get_device, with_residual_edges
 from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.layers.diversity_losses import CosineRepDiv, L2DistanceDiv
@@ -138,10 +137,7 @@ class HyperNet(nn.Module):
             device=device,
         )
 
-        self.fixed_evals = isinstance(self.param_flow, VHyperNet) or getattr(
-            self.param_flow, "per_mode_prior", False
-        )
-        self.num_modes = num_modes
+        self.num_modes = num_modes  # weight sets sampled per forward pass, in training and at eval
 
         self.ln1s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(self.total_num_layers)])
         self.ln2s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(self.total_num_layers)])
@@ -164,10 +160,6 @@ class HyperNet(nn.Module):
             )
         else:
             self.mlps.append(nn.Sequential(nn.Linear(embed_size, out_dim)))
-
-    def effective_evals(self, num_evals: int):
-        # a mode-pinned generator always produces exactly one weight set per mode (= num_modes)
-        return self.num_modes if self.fixed_evals else num_evals
 
     def _split_heads(self, x: Tensor):
         batch_size, seq_len, _ = x.size()
@@ -195,11 +187,11 @@ class HyperNet(nn.Module):
             layers.append(agg_out)
         return layers
 
-    def _mha_func(self, i: int, weights: Tensor, agg: bool, avg_heads: bool, num_evals: int):
+    def _mha_func(self, i: int, weights: Tensor, agg: bool, avg_heads: bool):
         query = self.queries if agg else None
         shape = 1 if agg else self.seq_len
-        common = dict(agg=agg, avg_heads=avg_heads, num_evals=num_evals)
-        view_w = lambda w: w.view(num_evals, self.embed_size, self.embed_size)
+        common = dict(agg=agg, avg_heads=avg_heads)
+        view_w = lambda w: w.view(self.num_modes, self.embed_size, self.embed_size)
 
         if self.hyper_type == "mask":
             return partial(
@@ -240,39 +232,44 @@ class HyperNet(nn.Module):
             **common,
         )
 
-    def forward(self, x: Tensor, avg_heads: bool = True, num_evals: int = 2, compute_div: bool = False):
+    def forward(self, x: Tensor, avg_heads: bool = True, compute_div: bool = False):
         batch_size, seq_len, dim = x.shape
-        num_evals = self.effective_evals(num_evals)
         threshold = 1 / seq_len
         prior = 0
         div = torch.tensor([0.0], device=x.device)
-        flow_out, ladj = self.param_flow(x, num_evals=num_evals)
+        flow_out, ladj = self.param_flow(x)
         layer_weights = self._layer_weights(flow_out)
 
         attn_maps = []
         # layers return per-sample (e * b) masks when heads are averaged, per-head (e * b * h) otherwise
-        mask_batch = num_evals * batch_size * (1 if avg_heads else self.num_heads)
+        mask_batch = self.num_modes * batch_size * (1 if avg_heads else self.num_heads)
         eye = torch.eye(self.seq_len, device=self.device)
         path_matrix = eye.expand(mask_batch, seq_len, seq_len).clone()
         attn_matrix = path_matrix.clone()
+        # eta: soft attention flow from each input position, head-averaged, always per sample (e * b)
+        eta_matrix = eye.expand(self.num_modes * batch_size, seq_len, seq_len).clone()
 
         # (b, l, d) -> (e * b, l, d): one copy of the input per sampled weight set
-        x = x.expand(num_evals, -1, -1, -1).reshape(-1, seq_len, dim)
+        x = x.expand(self.num_modes, -1, -1, -1).reshape(-1, seq_len, dim)
 
         for i in range(self.total_num_layers):
             agg_layer = i >= self.num_mha_layers
-            mha_func = self._mha_func(i, layer_weights[i], agg_layer, avg_heads, num_evals)
+            mha_func = self._mha_func(i, layer_weights[i], agg_layer, avg_heads)
             out, mask, adj = self._run_block(x, self.ln1s[i], self.ln2s[i], self.mlps[i], mha_func, agg_layer)
             attn_maps.append(adj)  # (e * b [* h], l, l)
             edges = with_residual_edges((adj > threshold).float(), self.residual)
             attn_matrix = torch.bmm(edges, attn_matrix)
             path_matrix = torch.bmm(mask, path_matrix)
+            # heads are summed when avg_heads, kept separate otherwise; average them either way
+            adj_mean = adj / self.num_heads if avg_heads else adj.view(-1, self.num_heads, *adj.shape[-2:]).mean(dim=1)
+            eta_matrix = torch.bmm(with_residual_edges(adj_mean, self.residual), eta_matrix)
             x = out
+        self.eta = eta_matrix  # (e * b, 1, l) with the agg layer; kept as an attribute so the return is unchanged
 
         if self.training:
             if self.prior_type == "laplace":
-                num_paths = path_matrix.sum(dim=(-2, -1)).view(num_evals, batch_size, -1).sum(dim=-1)
-                if ladj.size(0) == num_evals:
+                num_paths = path_matrix.sum(dim=(-2, -1)).view(self.num_modes, batch_size, -1).sum(dim=-1)
+                if ladj.size(0) == self.num_modes:
                     num_paths = num_paths.mean(dim=1)
                 prior = self.prior().log_prob(num_paths.reshape(-1))
             elif self.prior_type == "normal":
@@ -286,7 +283,7 @@ class HyperNet(nn.Module):
         if compute_div:
             match self.div_loss:
                 case CosineRepDiv() | L2DistanceDiv():
-                    div = self.div_loss(out.reshape(num_evals, batch_size, out.size(-2), -1))
+                    div = self.div_loss(out.reshape(self.num_modes, batch_size, out.size(-2), -1))
 
         if self.include_agg_layer:
             out = out.squeeze(dim=1)
@@ -296,21 +293,20 @@ class HyperNet(nn.Module):
         return out, path_matrix, ladj, prior, attn_matrix, div
 
     @torch.inference_mode()
-    def evaluate(self, x: Tensor, num_eval_samples: int = 5, ret_mean: bool = True):
+    def evaluate(self, x: Tensor, ret_mean: bool = True):
         batch_size, seq_len, _ = x.shape
-        num_eval_samples = self.effective_evals(num_eval_samples)
-        outs, masks, _, _, attns, _ = self(x, num_evals=num_eval_samples)
-        outs = self.criterion.probs(outs).view(num_eval_samples, batch_size, -1)  # (e, b, c) class probabilities
-        masks = masks.view(num_eval_samples, batch_size, -1, seq_len)
-        attns = attns.view(num_eval_samples, batch_size, -1, seq_len)
+        outs, masks, _, _, attns, _ = self(x)
+        outs = self.criterion.probs(outs).view(self.num_modes, batch_size, -1)  # (e, b, c) class probabilities
+        masks = masks.view(self.num_modes, batch_size, -1, seq_len)
+        attns = attns.view(self.num_modes, batch_size, -1, seq_len)
 
         if ret_mean:
             return outs.mean(dim=0), masks, attns
         return outs, masks, attns
 
-    def matmul(self, x: Tensor, W: Tensor, num_evals: int):
+    def matmul(self, x: Tensor, W: Tensor):
         _, seq_len, dim = x.shape
-        return (x.view(num_evals, -1, seq_len, dim) @ W.unsqueeze(1)).view(-1, seq_len, dim)
+        return (x.view(self.num_modes, -1, seq_len, dim) @ W.unsqueeze(1)).view(-1, seq_len, dim)
 
     def _run_block(self, x: Tensor, ln1: nn.Module, ln2: nn.Module, mlp: nn.Module, mha_func, agg: bool = False):
         ln1, ln2 = (ln1, ln2) if self.layernorm else (nn.Identity(), nn.Identity())
@@ -374,7 +370,6 @@ class HyperNet(nn.Module):
         agg: bool = False,
         query: Tensor = None,
         bias: float = 0.5,
-        num_evals: int = 1
     ):
         batch_evals, seq_len, _ = x.size()
         shape = 1 if agg else seq_len
@@ -417,14 +412,13 @@ class HyperNet(nn.Module):
         agg: bool = False,
         query: Tensor = None,
         avg_heads: bool = True,
-        num_evals: int = 1
     ):
         batch_evals, seq_len, dim = x.shape
         shape = 1 if agg else seq_len
         q_inp = query.expand(batch_evals, -1, -1) if agg else x
-        queries = self.matmul(q_inp, Wq, num_evals=num_evals)
-        keys = self.matmul(x, Wk, num_evals=num_evals)
-        values = self.matmul(x, Wv, num_evals=num_evals) # (b*e, l, k)
+        queries = self.matmul(q_inp, Wq)
+        keys = self.matmul(x, Wk)
+        values = self.matmul(x, Wv) # (b*e, l, k)
 
         queries_split = self._split_heads(queries)
         keys_split = self._split_heads(keys)
@@ -446,12 +440,11 @@ class HyperNet(nn.Module):
         agg: bool = False,
         query: Tensor = None,
         avg_heads: bool = True,
-        num_evals: int = 1
     ):
         return self._mha_mha(
             x, Wq, Wk, Wv,
-            proj_nn=partial(self.matmul, W=Wo, num_evals=num_evals),
-            agg=agg, query=query, avg_heads=avg_heads, num_evals=num_evals,
+            proj_nn=partial(self.matmul, W=Wo),
+            agg=agg, query=query, avg_heads=avg_heads,
         )
 
     def _mha_qk(
@@ -464,13 +457,12 @@ class HyperNet(nn.Module):
         agg: bool = False,
         query: Tensor = None,
         avg_heads: bool = True,
-        num_evals: int = 1
     ):
         batch_evals, seq_len, _ = x.shape
         shape = 1 if agg else seq_len
         q_inp = query.expand(batch_evals, -1, -1) if agg else x
-        queries = self.matmul(q_inp, Wq, num_evals=num_evals)
-        keys = self.matmul(x, Wk, num_evals=num_evals)
+        queries = self.matmul(q_inp, Wq)
+        keys = self.matmul(x, Wk)
         values = value_nn(x)
 
         queries_split = self._split_heads(queries)  # (b * h * e, l, d_k)

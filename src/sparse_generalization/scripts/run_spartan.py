@@ -57,7 +57,7 @@ def run_seed(config_dict: dict, seed: int, timestamp: str, group_name: str, flow
     name = cfg.run_name + f"_seed_{seed}_{timestamp}"
     logger = WandbLogger(**wandb_dict, name=name, config=config_dict, group=group_name)
     with captured_output():
-        _ = logger.experiment  # start wandb now so its banner isn't printed over the progress bars
+        _ = logger.experiment  
 
     random.seed(seed)
     np.random.seed(seed)

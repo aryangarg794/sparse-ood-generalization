@@ -40,11 +40,7 @@ class VHyperNet(nn.Module):
     def get_modes(self):
         return F.one_hot(torch.arange(self.num_modes, device=self.device), self.num_modes).float()
 
-    def forward(self, x: Tensor = None, num_evals: int = 1):
-        if num_evals != self.num_modes:
-            raise ValueError(f"VHyperNet generates one weight set per mode, got num_evals={num_evals} \
-                              != num_modes={self.num_modes}")
-
+    def forward(self, x: Tensor = None):
         output = self.hyper(self.get_modes()) 
 
         if self.encoder_heads:

@@ -39,7 +39,6 @@ class HyperNetSpartan(nn.Module):
         num_mha_layers: int = 1,
         include_agg_layer: bool = False,
         seq_len: int = 25,
-        num_eval_samples: int = 5,
         model_dim: int = 32,
         num_heads: int = 1,
         dropout: float = 0.0,
@@ -88,6 +87,7 @@ class HyperNetSpartan(nn.Module):
             raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
 
         device = get_device(device)
+        kwargs.pop("num_eval_samples", None)  # removed (evals = num_modes); still in older checkpoints' hparams
 
         super().__init__(*args, **kwargs)
 
@@ -102,7 +102,6 @@ class HyperNetSpartan(nn.Module):
         self.use_optimal_test = use_optimal_test
         self.num_mha_layers = num_mha_layers
         self.include_agg_layer = include_agg_layer
-        self.num_eval_samples = num_eval_samples
         self.num_modes = num_modes
         self.criterion = Criterion(loss_type)
         self.out_dim = out_dim
@@ -156,9 +155,6 @@ class HyperNetSpartan(nn.Module):
             use_proj=use_proj,
             bern_mask=bern_mask,
         )
-
-        if self.hyper_net.fixed_evals:
-            self.num_eval_samples = num_modes
 
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
@@ -226,11 +222,9 @@ class HyperNetSpartan(nn.Module):
         x_attn = x_attn.view(-1, width * height, self.embed_size)
 
         if evaluate:
-            return self.hyper_net.evaluate(x_attn, num_eval_samples=self.num_eval_samples, ret_mean=ret_mean)
+            return self.hyper_net.evaluate(x_attn, ret_mean=ret_mean)
 
-        return self.hyper_net(
-            x_attn, avg_heads=self.avg_heads, num_evals=self.num_modes, compute_div=self.div_coeff != 0.0
-        )
+        return self.hyper_net(x_attn, avg_heads=self.avg_heads, compute_div=self.div_coeff != 0.0)
 
     def fit(self, dataloader: DataLoader, num_epochs: int, testloaders: List):
         losses = []

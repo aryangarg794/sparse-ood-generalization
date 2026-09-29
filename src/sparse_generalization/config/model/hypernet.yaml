@@ -47,7 +47,6 @@ prior_params:
   hidden_features: [32, 32]
 beta: 1e-2
 num_modes: 1
-num_eval_samples: 5
 use_optimal_test: true
 include_sparsity: false
 sparse_anneal: false

@@ -87,24 +87,28 @@ class FlowVAE(nn.Module):
             True if isinstance(base_dist, zuko.lazy.LazyDistribution) else False
         )
 
-        # a prior that carries its own mode count (DisconnectedPrior) pins the number of
-        # weight sets: one sample per mode, exactly like VHyperNet
-        self.num_modes = getattr(base_dist, "num_modes", None)
-        self.per_mode_prior = self.num_modes is not None
+        # weight sets sampled per forward pass; a prior that carries its own mode count
+        # (DisconnectedPrior) yields exactly one sample per mode, so the counts must agree
+        self.num_modes = num_modes
+        self.per_mode_prior = hasattr(base_dist, "num_modes")
+        if self.per_mode_prior and base_dist.num_modes != num_modes:
+            raise ValueError(
+                f"per-mode prior has {base_dist.num_modes} modes but num_modes={num_modes}"
+            )
         if self.per_mode_prior and self.use_encoder:
             raise ValueError(
                 "a per-mode prior is only used on the unconditional path; "
                 "use_encoder=True would ignore it entirely"
             )
 
-    def forward(self, x: Tensor = None, num_evals: int = 1):
+    def forward(self, x: Tensor = None):
         ladj = 0
         batch_size, seq_len, dim = x.shape
 
         if self.use_encoder:
 
-            if num_evals > 1:
-                x_rep = x.expand(num_evals, -1, -1, -1).reshape(-1, seq_len, dim)
+            if self.num_modes > 1:
+                x_rep = x.expand(self.num_modes, -1, -1, -1).reshape(-1, seq_len, dim)
             else:
                 x_rep = x
 
@@ -113,7 +117,7 @@ class FlowVAE(nn.Module):
             q = self.encoder(encoding)
             rep = q.rsample()
 
-            eff_batch = batch_size * num_evals
+            eff_batch = batch_size * self.num_modes
 
             if self.training:
                 log_prior_base = q.log_prob(rep)
@@ -138,17 +142,8 @@ class FlowVAE(nn.Module):
             else:
                 base_dist = self.base_dist
 
-            if self.per_mode_prior:
-                if num_evals != self.num_modes:
-                    raise ValueError(
-                        f"per-mode prior yields one sample per mode, got num_evals={num_evals} "
-                        f"!= num_modes={self.num_modes}"
-                    )
-                eff_batch = self.num_modes
-                rep = base_dist.sample()
-            else:
-                eff_batch = num_evals
-                rep = base_dist.sample((eff_batch,))
+            eff_batch = self.num_modes
+            rep = base_dist.sample() if self.per_mode_prior else base_dist.sample((eff_batch,))
 
             if self.training:
                 log_prior_base = base_dist.log_prob(rep)

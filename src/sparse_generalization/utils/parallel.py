@@ -9,8 +9,8 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence
 
 from tqdm import tqdm
 
-_worker_slot: Optional[int] = None
-_current_seed: Optional[int] = None
+_worker_slot = None
+_current_seed = None
 _message_queue = None
 
 
@@ -30,15 +30,11 @@ def set_current_seed(seed: int):
     global _current_seed
     _current_seed = seed
 
-
 class _Utf8Buffer(io.StringIO):
-    # wandb drops the "Run history" sparklines for streams without a unicode encoding
     encoding = "utf-8"
-
 
 @contextmanager
 def captured_output():
-    """In a pool worker, capture stdout/stderr into a buffer; outside a pool, do nothing and yield None."""
     if _worker_slot is None:
         yield None
         return
@@ -48,7 +44,6 @@ def captured_output():
 
 
 def send_to_console(text: str):
-    """Print text; from a pool worker, hand it to the main process so it isn't drawn over the progress bars."""
     if _message_queue is None:
         print(text)
     else:
@@ -62,14 +57,12 @@ def _print_messages(message_queue, lock, timeout: float = 0.0):
         except queue.Empty:
             return
         with lock:
-            # \r\x1b[J clears the worker bars below the cursor; they redraw beneath the text
             sys.stdout.write("\r\x1b[J" + text.rstrip("\n") + "\n")
             sys.stdout.flush()
 
 
 def _seed_label(desc: str) -> str:
     return f"seed {_current_seed} | {desc}" if desc else f"seed {_current_seed}"
-
 
 class _SeedTqdm(tqdm):
     def set_description(self, desc=None, refresh=True):
