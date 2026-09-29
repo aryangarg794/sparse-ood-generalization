@@ -13,6 +13,7 @@ dropout: 0.0
 lr: 5e-4
 lr_decay: linear  # none | linear
 lr_warmup: false
+grad_clip: 1.0  # max grad norm | null (no clipping)
 wd: 0.0
 val_freq: 5
 

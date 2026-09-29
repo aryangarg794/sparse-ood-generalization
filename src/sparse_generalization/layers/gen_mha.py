@@ -358,7 +358,6 @@ class FlowMHA(nn.Module):
         )  # (b*h, l, l)
 
         attention_probs = softmax(attention_logits, dim=-1)
-        attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         hidden_repr = torch.bmm(attention_probs, values_split)
 
         attention_repr = self._merge_heads(
@@ -514,7 +513,6 @@ class FlowDirectA(nn.Module):
         values_split = self._split_heads(values)
 
         attention_probs = softmax(attn_logits, dim=-1)
-        attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         hidden_repr = torch.bmm(attention_probs, values_split)
 
         attention_repr = self._merge_heads(
@@ -689,7 +687,6 @@ class FlowOnlyQK(nn.Module):
         )  # (b*h, l, l)
 
         attention_probs = softmax(attention_logits, dim=-1)
-        attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         hidden_repr = torch.bmm(attention_probs, values_split)
 
         attention_repr = self._merge_heads(

@@ -9,7 +9,7 @@ from typing import List
 
 from sparse_generalization.models.blocks import MHABlockOracle
 from sparse_generalization.losses.criterion import Criterion
-from sparse_generalization.utils.util_funcs import get_device, build_lr_scheduler
+from sparse_generalization.utils.util_funcs import get_device, build_lr_scheduler, clip_gradients
 
 
 class OracleTransformer(nn.Module):
@@ -27,6 +27,7 @@ class OracleTransformer(nn.Module):
         lr: float = 1e-3,
         lr_decay: str = "none",  # 'none' | 'linear'
         lr_warmup: bool = False,
+        grad_clip: float | None = None,
         dropout: float = 0.1,
         use_grid: bool = True,
         act: nn.Module = nn.ReLU,
@@ -45,6 +46,7 @@ class OracleTransformer(nn.Module):
 
         self.lr_decay = lr_decay
         self.lr_warmup = lr_warmup
+        self.grad_clip = grad_clip
         self.logger = logger
         self.model_dim = model_dim
         self.criterion = Criterion(loss_type)
@@ -156,6 +158,7 @@ class OracleTransformer(nn.Module):
 
                 self.optimizer.zero_grad()
                 loss.backward()
+                clip_gradients(self.parameters(), self.grad_clip)
                 self.optimizer.step()
                 if self.scheduler is not None:
                     self.scheduler.step()

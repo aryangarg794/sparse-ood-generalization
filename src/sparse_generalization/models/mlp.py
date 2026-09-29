@@ -15,6 +15,7 @@ from sparse_generalization.utils.util_funcs import (
     positionalencoding2d,
     get_device,
     build_lr_scheduler,
+    clip_gradients,
 )
 
 
@@ -68,6 +69,7 @@ class MLPBaseline(nn.Module):
         beta2: float = 0.999,
         lr_decay: str = "none",  # 'none' | 'linear'
         lr_warmup: bool = False,
+        grad_clip: float | None = None,
         val_freq: int = 10,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
         embedding_inp: bool = True,
@@ -109,6 +111,7 @@ class MLPBaseline(nn.Module):
             raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
         self.lr_decay = lr_decay
         self.lr_warmup = lr_warmup
+        self.grad_clip = grad_clip
 
         module_cls = module.func if hasattr(module, "func") else module  # unwrap hydra partials
         self.is_cnn = isinstance(module_cls, type) and issubclass(module_cls, BasicCNN)
@@ -214,6 +217,7 @@ class MLPBaseline(nn.Module):
 
                 self.optimizer.zero_grad()
                 loss.backward()
+                clip_gradients(self.parameters(), self.grad_clip)
                 self.optimizer.step()
                 if self.scheduler is not None:
                     self.scheduler.step()

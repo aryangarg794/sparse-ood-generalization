@@ -138,7 +138,6 @@ class MultiHeadAttentionBern(nn.Module):
         )  # (b*h, l, l)
 
         attention_probs = softmax(attention_logits, dim=-1)
-        attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         if self.zeros:
             A = torch.zeros((batch_heads, seq_len, seq_len), device=query.device)
         elif self.training and forced_expl:

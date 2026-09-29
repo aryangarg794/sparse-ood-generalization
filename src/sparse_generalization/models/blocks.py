@@ -37,10 +37,10 @@ class MHABlock(nn.Module):
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
+            nn.Linear(embed_size, 2 * embed_size),
             nn.Dropout(dropout),
             act(),
-            nn.Linear(4 * embed_size, embed_size),
+            nn.Linear(2 * embed_size, embed_size),
         )
 
     def forward(self: Self, x: Tensor):
@@ -122,10 +122,10 @@ class MHABlockBern(nn.Module):
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
+            nn.Linear(embed_size, 2 * embed_size),
             nn.Dropout(dropout),
             act(),
-            nn.Linear(4 * embed_size, embed_size),
+            nn.Linear(2 * embed_size, embed_size),
         )
 
     def forward(self: Self, x: Tensor, forced_expl: bool = False):
@@ -215,10 +215,10 @@ class MHABlockGen(nn.Module):
         self.ln1 = nn.LayerNorm(embed_size)
         self.ln2 = nn.LayerNorm(embed_size)
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
+            nn.Linear(embed_size, 2 * embed_size),
             nn.Dropout(dropout),
             act(),
-            nn.Linear(4 * embed_size, embed_size),
+            nn.Linear(2 * embed_size, embed_size),
         )
 
     def forward(self: Self, x: Tensor):
@@ -305,10 +305,10 @@ class MHABlockCond(nn.Module):
             )
         else:
             self.mlp = nn.Sequential(
-                nn.Linear(embed_size, 4 * embed_size),
+                nn.Linear(embed_size, 2 * embed_size),
                 nn.Dropout(dropout),
                 act(),
-                nn.Linear(4 * embed_size, embed_size),
+                nn.Linear(2 * embed_size, embed_size),
             )
 
     def _mlp(self: Self, x: Tensor, context: Tensor):

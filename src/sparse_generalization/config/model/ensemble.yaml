@@ -19,6 +19,7 @@ sparse_end_decay: 1.0
 lr: 1e-3
 lr_decay: linear  # none | linear
 lr_warmup: false
+grad_clip: 1.0  # max grad norm | null (no clipping)
 ensemble_loss: mean
 num_models: 3
 val_freq: 1
