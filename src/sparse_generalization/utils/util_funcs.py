@@ -77,6 +77,13 @@ def build_lr_scheduler(
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
+def clip_gradients(parameters, max_norm: float | None = None):
+    """Clip the global grad norm to max_norm; no-op if max_norm is None."""
+    if max_norm is None:
+        return None
+    return torch.nn.utils.clip_grad_norm_(parameters, max_norm)
+
+
 class SparsityAnnealer:
     def __init__(
         self,

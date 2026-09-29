@@ -1,11 +1,11 @@
 _target_: sparse_generalization.models.transformer.TransformerLit
 _partial_: true
 
-inp_dim: 25
+inp_dim: 1
 out_dim: 1 
 loss_type: bce  # ce | bce
 layernorm: true
-embedding_inp: false
+embedding_inp: true
 agg_pool: true
 token_pool: false
 model_dim: 32
@@ -19,9 +19,10 @@ sparse_start_decay: 0.0
 sparse_end_decay: 1.0
 l1_weight: 0.0001
 pe_type: sin  # sin | coord | learned | none
-lr: 1e-4
+lr: 1e-3
 lr_decay: linear  # none | linear
 lr_warmup: false
+grad_clip: 1.0  # max grad norm | null (no clipping)
 lagrangian: false
 start_lambda: 5e6
 target_loss: 0.15
@@ -31,7 +32,7 @@ noisy_grads: false
 eta: 1.0
 gamma: 0.55
 noisy_bern: false
-beta1: 0.9
+beta1: 0.99
 beta2: 0.999
 foopt: false
 residual: True

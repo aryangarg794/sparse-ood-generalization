@@ -94,10 +94,10 @@ class AggregationFlowMask(nn.Module):
         )
 
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
+            nn.Linear(embed_size, 2 * embed_size),
             nn.Dropout(dropout),
             act(),
-            nn.Linear(4 * embed_size, out_dim),
+            nn.Linear(2 * embed_size, out_dim),
         )
         if layernorm:
             self.ln = nn.LayerNorm(embed_size)
@@ -274,10 +274,10 @@ class AggregationFlowMHA(nn.Module):
         )
 
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
+            nn.Linear(embed_size, 2 * embed_size),
             nn.Dropout(dropout),
             act(),
-            nn.Linear(4 * embed_size, out_dim),
+            nn.Linear(2 * embed_size, out_dim),
         )
         if layernorm:
             self.ln = nn.LayerNorm(embed_size)
@@ -366,7 +366,6 @@ class AggregationFlowMHA(nn.Module):
         )  # (b*h, 1, s)
 
         attention_probs = softmax(attention_logits, dim=-1)
-        attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         hidden_repr = torch.bmm(attention_probs, values_split) # (b*h, 1, s) @ (b*h, s, k)
 
         attention_repr = self._merge_heads(hidden_repr.view(-1, self.heads, 1, self.dk))
@@ -458,10 +457,10 @@ class AggregationFlowDirectA(nn.Module):
         )
 
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
+            nn.Linear(embed_size, 2 * embed_size),
             nn.Dropout(dropout),
             act(),
-            nn.Linear(4 * embed_size, out_dim),
+            nn.Linear(2 * embed_size, out_dim),
         )
         if layernorm:
             self.ln = nn.LayerNorm(embed_size)
@@ -532,7 +531,6 @@ class AggregationFlowDirectA(nn.Module):
         values_split = self._split_heads(values)
 
         attention_probs = softmax(attn_logits, dim=-1)
-        attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         hidden_repr = torch.bmm(attention_probs, values_split)
 
         attention_repr = self._merge_heads(hidden_repr.view(-1, self.heads, 1, self.dk))
@@ -630,10 +628,10 @@ class AggregationFlowOnlyQK(nn.Module):
         )
 
         self.mlp = nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
+            nn.Linear(embed_size, 2 * embed_size),
             nn.Dropout(dropout),
             act(),
-            nn.Linear(4 * embed_size, out_dim),
+            nn.Linear(2 * embed_size, out_dim),
         )
         if layernorm:
             self.ln = nn.LayerNorm(embed_size)
@@ -714,7 +712,6 @@ class AggregationFlowOnlyQK(nn.Module):
         )  # (b*h, l, l)
 
         attention_probs = softmax(attention_logits, dim=-1)
-        attention_probs = torch.clamp(attention_probs, min=0.001, max=0.999)
         hidden_repr = torch.bmm(attention_probs, values_split)
 
         attention_repr = self._merge_heads(hidden_repr.view(-1, self.heads, 1, self.dk))

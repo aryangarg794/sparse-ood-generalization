@@ -28,6 +28,7 @@ sparse_end_decay: 1.0
 lr: 1e-3
 lr_decay: linear  # none | linear
 lr_warmup: false
+grad_clip: 1.0  # max grad norm | null (no clipping)
 alpha: 0.1
 residual: true
 num_embeddings: 25

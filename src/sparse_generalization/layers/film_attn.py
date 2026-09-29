@@ -58,13 +58,13 @@ class FiLMMLP(nn.Module):
     ):
         super().__init__()
         self.first_mlp = nn.Sequential(
-            nn.Linear(inp_dim, 4 * inp_dim),
+            nn.Linear(inp_dim, 2 * inp_dim),
             nn.Dropout(dropout),
         )
-        self.film_layer = FiLMLayer(4 * inp_dim, context_dim, num_layers_film, act)
+        self.film_layer = FiLMLayer(2 * inp_dim, context_dim, num_layers_film, act)
         self.second_mlp = nn.Sequential(
             act(),
-            nn.Linear(4 * inp_dim, out_dim),
+            nn.Linear(2 * inp_dim, out_dim),
         )
 
     def forward(self, x: Tensor, context: Tensor):

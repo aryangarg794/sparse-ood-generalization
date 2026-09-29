@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from sparse_generalization.layers.thresh_mha import MultiHeadAttentionThresh
 from sparse_generalization.losses.sparse_loss import L1SparsityWeights
 from sparse_generalization.losses.criterion import Criterion
-from sparse_generalization.utils.util_funcs import noise_scheduler, build_lr_scheduler, with_residual_edges, SparsityAnnealer
+from sparse_generalization.utils.util_funcs import noise_scheduler, build_lr_scheduler, clip_gradients, with_residual_edges, SparsityAnnealer
 from sparse_generalization.models.blocks import MHABlock
 from sparse_generalization.layers.agg_attention import AggregationAttention
 from sparse_generalization.models.mlp import BasicMLP
@@ -48,6 +48,7 @@ class TransformerLit(pl.LightningModule):
         lr: float = 1e-3,
         lr_decay: str = "none",  # 'none' | 'linear'
         lr_warmup: bool = False,
+        grad_clip: float | None = None,
         embedding_inp: bool = True,
         residual: bool = True,
         include_sparsity: bool = False,
@@ -85,6 +86,7 @@ class TransformerLit(pl.LightningModule):
         self.betas = (beta1, beta2)
         self.lr_decay = lr_decay
         self.lr_warmup = lr_warmup
+        self.grad_clip = grad_clip
         self.scheduler = None
         self.criterion = Criterion(loss_type)
         self.out_dim = out_dim
@@ -116,13 +118,7 @@ class TransformerLit(pl.LightningModule):
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
         else:
-            bottleneck = 128
-            self.feature_map = nn.Sequential(
-                nn.Linear(inp_dim, bottleneck),
-                act(),
-                nn.Linear(bottleneck, model_dim),
-                # nn.Identity()
-            )
+            self.feature_map = nn.Linear(inp_dim, model_dim)
 
         if pe_type not in ("sin", "coord", "learned", "none"):
             raise ValueError(f"pe_type must be 'sin', 'coord', 'learned' or 'none', got {pe_type!r}")
@@ -349,6 +345,7 @@ class TransformerLit(pl.LightningModule):
                 on_epoch=True,
             )
 
+        clip_gradients(self.parameters(), self.grad_clip)
         opt.step()
         if self.scheduler is not None:
             self.scheduler.step()
@@ -405,7 +402,7 @@ class TransformerLit(pl.LightningModule):
             acc,
             on_step=False,
             on_epoch=True,
-            prog_bar=False,
+            prog_bar=True if 'id' in name else False,
             add_dataloader_idx=False,
         )
 

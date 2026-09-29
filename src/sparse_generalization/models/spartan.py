@@ -17,6 +17,7 @@ from sparse_generalization.utils.util_funcs import (
     positionalencoding2d,
     get_device,
     build_lr_scheduler,
+    clip_gradients,
     with_residual_edges,
     SparsityAnnealer,
 )
@@ -52,6 +53,7 @@ class SPARTAN(nn.Module):
         lr: float = 1e-3,
         lr_decay: str = "none",  # 'none' | 'linear'
         lr_warmup: bool = False,
+        grad_clip: float | None = None,
         dropout: float = 0.0,
         compute_mask: bool = False,
         layernorm: bool = True,
@@ -88,6 +90,7 @@ class SPARTAN(nn.Module):
         self.device = device
         self.lr_decay = lr_decay
         self.lr_warmup = lr_warmup
+        self.grad_clip = grad_clip
         self.logger = logger
         self.model_dim = model_dim
         self.num_heads = num_heads
@@ -345,6 +348,7 @@ class SPARTAN(nn.Module):
 
                 self.optimizer.zero_grad()
                 loss.backward()
+                clip_gradients(self.parameters(), self.grad_clip)
                 self.optimizer.step()
                 if self.scheduler is not None:
                     self.scheduler.step()

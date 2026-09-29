@@ -146,20 +146,20 @@ class HyperNet(nn.Module):
         self.ln1s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(self.total_num_layers)])
         self.ln2s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(self.total_num_layers)])
         self.mlps = nn.ModuleList([nn.Sequential(
-            nn.Linear(embed_size, 4 * embed_size),
+            nn.Linear(embed_size, 2 * embed_size),
             nn.Dropout(dropout),
             act(),
-            nn.Linear(4 * embed_size, embed_size),
+            nn.Linear(2 * embed_size, embed_size),
         ) for _ in range(num_mha_layers)])
 
         # final layer: either an aggregation block or a plain linear head over max-pooled tokens
         if self.include_agg_layer:
             self.mlps.append(
                 nn.Sequential(
-                    nn.Linear(embed_size, 4 * embed_size),
+                    nn.Linear(embed_size, 2 * embed_size),
                     nn.Dropout(dropout),
                     act(),
-                    nn.Linear(4 * embed_size, out_dim),
+                    nn.Linear(2 * embed_size, out_dim),
                 )
             )
         else:
@@ -346,7 +346,6 @@ class HyperNet(nn.Module):
         attention_probs = softmax(attention_logits, dim=-1)
 
         if self.bern_mask:
-            attention_probs = attention_probs.clamp(min=0.001, max=0.999)
             edges_logit = attention_logits.view(batch_heads, -1) + bias
             edges_logit = torch.stack([torch.zeros_like(edges_logit), edges_logit], dim=-1)
             A = gumbel_softmax(edges_logit, tau=1.0, hard=True)[:, :, -1].view(batch_heads, shape, seq_len)
