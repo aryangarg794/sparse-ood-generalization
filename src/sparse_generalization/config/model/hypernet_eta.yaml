@@ -1,10 +1,3 @@
-# HyperNetSpartan set up as the eta model (basic_multimodality, "New Code"): a one-hot condition per
-# weight set -> MLP -> Wq, Wk of every attention layer and the aggregation layer; Wv is a shared learned
-# Linear, no output projection, and the diversity loss acts on eta. Defaults mirror the current run cell;
-# pair it with the data/trainer overrides:
-#   python -m sparse_generalization.scripts.run_spartan model=hypernet_eta \
-#     data.data_func.grid_size=3 data.data_func.size=8000 data.batch_size=128 trainer.max_epochs=3000
-# seq_len and num_embeddings are width ** 2, so change them with grid_size.
 _target_: sparse_generalization.models.hypernet.HyperNetSpartan
 _partial_: true
 
@@ -35,17 +28,17 @@ weight_gen:
   hidden_features: [128, 256]
 hyper_bias_init: false  
 
-num_modes: 2  # conditions
-mode_reduction: sum  # loss1 + loss2
-prior_type: none  # deterministic generator: no KL term
+num_modes: 2  
+mode_reduction: sum  
+prior_type: none  
 beta: 0.0
 
-eta_div_coef: 0.5
-eta_div_type: product  # -sum |eta_1 - eta_2|, the eta model's overlap
+eta_div_coef: 3.0
+eta_div_type: abs  
 eta_div_target: 0.1
 eta_div_floor: squared
 
-div_coeff: 0.0  # representation diversity (CosineRepDiv) off
+div_coeff: 0.0  
 include_sparsity: false
 alpha: 0.1
 sparse_anneal: false

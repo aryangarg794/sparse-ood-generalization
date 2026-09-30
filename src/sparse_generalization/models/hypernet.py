@@ -32,9 +32,9 @@ class HyperNetSpartan(nn.Module):
     def __init__(
         self,
         inp_dim: int = 3,
-        out_dim: int = 2,  # head size: 2 for ce (softmax classes), 1 for bce (single sigmoid logit)
-        loss_type: str = "ce",  # 'ce' | 'bce'
-        weight_gen = partial(FlowVAE, prior_func=make_unit_gaussian),  # partial of FlowVAE | VHyperNet
+        out_dim: int = 2,  
+        loss_type: str = "ce",  
+        weight_gen = partial(FlowVAE, prior_func=make_unit_gaussian),  
         prior_type: str = "uniform",
         include_sparsity: bool = False,
         alpha: float = 0.1,
@@ -50,7 +50,7 @@ class HyperNetSpartan(nn.Module):
         residual: bool = False,
         device: str | None = None,
         num_modes: int = 1,
-        mode_onehot: bool = False,  # condition the weight flow on a one-hot of each weight set's mode
+        mode_onehot: bool = False,  
         mode_reduction: str = "sum",
         layernorm: bool = True,
         separate_mask: bool = False,
@@ -59,11 +59,11 @@ class HyperNetSpartan(nn.Module):
         val_freq: int = 10,
         div_coeff: float = 0.1,
         val_to_name: dict = {0: "id", 1: "col", 2: "pair", 3: "dist", 4: "comb"},
-        pe_type: str = "sin",  # 'sin' | 'coord' | 'learned' | 'none'
+        pe_type: str = "sin",  
         max_grid_size: int = 5,
         embedding_inp: bool = True,
         lr: float = 1e-3,
-        lr_decay: str = "none",  # 'none' | 'linear'
+        lr_decay: str = "none",  
         lr_warmup: bool = False,
         grad_clip: float | None = None,
         beta: float = 1.0,
@@ -81,12 +81,12 @@ class HyperNetSpartan(nn.Module):
         threshold: float = 0.01,
         use_proj: bool = True,
         bern_mask: bool = False,
-        agg_head: str = "mlp",  # 'mlp' | 'eta' (the eta model's linear_out -> out_net head)
-        hyper_bias_init: bool = False,  # Bias-HyperInit for the weight generator (VHyperNet)
-        eta_div_coef: float = 0.0,  # weight on the eta diversity between each pair of weight sets
-        eta_div_type: str = "neg_l1",  # 'neg_l1' (eta model) | 'abs' | 'product' | 'jsd'
-        eta_div_target: float | None = None,  # target overlap; None = minimise outright
-        eta_div_floor: str | None = "squared",  # 'squared' | 'hard' | 'abs' | None (no floor)
+        agg_head: str = "mlp",  
+        hyper_bias_init: bool = False,  
+        eta_div_coef: float = 0.0,  
+        eta_div_type: str = "neg_l1",  
+        eta_div_target: float | None = None,  
+        eta_div_floor: str | None = "squared",  
         *args,
         **kwargs
     ):
@@ -126,6 +126,7 @@ class HyperNetSpartan(nn.Module):
         self.criterion = Criterion(loss_type)
         self.out_dim = out_dim
         self.avg_heads = div_coeff == 0
+        self.use_mask = use_mask
 
         if embedding_inp:
             self.embed_layer = nn.Embedding(num_embeddings, model_dim)
@@ -272,7 +273,10 @@ class HyperNetSpartan(nn.Module):
         losses_test = deepcopy(attn_test)
         accs_test = deepcopy(attn_test)
 
-        postfix = {"loss": 0.0, "acc": 0.0, "gen": 0.0}
+        # latest val results, kept across epochs so the bar still shows them between val steps
+        val_accs = {}
+        mode_accs = {}
+        split = None
         self.split_history = []  # (epoch, split) at each val step
 
         self.scheduler = build_lr_scheduler(
@@ -349,24 +353,16 @@ class HyperNetSpartan(nn.Module):
             attn_edges.append(attn_running)
             mask_edges.append(mask_running)
 
-            postfix["loss"] = epoch_loss
-            postfix["acc"] = epoch_acc
-            postfix["gen"] = epoch_gen
-            postfix["div"] = epoch_div
-
-            pbar.set_description(f"Epoch: {step}")
+            pbar.set_description(f"ep {step}")
             self.logger.log_metrics({"train/loss_epoch": epoch_loss}, step=step)
             self.logger.log_metrics({"train/acc_epoch": epoch_acc}, step=step)
 
             if self.eta_div_coef:
                 self.logger.log_metrics({"train/eta_overlap": epoch_eta}, step=step)
-                postfix["eta"] = epoch_eta
 
             if self.include_sparsity:
                 self.logger.log_metrics({"train/sparse_loss": epoch_sparse}, step=step)
                 self.logger.log_metrics({"train/sparse_coef": sparse_coef}, step=step)
-                postfix["sparse_loss"] = epoch_sparse
-                postfix["sparse_coef"] = sparse_coef
 
             self.logger.log_metrics(
                 {f"train/attn_edges_train": attn_running}, step=self.global_step
@@ -376,42 +372,48 @@ class HyperNetSpartan(nn.Module):
                 {f"train/mask_edges_train": mask_running}, step=self.global_step
             )
 
-            mode_accs = {}
             if not self.use_optimal_test and step % self.val_freq == 0:
                 for loader, name in zip(testloaders, self.val_to_name.values()):
                     test_metrics = self.test(name, loader, folder="val")
                     mode_accs[name] = test_metrics["mode_accs"]
-                    if "id" in name:
-                        postfix["val_id"] = test_metrics["acc"]
-                    elif "a" in name:
-                        postfix["val_a"] = test_metrics["acc"]
-                    elif "b" in name:
-                        postfix["val_b"] = test_metrics["acc"]
+                    val_accs[name] = test_metrics["acc"]
                     masks_test[name].append(test_metrics["mask"])
                     attn_test[name].append(test_metrics["attn"])
                     losses_test[name].append(test_metrics["loss"])
                     accs_test[name].append(test_metrics["acc"])
 
-            postfix["mask"] = mask_running
-
             if self.use_optimal_test and step % self.val_freq == 0:
                 for loader, name in zip(testloaders, self.val_to_name.values()):
                     test_metrics = self.optimal_test(name, loader, folder="val")
                     mode_accs[name] = test_metrics["mode_accs"]
-                    if "id" in name:
-                        postfix["ens_id"] = test_metrics["acc"]
-                    elif "a" in name:
-                        postfix["ens_a"] = test_metrics["acc"]
-                    elif "b" in name:
-                        postfix["ens_b"] = test_metrics["acc"]
+                    val_accs[name] = test_metrics["acc"]
 
-            if "a" in mode_accs and "b" in mode_accs:
-                postfix["A"] = "/".join(f"{acc:.2f}" for acc in mode_accs["a"])
-                postfix["B"] = "/".join(f"{acc:.2f}" for acc in mode_accs["b"])
+            if step % self.val_freq == 0 and "a" in mode_accs and "b" in mode_accs:
                 split = self.mode_split(mode_accs["a"], mode_accs["b"])
                 self.split_history.append((step, split))
                 self.logger.log_metrics({"val/split": split}, step=self.global_step)
-                postfix["split"] = split
+
+            # kept short so the bar fits on one terminal line; everything is also in wandb
+            fmt = lambda accs: "/".join(f"{acc:.2f}" for acc in accs)
+            postfix = {"loss": f"{epoch_loss:.3f}", "acc": f"{epoch_acc:.2f}"}
+            if val_accs:
+                postfix["ens" if self.use_optimal_test else "val"] = fmt(val_accs.values())
+            if "a" in mode_accs and "b" in mode_accs:
+                postfix["A"] = fmt(mode_accs["a"])
+                postfix["B"] = fmt(mode_accs["b"])
+            if self.eta_div_coef:
+                postfix["eta"] = f"{epoch_eta:.2f}"
+            if self.div_coeff:
+                postfix["div"] = f"{epoch_div:.2f}"
+            if self.beta:
+                postfix["gen"] = f"{epoch_gen:.2f}"
+            if self.include_sparsity:
+                postfix["sp"] = f"{epoch_sparse:.3f}"
+                postfix["sp_c"] = f"{sparse_coef:.2f}"
+            if self.use_mask:
+                postfix["mask"] = f"{mask_running:.2f}"
+            if split is not None:
+                postfix["split"] = f"{split:.2f}"
 
             pbar.set_postfix(postfix)
 
@@ -503,29 +505,29 @@ class HyperNetSpartan(nn.Module):
         for batch_idx, (x, y) in enumerate(anti_dataset):
             x = x.to(self.device)
             y = y.to(self.device)
-            probs, masks, attns = self(x, evaluate=True)
+            probs, masks, attns = self(x, evaluate=True, ret_mean=False)  # (e, b, c)
             labels.append(probs)
             true_labels.append(y)
 
-        preds = torch.cat(labels, dim=0)
+        preds = torch.cat(labels, dim=1)
         trues = torch.cat(true_labels, dim=0)
-        size = preds.size(0)
+        size = preds.size(1)
         midpoint = size // 2
 
         acc = self.criterion.accuracy_from_probs
-        total_acc = acc(preds, trues)
-        results["total_acc"] = total_acc.item()
+        for half, sl in (("a", slice(None, midpoint)), ("b", slice(midpoint, None))):
+            mode_acc = [acc(out[sl], trues[sl]).item() for out in preds]
+            mode_conf = [self.criterion.confidence(out[sl]).item() for out in preds]
+            best = max(range(self.num_modes), key=lambda k: (mode_acc[k], mode_conf[k]))
+            results[f"acc_{half}"] = mode_acc[best]
+            results[f"conf_{half}"] = mode_conf[best]
+            results[f"mode_{half}"] = best
+            results[f"mode_accs_{half}"] = mode_acc
+            results[f"mode_confs_{half}"] = mode_conf
 
-        acc_a = acc(preds[:midpoint], trues[:midpoint])
-        acc_b = acc(preds[midpoint:], trues[midpoint:])
-        # confidence = mean probability assigned to the positive class
-        conf_a = self.criterion.confidence(preds[:midpoint])
-        conf_b = self.criterion.confidence(preds[midpoint:])
-
-        results["acc_a"] = acc_a.item()
-        results["acc_b"] = acc_b.item()
-        results["conf_a"] = conf_a.item()
-        results["conf_b"] = conf_b.item()
+        results["total_acc"] = (
+            results["acc_a"] * midpoint + results["acc_b"] * (size - midpoint)
+        ) / size
 
         self.train()
         return results
