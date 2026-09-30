@@ -18,6 +18,7 @@ prior_params:
   n_flows: 3
   hidden_features: [128, 128]
 prior_type: uniform
+uniform_bound: 1.0
 include_sparsity: false
 sparse_anneal: false
 sparse_start_coef: 1.0

@@ -1,0 +1,64 @@
+# HyperNetSpartan set up as the eta model (basic_multimodality, "New Code"): a one-hot condition per
+# weight set -> MLP -> Wq, Wk of every attention layer and the aggregation layer; Wv is a shared learned
+# Linear, no output projection, and the diversity loss acts on eta. Defaults mirror the current run cell;
+# pair it with the data/trainer overrides:
+#   python -m sparse_generalization.scripts.run_spartan model=hypernet_eta \
+#     data.data_func.grid_size=3 data.data_func.size=8000 data.batch_size=128 trainer.max_epochs=3000
+# seq_len and num_embeddings are width ** 2, so change them with grid_size.
+_target_: sparse_generalization.models.hypernet.HyperNetSpartan
+_partial_: true
+
+inp_dim: 25
+out_dim: 2
+loss_type: ce
+seq_len: 25
+num_embeddings: 25
+embedding_inp: true
+pe_type: sin
+model_dim: 32
+num_heads: 1
+num_mha_layers: 1
+include_agg_layer: true
+agg_head: eta  
+hyper_type: mha  
+use_proj: false
+bern_mask: false
+layernorm: true
+residual: true
+dropout: 0.0
+separate_mask: false
+use_mask: false
+
+weight_gen:  
+  _partial_: true
+  _target_: sparse_generalization.layers.vhypernet.VHyperNet
+  hidden_features: [128, 256]
+hyper_bias_init: false  
+
+num_modes: 2  # conditions
+mode_reduction: sum  # loss1 + loss2
+prior_type: none  # deterministic generator: no KL term
+beta: 0.0
+
+eta_div_coef: 0.5
+eta_div_type: product  # -sum |eta_1 - eta_2|, the eta model's overlap
+eta_div_target: 0.1
+eta_div_floor: squared
+
+div_coeff: 0.0  # representation diversity (CosineRepDiv) off
+include_sparsity: false
+alpha: 0.1
+sparse_anneal: false
+sparse_start_coef: 1.0
+sparse_end_coef: 1.0
+sparse_start_decay: 0.0
+sparse_end_decay: 1.0
+use_optimal_test: false
+
+lr: 3e-4
+lr_decay: linear
+lr_warmup: false
+grad_clip: 10000.0
+beta1: 0.9
+beta2: 0.999
+val_freq: 10

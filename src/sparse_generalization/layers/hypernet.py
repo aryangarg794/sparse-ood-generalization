@@ -5,9 +5,10 @@ import zuko
 
 from functools import partial
 from torch import Tensor
+from torch.distributions.transforms import AffineTransform, ComposeTransform, TanhTransform
 from torch.nn.functional import softmax, gumbel_softmax
 
-from sparse_generalization.layers.priors import LaplacePrior, NormalPrior, make_unit_gaussian
+from sparse_generalization.layers.priors import LaplacePrior, NormalPrior, UniformPrior, make_unit_gaussian
 from sparse_generalization.layers.vae import FlowVAE
 from sparse_generalization.utils.util_funcs import get_device, with_residual_edges
 from sparse_generalization.losses.criterion import Criterion
@@ -30,6 +31,7 @@ class HyperNet(nn.Module):
         dropout: float = 0.0,
         hyper_type: str = "qk",  
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
+        uniform_bound: float = 1.0,
         residual: bool = False,
         div_loss: nn.Module = CosineRepDiv,
         device: str | None = None,
@@ -38,8 +40,11 @@ class HyperNet(nn.Module):
         use_mask: bool = False,
         act: nn.Module = nn.ReLU,
         num_modes: int = 1,
+        mode_onehot: bool = False,
         use_proj: bool = True,
         bern_mask: bool = False,
+        agg_head: str = "mlp",
+        hyper_bias_init: bool = False,
         *args,
         **kwargs,
     ):
@@ -55,10 +60,15 @@ class HyperNet(nn.Module):
             raise ValueError("hyper_type 'mhao' generates Wo, so it requires use_proj=True")
         if hyper_type == "mask" and bern_mask:
             raise ValueError("bern_mask applies to 'qk', 'mha' and 'mhao'; 'mask' already samples its mask")
+        if agg_head not in ("mlp", "eta"):
+            raise ValueError(f"agg_head must be 'mlp' or 'eta', got {agg_head!r}")
+        if agg_head == "eta" and not include_agg_layer:
+            raise ValueError("agg_head='eta' is the aggregation layer's head, so it needs include_agg_layer=True")
 
         self.hyper_type = hyper_type
         self.use_proj = use_proj
         self.bern_mask = bern_mask
+        self.agg_head = agg_head
         self.num_heads = num_heads
         self.residual = residual
         self.criterion = criterion
@@ -119,6 +129,9 @@ class HyperNet(nn.Module):
             self.prior = LaplacePrior()
         elif self.prior_type == "normal":
             self.prior = NormalPrior()
+        elif self.prior_type == "uniform":
+            self.prior = UniformPrior(self.total_dist_size, uniform_bound)
+            self.bound_transform = ComposeTransform([TanhTransform(), AffineTransform(0.0, uniform_bound)])
         else:
             self.prior = nn.Identity()
 
@@ -134,6 +147,8 @@ class HyperNet(nn.Module):
             layernorm=layernorm,
             act=act,
             num_modes=num_modes,
+            mode_onehot=mode_onehot,
+            bias_init=hyper_bias_init,
             device=device,
         )
 
@@ -149,7 +164,22 @@ class HyperNet(nn.Module):
         ) for _ in range(num_mha_layers)])
 
         # final layer: either an aggregation block or a plain linear head over max-pooled tokens
-        if self.include_agg_layer:
+        if self.include_agg_layer and agg_head == "eta":
+            # as in the eta model: attention output -> MLP back to embed_size (no LayerNorm before it)
+            # -> separate classifier with a small orthogonal init on its last layer
+            self.mlps.append(
+                nn.Sequential(
+                    nn.Linear(embed_size, 2 * embed_size),
+                    nn.Dropout(dropout),
+                    act(),
+                    nn.Linear(2 * embed_size, embed_size),
+                )
+            )
+            last = nn.Linear(256, out_dim)
+            nn.init.orthogonal_(last.weight, 0.01)
+            nn.init.zeros_(last.bias)
+            self.out_net = nn.Sequential(nn.Linear(embed_size, 256), nn.ReLU(), last)
+        elif self.include_agg_layer:
             self.mlps.append(
                 nn.Sequential(
                     nn.Linear(embed_size, 2 * embed_size),
@@ -236,8 +266,13 @@ class HyperNet(nn.Module):
         batch_size, seq_len, dim = x.shape
         threshold = 1 / seq_len
         prior = 0
-        div = torch.tensor([0.0], device=x.device)
+        div = torch.zeros((), device=x.device)
         flow_out, ladj = self.param_flow(x)
+        if self.prior_type == "uniform":
+            bounded = self.bound_transform(flow_out)
+            if self.training:
+                ladj = ladj - self.bound_transform.log_abs_det_jacobian(flow_out, bounded).sum(dim=-1)
+            flow_out = bounded
         layer_weights = self._layer_weights(flow_out)
 
         attn_maps = []
@@ -274,11 +309,9 @@ class HyperNet(nn.Module):
                 prior = self.prior().log_prob(num_paths.reshape(-1))
             elif self.prior_type == "normal":
                 prior = self.prior().log_prob(flow_out).sum(dim=-1)
-            elif self.prior_type == "nf":
+            elif self.prior_type in ("nf", "uniform"):
                 prior = self.prior().log_prob(flow_out.reshape(-1, self.total_dist_size))
                 prior = prior.view(flow_out.size(0), -1).sum(dim=-1)
-            elif self.prior_type == "uniform":
-                prior = torch.ones_like(ladj)
 
         if compute_div:
             match self.div_loss:
@@ -287,6 +320,8 @@ class HyperNet(nn.Module):
 
         if self.include_agg_layer:
             out = out.squeeze(dim=1)
+            if self.agg_head == "eta":
+                out = self.out_net(out)
         else:
             out = self.mlps[-1](out.max(dim=1)[0])
 
@@ -314,6 +349,8 @@ class HyperNet(nn.Module):
         if self.residual and not agg:
             attn_repr = attn_repr + x
             out = mlp(ln2(attn_repr)) + attn_repr
+        elif agg and self.agg_head == "eta":
+            out = mlp(attn_repr)
         else:
             out = mlp(ln2(attn_repr))
         return out, mask, adj

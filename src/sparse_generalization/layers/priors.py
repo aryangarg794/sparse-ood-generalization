@@ -2,7 +2,7 @@ import torch
 import zuko
 
 from zuko.lazy import UnconditionalDistribution
-from zuko.distributions import DiagNormal
+from zuko.distributions import BoxUniform, DiagNormal
 from zuko.mixtures import GMM
 from torch.distributions import Independent, Normal
 
@@ -18,6 +18,18 @@ class LaplacePrior(zuko.lazy.LazyDistribution):
     def forward(self, c=None):
         return torch.distributions.Laplace(loc=self.loc, scale=self.scale)
     
+class UniformPrior(zuko.lazy.LazyDistribution):
+
+    def __init__(self, features: int, bound: float = 1.0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        upper = torch.full((features,), float(bound))
+        self.register_buffer("lower", -upper)
+        self.register_buffer("upper", torch.nextafter(upper, torch.tensor(float("inf"))))
+
+    def forward(self, c=None):
+        return BoxUniform(self.lower, self.upper)
+
 class NormalPrior(zuko.lazy.LazyDistribution):
 
     def __init__(self, loc: float = 0.0, scale: float = 1.0, *args, **kwargs):

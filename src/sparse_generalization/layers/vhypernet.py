@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,6 +19,8 @@ class VHyperNet(nn.Module):
         hidden_features: list = [128, 128],
         act: nn.Module = nn.ReLU,
         device: str | None = None,
+        input_dim: int | None = None,
+        bias_init: bool = False,
         **kwargs,  
     ):
         device = get_device(device)
@@ -36,6 +39,16 @@ class VHyperNet(nn.Module):
             layers += [nn.Linear(in_dim, out_dim), act()]
         layers.append(nn.Linear(dims[-1], total_out))
         self.hyper = nn.Sequential(*layers)
+
+        if bias_init:
+            # Bias-HyperInit (Beck et al., 2022, arXiv:2210.11348): head weights W := 0 and bias
+            # b := phi_shared ~ f(phi), so every mode starts from the same base-network weights. f is the
+            # nn.Linear default for the generated (d, d) matrices, U(-1/sqrt(d), 1/sqrt(d)) with d = input_dim
+            if input_dim is None:
+                raise ValueError("bias_init needs input_dim, the fan-in of the generated matrices")
+            head = self.hyper[-1]
+            nn.init.zeros_(head.weight)
+            nn.init.uniform_(head.bias, -1 / math.sqrt(input_dim), 1 / math.sqrt(input_dim))
 
     def get_modes(self):
         return F.one_hot(torch.arange(self.num_modes, device=self.device), self.num_modes).float()

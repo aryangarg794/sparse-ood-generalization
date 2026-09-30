@@ -7,10 +7,11 @@ import torch.nn.functional as F
 
 from zuko.flows import Flow
 from torch import Tensor
+from torch.distributions.transforms import AffineTransform, ComposeTransform, TanhTransform
 from torch.nn.functional import softmax, gumbel_softmax
 from typing import Self
 
-from sparse_generalization.layers.priors import LaplacePrior, NormalPrior
+from sparse_generalization.layers.priors import LaplacePrior, NormalPrior, UniformPrior
 from sparse_generalization.layers.vae import FlowVAE
 from sparse_generalization.utils.util_funcs import get_device
 
@@ -27,6 +28,7 @@ class FlowMasking(nn.Module):
         residual: bool = False,
         bias: float = 0.5,
         prior_type: str = "laplace",
+        uniform_bound: float = 1.0,
         device: str | None = None,
         layernorm: bool = True,
         separate_mask: bool = False,
@@ -74,6 +76,9 @@ class FlowMasking(nn.Module):
             self.prior = LaplacePrior()
         elif self.prior_type == "normal":
             self.prior = NormalPrior()
+        elif self.prior_type == "uniform":
+            self.prior = UniformPrior(seq_len, uniform_bound)
+            self.bound_transform = ComposeTransform([TanhTransform(), AffineTransform(0.0, uniform_bound)])
         else:
             self.prior = nn.Identity()
 
@@ -129,6 +134,11 @@ class FlowMasking(nn.Module):
 
         batch_heads = self.heads * batch_size
         g, ladj = self.param_flow(x)
+        if self.prior_type == "uniform":
+            bounded = self.bound_transform(g)
+            if self.training:
+                ladj = ladj - self.bound_transform.log_abs_det_jacobian(g, bounded).sum(dim=-1)
+            g = bounded
         v_dir = F.normalize(self.v, dim=-1).unsqueeze(0).expand(batch_heads, -1, -1)
         mask_weights_raw = g.view(-1, seq_len, 1) * v_dir
 
@@ -148,8 +158,9 @@ class FlowMasking(nn.Module):
             prior = self.prior().log_prob(g).sum(dim=-1)
         elif self.prior_type == "nf" and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(g)
-        elif self.prior_type == "uniform" and self.training and self.per_mask_prior:
-            prior = torch.tensor([1.0], device=queries.device).expand_as(ladj)
+        elif self.prior_type == "uniform" and self.training:
+            prior = self.prior().log_prob(g.reshape(-1, self.prior.lower.numel()))
+            prior = prior.view(g.size(0), -1).sum(dim=-1)
 
         attention_repr = self._merge_heads(attention_repr)
         attention_repr = self.projection(attention_repr)
@@ -201,6 +212,7 @@ class FlowMHA(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
         prior_type: str = "laplace",
+        uniform_bound: float = 1.0,
         per_mask_prior: bool = False,
         device: str | None = None,
         layernorm: bool = True,
@@ -254,6 +266,9 @@ class FlowMHA(nn.Module):
             self.prior = LaplacePrior()
         elif self.prior_type == "normal":
             self.prior = NormalPrior()
+        elif self.prior_type == "uniform":
+            self.prior = UniformPrior(4 * embed_size, uniform_bound)
+            self.bound_transform = ComposeTransform([TanhTransform(), AffineTransform(0.0, uniform_bound)])
         else:
             self.prior = nn.Identity()
 
@@ -285,6 +300,11 @@ class FlowMHA(nn.Module):
 
         batch_heads = self.heads * batch_size
         g, ladj = self.param_flow(x)
+        if self.prior_type == "uniform":
+            bounded = self.bound_transform(g)
+            if self.training:
+                ladj = ladj - self.bound_transform.log_abs_det_jacobian(g, bounded).sum(dim=-1)
+            g = bounded
         gq, gk, gv, go = torch.chunk(g, chunks=4, dim=-1)
         vq_dir = F.normalize(self.Wq, dim=-1)
         vk_dir = F.normalize(self.Wk, dim=-1)
@@ -308,8 +328,9 @@ class FlowMHA(nn.Module):
             prior = self.prior().log_prob(g).sum(dim=-1)
         elif self.prior_type == "nf" and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(g)
-        elif self.prior_type == "uniform" and self.training and self.per_mask_prior:
-            prior = torch.tensor([1.0], device=queries.device).expand_as(ladj)
+        elif self.prior_type == "uniform" and self.training:
+            prior = self.prior().log_prob(g.reshape(-1, self.prior.lower.numel()))
+            prior = prior.view(g.size(0), -1).sum(dim=-1)
 
         if avg_attn_heads:
             adjacency = attn_per_head.sum(dim=1)
@@ -384,6 +405,7 @@ class FlowDirectA(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
         prior_type: str = "laplace",
+        uniform_bound: float = 1.0,
         per_mask_prior: bool = False,
         device: str | None = None,
         layernorm: bool = True,
@@ -428,6 +450,9 @@ class FlowDirectA(nn.Module):
             self.prior = LaplacePrior()
         elif self.prior_type == "normal":
             self.prior = NormalPrior()
+        elif self.prior_type == "uniform":
+            self.prior = UniformPrior(seq_len, uniform_bound)
+            self.bound_transform = ComposeTransform([TanhTransform(), AffineTransform(0.0, uniform_bound)])
         else:
             self.prior = nn.Identity()
 
@@ -459,6 +484,11 @@ class FlowDirectA(nn.Module):
         
         batch_heads = self.heads * batch_size
         g, ladj = self.param_flow(x)
+        if self.prior_type == "uniform":
+            bounded = self.bound_transform(g)
+            if self.training:
+                ladj = ladj - self.bound_transform.log_abs_det_jacobian(g, bounded).sum(dim=-1)
+            g = bounded
         attn_dir = (
             F.normalize(self.attention_weights, dim=-1)
             .unsqueeze(0)
@@ -474,8 +504,9 @@ class FlowDirectA(nn.Module):
             prior = self.prior().log_prob(g).sum(dim=-1)
         elif self.prior_type == "nf" and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(g)
-        elif self.prior_type == "uniform" and self.training and self.per_mask_prior:
-            prior = torch.tensor([1.0], device=queries.device).expand_as(ladj)
+        elif self.prior_type == "uniform" and self.training:
+            prior = self.prior().log_prob(g.reshape(-1, self.prior.lower.numel()))
+            prior = prior.view(g.size(0), -1).sum(dim=-1)
 
         if avg_attn_heads:
             adjacency = attn_per_head.sum(dim=1)
@@ -542,6 +573,7 @@ class FlowOnlyQK(nn.Module):
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         residual: bool = False,
         prior_type: str = "laplace",
+        uniform_bound: float = 1.0,
         force_vae_gaussian: bool = False, 
         per_mask_prior: bool = False,
         device: str | None = None,
@@ -591,6 +623,9 @@ class FlowOnlyQK(nn.Module):
             self.prior = LaplacePrior()
         elif self.prior_type == "normal":
             self.prior = NormalPrior()
+        elif self.prior_type == "uniform":
+            self.prior = UniformPrior(2 * embed_size, uniform_bound)
+            self.bound_transform = ComposeTransform([TanhTransform(), AffineTransform(0.0, uniform_bound)])
         else:
             self.prior = nn.Identity()
 
@@ -621,6 +656,11 @@ class FlowOnlyQK(nn.Module):
         x = queries.clone()
         
         g, ladj = self.param_flow(x)
+        if self.prior_type == "uniform":
+            bounded = self.bound_transform(g)
+            if self.training:
+                ladj = ladj - self.bound_transform.log_abs_det_jacobian(g, bounded).sum(dim=-1)
+            g = bounded
         gq, gk = torch.chunk(g, chunks=2, dim=-1)
         vq_dir = F.normalize(self.Wq, dim=-1)
         vk_dir = F.normalize(self.Wk, dim=-1)
@@ -636,8 +676,9 @@ class FlowOnlyQK(nn.Module):
             prior = self.prior().log_prob(g).sum(dim=-1)
         elif self.prior_type == "nf" and self.training and self.per_mask_prior:
             prior = self.prior().log_prob(g)
-        elif self.prior_type == "uniform" and self.training and self.per_mask_prior:
-            prior = torch.tensor([1.0], device=queries.device).expand_as(ladj)
+        elif self.prior_type == "uniform" and self.training:
+            prior = self.prior().log_prob(g.reshape(-1, self.prior.lower.numel()))
+            prior = prior.view(g.size(0), -1).sum(dim=-1)
 
         if avg_attn_heads:
             adjacency = attn_per_head.sum(dim=1)

@@ -23,6 +23,7 @@ from sparse_generalization.utils.util_funcs import (
     SparsityAnnealer,
 )
 from sparse_generalization.losses.criterion import Criterion
+from sparse_generalization.losses.eta_diversity import EtaDiversity
 from sparse_generalization.layers.diversity_losses import CosineDiv
 
 
@@ -45,9 +46,12 @@ class HyperNetSpartan(nn.Module):
         dropout: float = 0.0,
         hyper_type: str = "qk",
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
+        uniform_bound: float = 1.0,
         residual: bool = False,
         device: str | None = None,
         num_modes: int = 1,
+        mode_onehot: bool = False,  # condition the weight flow on a one-hot of each weight set's mode
+        mode_reduction: str = "sum",
         layernorm: bool = True,
         separate_mask: bool = False,
         use_mask: bool = False,
@@ -77,6 +81,12 @@ class HyperNetSpartan(nn.Module):
         threshold: float = 0.01,
         use_proj: bool = True,
         bern_mask: bool = False,
+        agg_head: str = "mlp",  # 'mlp' | 'eta' (the eta model's linear_out -> out_net head)
+        hyper_bias_init: bool = False,  # Bias-HyperInit for the weight generator (VHyperNet)
+        eta_div_coef: float = 0.0,  # weight on the eta diversity between each pair of weight sets
+        eta_div_type: str = "neg_l1",  # 'neg_l1' (eta model) | 'abs' | 'product' | 'jsd'
+        eta_div_target: float | None = None,  # target overlap; None = minimise outright
+        eta_div_floor: str | None = "squared",  # 'squared' | 'hard' | 'abs' | None (no floor)
         *args,
         **kwargs
     ):
@@ -87,6 +97,12 @@ class HyperNetSpartan(nn.Module):
 
         if lr_decay not in ("none", "linear"):
             raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
+        if mode_reduction not in ("sum", "mean"):
+            raise ValueError(f"mode_reduction must be 'sum' or 'mean', got {mode_reduction!r}")
+        if eta_div_coef and num_modes < 2:
+            raise ValueError("eta_div_coef compares sampled weight sets, so it needs num_modes > 1")
+        if eta_div_coef and not include_agg_layer:
+            raise ValueError("eta_div_coef needs include_agg_layer=True: eta is the flow into the aggregation query")
 
         device = get_device(device)
         kwargs.pop("num_eval_samples", None)  # removed (evals = num_modes); still in older checkpoints' hparams
@@ -106,6 +122,7 @@ class HyperNetSpartan(nn.Module):
         self.num_mha_layers = num_mha_layers
         self.include_agg_layer = include_agg_layer
         self.num_modes = num_modes
+        self.mode_reduction = mode_reduction
         self.criterion = Criterion(loss_type)
         self.out_dim = out_dim
         self.avg_heads = div_coeff == 0
@@ -147,6 +164,7 @@ class HyperNetSpartan(nn.Module):
             dropout=dropout,
             hyper_type=hyper_type,
             prior_params=prior_params,
+            uniform_bound=uniform_bound,
             residual=residual,
             div_loss=div_loss,
             device=device,
@@ -155,9 +173,17 @@ class HyperNetSpartan(nn.Module):
             use_mask=use_mask,
             act=act,
             num_modes=num_modes,
+            mode_onehot=mode_onehot,
             use_proj=use_proj,
             bern_mask=bern_mask,
+            agg_head=agg_head,
+            hyper_bias_init=hyper_bias_init,
         )
+
+        # eta has total mass 2 ** num_mha_layers under the residual stream (+I per attention layer)
+        self.eta_div_coef = eta_div_coef
+        self.eta_div = EtaDiversity(eta_div_type, eta_div_target, eta_div_floor,
+                                    mass=2 ** num_mha_layers if residual else 1)
 
         self.optimizer = torch.optim.Adam(
             self.parameters(), lr=lr, betas=(beta1, beta2)
@@ -181,6 +207,10 @@ class HyperNetSpartan(nn.Module):
         )
         self.beta = beta
 
+    def rec_loss(self, out: Tensor, y_evals: Tensor):
+        loss_per_model = self.criterion.loss(out, y_evals, reduction="none").mean(dim=1)
+        return loss_per_model.sum() if self.mode_reduction == "sum" else loss_per_model.mean()
+
     def _enforce_sparsity(self, attns):
         num_edges = attns.sum(dim=(1, 2)) / self.max_paths
         return (self.alpha - num_edges).pow(2).mean()
@@ -193,7 +223,7 @@ class HyperNetSpartan(nn.Module):
                 width * height, self.num_heads, self.num_mha_layers, self.include_agg_layer
             )
 
-            print(f"MAX PATHS: {self.max_paths}")
+            # print(f"MAX PATHS: {self.max_paths}")
 
         self.threshold = 1 / (width * height)
 
@@ -243,6 +273,7 @@ class HyperNetSpartan(nn.Module):
         accs_test = deepcopy(attn_test)
 
         postfix = {"loss": 0.0, "acc": 0.0, "gen": 0.0}
+        self.split_history = []  # (epoch, split) at each val step
 
         self.scheduler = build_lr_scheduler(
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
@@ -257,6 +288,7 @@ class HyperNetSpartan(nn.Module):
             epoch_sparse = torch.zeros((), device=self.device)
             sparse_coef = 1.0
             epoch_gen = torch.zeros((), device=self.device)
+            epoch_eta = torch.zeros((), device=self.device)
             attn_running = torch.zeros((), device=self.device)
             mask_running = torch.zeros((), device=self.device)
 
@@ -268,12 +300,14 @@ class HyperNetSpartan(nn.Module):
                 gen_loss = (ladj - prior).mean()
                 out = out.view(self.num_modes, -1, self.out_dim)  # (e, b, c) logits
                 y_evals = y.unsqueeze(0).expand(self.num_modes, -1, -1)  # (e, b, 1)
-                pointwise_losses = self.criterion.loss(out, y_evals, reduction="none")  # (e, b)
-                loss_per_model = pointwise_losses.mean(dim=1)
-                rec_loss = loss_per_model.mean()
+                rec_loss = self.rec_loss(out, y_evals)
                 epoch_gen += gen_loss.detach()
 
                 loss = rec_loss + self.beta * gen_loss + self.div_coeff * div
+                if self.eta_div_coef:
+                    eta_loss, eta_raw = self.eta_div(self.hyper_net.eta, self.num_modes)
+                    epoch_eta += eta_raw
+                    loss = loss + self.eta_div_coef * eta_loss
                 if self.include_sparsity:
                     sparse_coef = self.sparse_annealer.coef(self.global_step)
                     sparse_loss = self._enforce_sparsity(masks)
@@ -304,6 +338,7 @@ class HyperNetSpartan(nn.Module):
             epoch_sparse = (epoch_sparse / len(dataloader)).item()
             epoch_gen = (epoch_gen / len(dataloader)).item()
             epoch_div = (epoch_div / len(dataloader)).item()
+            epoch_eta = (epoch_eta / len(dataloader)).item()
             attn_running = (attn_running / len(dataloader)).item()
             mask_running = (mask_running / len(dataloader)).item()
 
@@ -323,6 +358,10 @@ class HyperNetSpartan(nn.Module):
             self.logger.log_metrics({"train/loss_epoch": epoch_loss}, step=step)
             self.logger.log_metrics({"train/acc_epoch": epoch_acc}, step=step)
 
+            if self.eta_div_coef:
+                self.logger.log_metrics({"train/eta_overlap": epoch_eta}, step=step)
+                postfix["eta"] = epoch_eta
+
             if self.include_sparsity:
                 self.logger.log_metrics({"train/sparse_loss": epoch_sparse}, step=step)
                 self.logger.log_metrics({"train/sparse_coef": sparse_coef}, step=step)
@@ -337,9 +376,11 @@ class HyperNetSpartan(nn.Module):
                 {f"train/mask_edges_train": mask_running}, step=self.global_step
             )
 
+            mode_accs = {}
             if not self.use_optimal_test and step % self.val_freq == 0:
                 for loader, name in zip(testloaders, self.val_to_name.values()):
                     test_metrics = self.test(name, loader, folder="val")
+                    mode_accs[name] = test_metrics["mode_accs"]
                     if "id" in name:
                         postfix["val_id"] = test_metrics["acc"]
                     elif "a" in name:
@@ -356,12 +397,21 @@ class HyperNetSpartan(nn.Module):
             if self.use_optimal_test and step % self.val_freq == 0:
                 for loader, name in zip(testloaders, self.val_to_name.values()):
                     test_metrics = self.optimal_test(name, loader, folder="val")
+                    mode_accs[name] = test_metrics["mode_accs"]
                     if "id" in name:
                         postfix["ens_id"] = test_metrics["acc"]
                     elif "a" in name:
                         postfix["ens_a"] = test_metrics["acc"]
                     elif "b" in name:
                         postfix["ens_b"] = test_metrics["acc"]
+
+            if "a" in mode_accs and "b" in mode_accs:
+                postfix["A"] = "/".join(f"{acc:.2f}" for acc in mode_accs["a"])
+                postfix["B"] = "/".join(f"{acc:.2f}" for acc in mode_accs["b"])
+                split = self.mode_split(mode_accs["a"], mode_accs["b"])
+                self.split_history.append((step, split))
+                self.logger.log_metrics({"val/split": split}, step=self.global_step)
+                postfix["split"] = split
 
             pbar.set_postfix(postfix)
 
@@ -378,8 +428,28 @@ class HyperNetSpartan(nn.Module):
             masks_test,
         )
 
+    def _mode_accs(self, outs: Tensor, y: Tensor):
+        # accuracy of each sampled weight set: outs (e, b, c) class probabilities -> (e,)
+        return torch.stack([self.criterion.accuracy_from_probs(out, y) for out in outs])
+
+    @staticmethod
+    def mode_split(acc_a, acc_b):
+        # best mean accuracy when two different weight sets take set a and set b (1.0 = one set
+        # solves a and another solves b); nan with a single weight set
+        acc_a, acc_b = torch.as_tensor(acc_a, dtype=torch.float), torch.as_tensor(acc_b, dtype=torch.float)
+        if acc_a.numel() < 2:
+            return float("nan")
+        pair = (acc_a[:, None] + acc_b[None, :]) / 2
+        pair.fill_diagonal_(-float("inf"))
+        return pair.max().item()
+
+    def _log_mode_accs(self, folder: str, name: str, mode_acc: Tensor):
+        for k, acc in enumerate(mode_acc.tolist()):
+            self.logger.log_metrics({f"{folder}/acc_{name}_mode{k}": acc}, step=self.global_step)
+
     def test(self, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
+        mode_acc = torch.zeros(self.num_modes, device=self.device)
         attn_running = torch.zeros((), device=self.device)
         mask_running = torch.zeros((), device=self.device)
         epoch_acc = torch.zeros((), device=self.device)
@@ -389,13 +459,15 @@ class HyperNetSpartan(nn.Module):
             x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
-            out, masks, attns = self(x, evaluate=True)
+            outs, masks, attns = self(x, evaluate=True, ret_mean=False)
+            out = outs.mean(dim=0)  # ensemble over the weight sets
             loss = self.criterion.loss_from_probs(out, y)
 
             epoch_loss += loss.detach()
             with torch.no_grad():
                 acc = self.criterion.accuracy_from_probs(out, y)
                 epoch_acc += acc
+                mode_acc = mode_acc + self._mode_accs(outs, y)
                 attn_running += compute_mask_mean(attns)
                 mask_running += compute_mask_mean(masks)
 
@@ -408,6 +480,8 @@ class HyperNetSpartan(nn.Module):
         self.logger.log_metrics({f"{folder}/acc_epoch_{name}": epoch_acc}, step=self.global_step)
         self.logger.log_metrics({f"{folder}/attn_edges_{name}": attn_running}, step=self.global_step)
         self.logger.log_metrics({f"{folder}/mask_edges_{name}": mask_running}, step=self.global_step)
+        mode_acc = mode_acc / len(dataloader)
+        self._log_mode_accs(folder, name, mode_acc)
 
         self.train()
 
@@ -416,6 +490,7 @@ class HyperNetSpartan(nn.Module):
             "acc": epoch_acc,
             "attn": attn_running,
             "mask": mask_running,
+            "mode_accs": mode_acc.tolist(),
         }
 
     @torch.inference_mode()
@@ -458,6 +533,7 @@ class HyperNetSpartan(nn.Module):
     @torch.inference_mode()
     def optimal_test(self, name: str, dataloader: DataLoader, folder: str = 'test'):
         self.eval()
+        mode_acc = torch.zeros(self.num_modes, device=self.device)
         attn_running = torch.zeros((), device=self.device)
         mask_running = torch.zeros((), device=self.device)
         epoch_acc = torch.zeros((), device=self.device)
@@ -469,7 +545,9 @@ class HyperNetSpartan(nn.Module):
             y = y.to(self.device)
             outs, masks, attns = self(x, evaluate=True, ret_mean=False)
             loss = torch.stack([self.criterion.loss_from_probs(out, y) for out in outs]).min()
-            acc = torch.stack([self.criterion.accuracy_from_probs(out, y) for out in outs]).max()
+            batch_mode_acc = self._mode_accs(outs, y)
+            acc = batch_mode_acc.max()
+            mode_acc += batch_mode_acc
 
             attn_running += compute_mask_mean(attns)
             mask_running += compute_mask_mean(masks)
@@ -486,6 +564,8 @@ class HyperNetSpartan(nn.Module):
         self.logger.log_metrics({f"{folder}/acc_ens_{name}": epoch_acc}, step=self.global_step)
         self.logger.log_metrics({f"{folder}/attn_ens_{name}": attn_running}, step=self.global_step)
         self.logger.log_metrics({f"{folder}/mask_ens_{name}": mask_running}, step=self.global_step)
+        mode_acc = mode_acc / len(dataloader)
+        self._log_mode_accs(folder, name, mode_acc)
 
         self.train()
 
@@ -494,4 +574,5 @@ class HyperNetSpartan(nn.Module):
             "acc": epoch_acc,
             "attn": attn_running,
             "mask": mask_running,
+            "mode_accs": mode_acc.tolist(),
         }

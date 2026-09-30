@@ -48,6 +48,7 @@ class FlowVAE(nn.Module):
         use_mask: bool = False,
         act: nn.Module = nn.ReLU,
         num_modes: int = 1,
+        mode_onehot: bool = False,
         **kwargs,  
     ):
         device = get_device(device)
@@ -73,8 +74,12 @@ class FlowVAE(nn.Module):
             act=act,
         )
 
-        self.normalizing_flow = zuko.flows.NSF(
+        # mode_onehot conditions the flow on a one-hot of the mode each weight set belongs to,
+        # so modes drawn from the same base prior can still map to different weights
+        self.mode_onehot = mode_onehot
+        self.normalizing_flow = zuko.flows.MAF(
             features=output_dim,
+            context=num_modes if mode_onehot else 0,
             transforms=flow_params["n_flows"],
             hidden_features=flow_params["hidden_features"],
         )
@@ -100,6 +105,10 @@ class FlowVAE(nn.Module):
                 "a per-mode prior is only used on the unconditional path; "
                 "use_encoder=True would ignore it entirely"
             )
+
+    def _mode_context(self, samples_per_mode: int, device: torch.device):
+        eye = torch.eye(self.num_modes, device=device)
+        return eye.repeat_interleave(samples_per_mode, dim=0)
 
     def forward(self, x: Tensor = None):
         ladj = 0
@@ -154,7 +163,8 @@ class FlowVAE(nn.Module):
                     dtype=rep.dtype,
                 )
        
-        dist = self.normalizing_flow()
+        context = self._mode_context(rep.size(0) // self.num_modes, rep.device) if self.mode_onehot else None
+        dist = self.normalizing_flow(context)
         transform = dist.transform
         if self.training:
             output, ladj = transform.call_and_ladj(rep)

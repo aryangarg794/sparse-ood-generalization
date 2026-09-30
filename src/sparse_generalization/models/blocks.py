@@ -185,6 +185,7 @@ class MHABlockGen(nn.Module):
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (256, 256)},
         prior_type: str = "laplace",
+        uniform_bound: float = 1.0,
         per_mask_prior: bool = False,
         device: str | None = None,
         *args,
@@ -210,6 +211,7 @@ class MHABlockGen(nn.Module):
             device=device,
             per_mask_prior=per_mask_prior,
             prior_type=prior_type,
+            uniform_bound=uniform_bound,
         )
 
         self.ln1 = nn.LayerNorm(embed_size)

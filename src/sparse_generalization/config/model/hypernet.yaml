@@ -12,7 +12,7 @@ include_agg_layer: true
 hyper_type: qk  # mask | mha | mhao | qk
 use_proj: true
 bern_mask: false
-layernorm: false
+layernorm: true
 residual: true
 dropout: 0.0
 embedding_inp: false
@@ -45,8 +45,11 @@ prior_type: nf  # uniform | normal | laplace | nf
 prior_params:
   n_flows: 3
   hidden_features: [32, 32]
+uniform_bound: 1.0
 beta: 1e-2
 num_modes: 1
+mode_onehot: false  # feed the weight flow a one-hot of each weight set's mode (one set per mode, all from the same base prior)
+mode_reduction: sum
 use_optimal_test: true
 include_sparsity: false
 sparse_anneal: false

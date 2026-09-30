@@ -63,6 +63,7 @@ class FlowSpartan(nn.Module):
         flow_params: dict = {"n_flows": 2, "hidden_features": (128, 128)},
         prior_params: dict = {"n_flows": 3, "hidden_features": (128, 128)},
         prior_type: str = "laplace",
+        uniform_bound: float = 1.0,
         per_mask_prior: bool = False,
         embedding_inp: bool = True,
         beta: float = 1.0,
@@ -168,6 +169,7 @@ class FlowSpartan(nn.Module):
                     prior_params=prior_params,
                     flow_params=flow_params,
                     prior_type=prior_type,
+                    uniform_bound=uniform_bound,
                     residual=residual,
                     layernorm=layernorm,
                     device=device,
@@ -214,6 +216,7 @@ class FlowSpartan(nn.Module):
                 prior_params=prior_params,
                 flow_params=flow_params,
                 prior_type=prior_type,
+                uniform_bound=uniform_bound,
                 residual=residual,
                 layernorm=layernorm,
                 device=device,
@@ -298,7 +301,7 @@ class FlowSpartan(nn.Module):
         for layer in self.layers:
             if self.training:
                 x_attn, mask, attn, prior, ladj = layer(x_attn)
-                if self.per_mask_prior:
+                if self.per_mask_prior or self.prior_type == "uniform":
                     priors += prior
                 ladjs += ladj
             else:
@@ -313,7 +316,7 @@ class FlowSpartan(nn.Module):
         if self.agg_pool:
             if self.training:
                 out, final_mask, agg_attn, prior, ladj = self.out(x_attn)
-                if self.per_mask_prior:
+                if self.per_mask_prior or self.prior_type == "uniform":
                     priors += prior
                 ladjs += ladj
             else:
@@ -331,8 +334,6 @@ class FlowSpartan(nn.Module):
             priors = self.prior().log_prob(masks.sum(dim=(1, 2))) / self.max_paths
         if not self.per_mask_prior and self.training and self.prior_type == "a_laplace":
             priors = -self._enforce_sparsity(masks)
-        elif not self.per_mask_prior and self.training and self.prior_type == "uniform":
-            priors = torch.tensor([1.0], device=self.device).expand_as(ladjs)
 
         if self.training:
             gen_loss = (ladjs - priors).mean()
