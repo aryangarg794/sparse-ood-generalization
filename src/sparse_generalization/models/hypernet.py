@@ -20,7 +20,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_max_paths,
     build_lr_scheduler,
     clip_gradients,
-    SparsityAnnealer,
+    enforce_sparsity,
 )
 from sparse_generalization.losses.criterion import Criterion
 from sparse_generalization.losses.eta_diversity import EtaDiversity
@@ -73,11 +73,8 @@ class HyperNetSpartan(nn.Module):
         use_optimal_test: bool = False,
         beta1: float = 0.9,
         beta2: float = 0.999,
-        sparse_anneal: bool = False,
-        sparse_start_coef: float = 1.0,
-        sparse_end_coef: float = 1.0,
-        sparse_start_decay: float = 0.0,
-        sparse_end_decay: float = 1.0,
+        alpha_min: float | None = None,
+        sparse_coef: float = 1.0,
         threshold: float = 0.01,
         use_proj: bool = True,
         bern_mask: bool = False,
@@ -199,13 +196,8 @@ class HyperNetSpartan(nn.Module):
         self.include_sparsity = include_sparsity
         self.max_paths = None
         self.val_to_name = val_to_name
-        self.sparse_annealer = SparsityAnnealer(
-            sparse_anneal,
-            sparse_start_coef,
-            sparse_end_coef,
-            sparse_start_decay,
-            sparse_end_decay,
-        )
+        self.alpha_min = alpha_min
+        self.sparse_coef = sparse_coef
         self.beta = beta
 
     def rec_loss(self, out: Tensor, y_evals: Tensor):
@@ -213,8 +205,9 @@ class HyperNetSpartan(nn.Module):
         return loss_per_model.sum() if self.mode_reduction == "sum" else loss_per_model.mean()
 
     def _enforce_sparsity(self, attns):
-        num_edges = attns.sum(dim=(1, 2)) / self.max_paths
-        return (self.alpha - num_edges).pow(2).mean()
+        return enforce_sparsity(
+            attns, self.max_paths, self.alpha, self.alpha_min
+        )
 
     def forward(self, x: Tensor, evaluate: bool = False, ret_mean: bool = True):
         batch_size, width, height, _ = x.size()
@@ -282,7 +275,6 @@ class HyperNetSpartan(nn.Module):
         self.scheduler = build_lr_scheduler(
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
         )
-        self.sparse_annealer.total_steps = num_epochs * len(dataloader)
 
         for step in (pbar := progress_bar(range(1, num_epochs + 1))):
             self.train()
@@ -290,7 +282,6 @@ class HyperNetSpartan(nn.Module):
             epoch_div = torch.zeros((), device=self.device)
             epoch_acc = torch.zeros((), device=self.device)
             epoch_sparse = torch.zeros((), device=self.device)
-            sparse_coef = 1.0
             epoch_gen = torch.zeros((), device=self.device)
             epoch_eta = torch.zeros((), device=self.device)
             attn_running = torch.zeros((), device=self.device)
@@ -313,10 +304,9 @@ class HyperNetSpartan(nn.Module):
                     epoch_eta += eta_raw
                     loss = loss + self.eta_div_coef * eta_loss
                 if self.include_sparsity:
-                    sparse_coef = self.sparse_annealer.coef(self.global_step)
                     sparse_loss = self._enforce_sparsity(masks)
                     epoch_sparse += sparse_loss.detach()
-                    loss = loss + sparse_coef * sparse_loss
+                    loss = loss + self.sparse_coef * sparse_loss
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -362,7 +352,6 @@ class HyperNetSpartan(nn.Module):
 
             if self.include_sparsity:
                 self.logger.log_metrics({"train/sparse_loss": epoch_sparse}, step=step)
-                self.logger.log_metrics({"train/sparse_coef": sparse_coef}, step=step)
 
             self.logger.log_metrics(
                 {f"train/attn_edges_train": attn_running}, step=self.global_step
@@ -409,7 +398,6 @@ class HyperNetSpartan(nn.Module):
                 postfix["gen"] = f"{epoch_gen:.2f}"
             if self.include_sparsity:
                 postfix["sp"] = f"{epoch_sparse:.3f}"
-                postfix["sp_c"] = f"{sparse_coef:.2f}"
             if self.use_mask:
                 postfix["mask"] = f"{mask_running:.2f}"
             if split is not None:
