@@ -84,8 +84,8 @@ class HyperNetSpartan(nn.Module):
         eta_div_type: str = "neg_l1",  
         eta_div_target: float | None = None,  
         eta_div_floor: str | None = "squared",  
-        qkscale: float | None = None,  # Wq / Wk rows of the generator's last layer x qkscale at init (LatentHyperNet)
-        eval_chunk: int = 16,  # weight sets per forward pass when evaluating many draws (LatentHyperNet eval_draws)
+        qkscale: float | None = None,
+        eval_chunk: int = 16,
         *args,
         **kwargs
     ):
@@ -281,7 +281,7 @@ class HyperNetSpartan(nn.Module):
         self.scheduler = build_lr_scheduler(
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
         )
-        if hasattr(self.hyper_net.param_flow, "num_batches"):   # LatentHyperNet's Bayes-by-backprop KL weights
+        if hasattr(self.hyper_net.param_flow, "num_batches"):
             self.hyper_net.param_flow.num_batches = len(dataloader)
 
         for step in (pbar := progress_bar(range(1, num_epochs + 1))):
@@ -400,9 +400,13 @@ class HyperNetSpartan(nn.Module):
             if "a" in mode_accs and "b" in mode_accs and len(mode_accs["a"]) <= 4:
                 postfix["A"] = fmt(mode_accs["a"])
                 postfix["B"] = fmt(mode_accs["b"])
-            elif "a" in mode_accs and "b" in mode_accs:  # many draws: share of draws on A / B and both rules solved
-                m = self.mode_stats(mode_accs["a"], mode_accs["b"])
-                postfix["modes"] = f"{m['share_a'] * 100:.0f}/{m['share_b'] * 100:.0f}{'*' if m['two_modes'] else ''}"
+            elif "a" in mode_accs and "b" in mode_accs:
+                acc_a = torch.as_tensor(mode_accs["a"], dtype=torch.float)
+                acc_b = torch.as_tensor(mode_accs["b"], dtype=torch.float)
+                best, on_a = torch.maximum(acc_a, acc_b), acc_a >= acc_b
+                side = lambda on: f"{best[on].mean().item():.2f}".lstrip("0") if on.any() else "-"
+                pct = "/".join(f"{round(100 * on.float().mean().item())}" for on in (on_a, ~on_a))
+                postfix["modes"] = f"{pct} {side(on_a)}/{side(~on_a)}"
             if self.eta_div_coef:
                 postfix["eta"] = f"{epoch_eta:.2f}"
             if self.div_coeff:
@@ -433,8 +437,6 @@ class HyperNetSpartan(nn.Module):
 
     @staticmethod
     def mode_stats(acc_a, acc_b, solved: float = 0.95):
-        """The notebook's mode report for one set of draws: each draw is on rule A or B by its better accuracy; a rule is
-        solved if its best draw reaches `solved`; two_modes = both rules solved (1.0 / 0.0). Shares of draws per rule."""
         acc_a, acc_b = torch.as_tensor(acc_a, dtype=torch.float), torch.as_tensor(acc_b, dtype=torch.float)
         on_a = acc_a >= acc_b
         best_a = acc_a[on_a].max().item() if on_a.any() else 0.0
@@ -443,8 +445,6 @@ class HyperNetSpartan(nn.Module):
                 "two_modes": float(best_a >= solved and best_b >= solved)}
 
     def _eval_outs(self, x: Tensor):
-        """(outs, masks, attns) of every evaluation weight set, (e, b, ...); generators with fixed eval_draws
-        (LatentHyperNet) are run eval_chunk draws at a time to bound memory."""
         gen = self.hyper_net.param_flow
         n = getattr(gen, "eval_draws", None)
         if not n:
@@ -474,7 +474,7 @@ class HyperNetSpartan(nn.Module):
         return pair.max().item()
 
     def _log_mode_accs(self, folder: str, name: str, mode_acc: Tensor):
-        if len(mode_acc) > 8:   # many draws (LatentHyperNet): the mean and the best draw only
+        if len(mode_acc) > 8:
             self.logger.log_metrics({f"{folder}/acc_{name}_draw_mean": mode_acc.mean().item(),
                                      f"{folder}/acc_{name}_draw_max": mode_acc.max().item()}, step=self.global_step)
             return

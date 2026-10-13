@@ -153,8 +153,6 @@ class HyperNet(nn.Module):
         )
 
         self.num_modes = num_modes  # weight sets sampled per forward pass, in training and at eval
-        # weight sets in the current forward pass: num_modes, except for generators with variable_draws (the unit
-        # latent model draws num_modes sets in training and its fixed evaluation draws at eval)
         self.num_draws = num_modes
 
         self.ln1s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(self.total_num_layers)])
@@ -196,10 +194,6 @@ class HyperNet(nn.Module):
 
     @torch.no_grad()
     def scale_qk_init(self, factor: float):
-        """Multiply the generator's last-layer rows (weights and bias) that output Wq and Wk, in every attention layer
-        incl. the aggregation layer, by factor, once at init: every attention score starts factor^2 larger (4.04 ->
-        x16.3, sharp attention at init; the qk init of the notebook's latent section). Needs a generator with a
-        last_layer (LatentHyperNet)."""
         mats = {"mha": 3, "mhao": 4, "qk": 2}.get(self.hyper_type)
         if mats is None:
             raise ValueError("qkscale needs generated Wq / Wk: hyper_type 'mha', 'mhao' or 'qk'")
@@ -208,7 +202,7 @@ class HyperNet(nn.Module):
             raise ValueError("qkscale needs a weight generator with a last_layer (e.g. LatentHyperNet)")
         d2 = self.embed_size ** 2
         for layer in range(self.total_num_layers):
-            for m in (0, 1):                                      # Wq, Wk: the first two matrices of every layer
+            for m in (0, 1):
                 rows = slice((layer * mats + m) * d2, (layer * mats + m + 1) * d2)
                 last.weight[rows] *= factor
                 last.bias[rows] *= factor
