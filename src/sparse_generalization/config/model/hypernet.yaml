@@ -52,11 +52,8 @@ mode_onehot: false  # feed the weight flow a one-hot of each weight set's mode (
 mode_reduction: sum
 use_optimal_test: true
 include_sparsity: false
-sparse_anneal: false
-sparse_start_coef: 1.0
-sparse_end_coef: 1.0
-sparse_start_decay: 0.0
-sparse_end_decay: 1.0
+alpha_min: null  # lower density bound; null -> target exactly alpha, 0 -> upper cap only
+sparse_coef: 1.0  # weight on the density loss
 alpha: 0.1
 div_coeff: 0.0
 

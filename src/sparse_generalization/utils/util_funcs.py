@@ -84,40 +84,22 @@ def clip_gradients(parameters, max_norm: float | None = None):
     return torch.nn.utils.clip_grad_norm_(parameters, max_norm)
 
 
-class SparsityAnnealer:
-    def __init__(
-        self,
-        enabled: bool = False,
-        start_coef: float = 1.0,
-        end_coef: float = 1.0,
-        start_decay: float = 0.0,
-        end_decay: float = 1.0,
-        total_steps: int | None = None,
-    ):
-        if not 0.0 <= start_decay <= end_decay <= 1.0:
-            raise ValueError(
-                f"need 0 <= start_decay <= end_decay <= 1, got start_decay={start_decay}, end_decay={end_decay}"
-            )
-        self.enabled = enabled
-        self.start_coef = start_coef
-        self.end_coef = end_coef
-        self.start_decay = start_decay
-        self.end_decay = end_decay
-        self.total_steps = total_steps
+def enforce_sparsity(
+    paths: Tensor,
+    max_paths: float,
+    alpha: float,
+    alpha_min: float | None = None,
+) -> Tensor:
+    """Squared penalty on path density outside [alpha_min, alpha].
 
-    def coef(self, step: int) -> float:
-        if not self.enabled:
-            return 1.0
-        if self.total_steps is None:
-            raise ValueError("total_steps must be set before calling coef")
-        decay_start = self.start_decay * self.total_steps
-        decay_end = self.end_decay * self.total_steps
-        if step <= decay_start:
-            return self.start_coef
-        if step >= decay_end:
-            return self.end_coef
-        progress = (step - decay_start) / max(1.0, decay_end - decay_start)
-        return self.start_coef + progress * (self.end_coef - self.start_coef)
+    relu(d - alpha)^2 + relu(lo - d)^2 with lo = alpha when alpha_min is None
+    (equivalent to the old (alpha - d)^2); alpha_min=0 gives an upper cap only.
+    """
+    if alpha_min is not None and alpha_min > alpha:
+        raise ValueError(f"alpha_min ({alpha_min}) must be <= alpha ({alpha})")
+    density = paths.sum(dim=(-1, -2)) / max_paths
+    lo = alpha if alpha_min is None else alpha_min
+    return (torch.relu(density - alpha).pow(2) + torch.relu(lo - density).pow(2)).mean()
 
 
 def reparametrize(mu: Tensor, sig: Tensor):

@@ -10,17 +10,14 @@ embedding_inp: true
 num_heads: 1
 num_layers: 1
 include_sparsity: true
-sparse_anneal: false
-sparse_start_coef: 1.0
-sparse_end_coef: 1.0
-sparse_start_decay: 0.0
-sparse_end_decay: 1.0
+alpha: 0.1
+alpha_min: 0.05
+sparse_coef: 100.0  
 lr: 5e-4
 lr_decay: linear  # none | linear
 lr_warmup: false
 grad_clip: 1.0  # max grad norm | null 
 token_pool: false
-alpha: 0.1
 compute_mask: false
 residual: true
 mask_res: false
@@ -36,6 +33,6 @@ dropout: 0.0
 layernorm: true
 alpha_res: false
 separate_mask: false
-beta1: 0.99
+beta1: 0.95
 beta2: 0.999
 mask_bias: 0.5

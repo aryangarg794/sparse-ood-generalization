@@ -21,7 +21,7 @@ from sparse_generalization.utils.util_funcs import (
     compute_max_paths,
     build_lr_scheduler,
     clip_gradients,
-    SparsityAnnealer,
+    enforce_sparsity,
 )
 from sparse_generalization.losses.criterion import Criterion
 
@@ -243,11 +243,8 @@ class Ensemble(nn.Module):
         num_embeddings: int = 64,
         device: str | None = None,
         beta1: float = 0.9,
-        sparse_anneal: bool = False,
-        sparse_start_coef: float = 1.0,
-        sparse_end_coef: float = 1.0,
-        sparse_start_decay: float = 0.0,
-        sparse_end_decay: float = 1.0,
+        alpha_min: float | None = None,
+        sparse_coef: float = 1.0,
         beta2: float = 0.999,
         *args, 
         **kwargs
@@ -265,13 +262,8 @@ class Ensemble(nn.Module):
         self.include_sparsity = include_sparsity
         assert not include_sparsity or spartan, "Ensemble sparsity only for spartan"
         self.alpha = alpha
-        self.sparse_annealer = SparsityAnnealer(
-            sparse_anneal,
-            sparse_start_coef,
-            sparse_end_coef,
-            sparse_start_decay,
-            sparse_end_decay,
-        )
+        self.alpha_min = alpha_min
+        self.sparse_coef = sparse_coef
         self.device = device
         self.logger = logger
         self.criterion = Criterion(loss_type)
@@ -323,8 +315,9 @@ class Ensemble(nn.Module):
         self.num_b = 0
 
     def _enforce_sparsity(self, attns):
-        num_edges = attns.sum(dim=(1, 2)) / self.max_paths
-        return (self.alpha - num_edges).pow(2).mean()
+        return enforce_sparsity(
+            attns, self.max_paths, self.alpha, self.alpha_min
+        )
 
     def forward(self, x: Tensor):
         _, width, height, _ = x.size()
@@ -370,14 +363,12 @@ class Ensemble(nn.Module):
         self.scheduler = build_lr_scheduler(
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
         )
-        self.sparse_annealer.total_steps = num_epochs * len(dataloader)
 
         for step in (pbar := progress_bar(range(1, num_epochs + 1))):
             self.train()
             epoch_loss = torch.zeros((), device=self.device)
             epoch_acc = torch.zeros((), device=self.device)
             epoch_sparse = torch.zeros((), device=self.device)
-            sparse_coef = 1.0
             attn_running = torch.zeros((), device=self.device)
             mask_running = torch.zeros((), device=self.device)
 
@@ -395,9 +386,8 @@ class Ensemble(nn.Module):
                     rec_loss = rec_loss.mean(dim=0).sum()
 
                 if self.include_sparsity:
-                    sparse_coef = self.sparse_annealer.coef(self.global_step)
                     sparse_loss = self._enforce_sparsity(masks.mean(dim=1) if self.ensemble_loss == "mean" else masks.sum(dim=1))
-                    loss = rec_loss + sparse_coef * sparse_loss
+                    loss = rec_loss + self.sparse_coef * sparse_loss
                     epoch_sparse += sparse_loss.detach()
                 else:
                     loss = rec_loss
@@ -443,9 +433,7 @@ class Ensemble(nn.Module):
 
             if self.include_sparsity:
                 self.logger.log_metrics({"train/sparse_loss": epoch_sparse}, step=step)
-                self.logger.log_metrics({"train/sparse_coef": sparse_coef}, step=step)
                 postfix["sparse_loss"] = epoch_sparse
-                postfix["sparse_coef"] = sparse_coef
 
 
             self.logger.log_metrics(
