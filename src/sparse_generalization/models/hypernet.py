@@ -87,6 +87,8 @@ class HyperNetSpartan(nn.Module):
         eta_div_type: str = "neg_l1",  
         eta_div_target: float | None = None,  
         eta_div_floor: str | None = "squared",  
+        qkscale: float | None = None,  # Wq / Wk rows of the generator's last layer x qkscale at init (LatentHyperNet)
+        eval_chunk: int = 16,  # weight sets per forward pass when evaluating many draws (LatentHyperNet eval_draws)
         *args,
         **kwargs
     ):
@@ -180,6 +182,10 @@ class HyperNetSpartan(nn.Module):
             agg_head=agg_head,
             hyper_bias_init=hyper_bias_init,
         )
+
+        if qkscale:
+            self.hyper_net.scale_qk_init(qkscale)
+        self.eval_chunk = eval_chunk
 
         # eta has total mass 2 ** num_mha_layers under the residual stream (+I per attention layer)
         self.eta_div_coef = eta_div_coef
@@ -283,6 +289,8 @@ class HyperNetSpartan(nn.Module):
             self.optimizer, num_epochs * len(dataloader), self.lr_decay, self.lr_warmup
         )
         self.sparse_annealer.total_steps = num_epochs * len(dataloader)
+        if hasattr(self.hyper_net.param_flow, "num_batches"):   # LatentHyperNet's Bayes-by-backprop KL weights
+            self.hyper_net.param_flow.num_batches = len(dataloader)
 
         for step in (pbar := progress_bar(range(1, num_epochs + 1))):
             self.train()
@@ -392,15 +400,20 @@ class HyperNetSpartan(nn.Module):
                 split = self.mode_split(mode_accs["a"], mode_accs["b"])
                 self.split_history.append((step, split))
                 self.logger.log_metrics({"val/split": split}, step=self.global_step)
+                modes = self.mode_stats(mode_accs["a"], mode_accs["b"])
+                self.logger.log_metrics({f"val/{k}": v for k, v in modes.items()}, step=self.global_step)
 
             # kept short so the bar fits on one terminal line; everything is also in wandb
             fmt = lambda accs: "/".join(f"{acc:.2f}" for acc in accs)
             postfix = {"loss": f"{epoch_loss:.3f}", "acc": f"{epoch_acc:.2f}"}
             if val_accs:
                 postfix["ens" if self.use_optimal_test else "val"] = fmt(val_accs.values())
-            if "a" in mode_accs and "b" in mode_accs:
+            if "a" in mode_accs and "b" in mode_accs and len(mode_accs["a"]) <= 4:
                 postfix["A"] = fmt(mode_accs["a"])
                 postfix["B"] = fmt(mode_accs["b"])
+            elif "a" in mode_accs and "b" in mode_accs:  # many draws: share of draws on A / B and both rules solved
+                m = self.mode_stats(mode_accs["a"], mode_accs["b"])
+                postfix["modes"] = f"{m['share_a'] * 100:.0f}/{m['share_b'] * 100:.0f}{'*' if m['two_modes'] else ''}"
             if self.eta_div_coef:
                 postfix["eta"] = f"{epoch_eta:.2f}"
             if self.div_coeff:
@@ -430,6 +443,33 @@ class HyperNetSpartan(nn.Module):
             masks_test,
         )
 
+    @staticmethod
+    def mode_stats(acc_a, acc_b, solved: float = 0.95):
+        """The notebook's mode report for one set of draws: each draw is on rule A or B by its better accuracy; a rule is
+        solved if its best draw reaches `solved`; two_modes = both rules solved (1.0 / 0.0). Shares of draws per rule."""
+        acc_a, acc_b = torch.as_tensor(acc_a, dtype=torch.float), torch.as_tensor(acc_b, dtype=torch.float)
+        on_a = acc_a >= acc_b
+        best_a = acc_a[on_a].max().item() if on_a.any() else 0.0
+        best_b = acc_b[~on_a].max().item() if (~on_a).any() else 0.0
+        return {"share_a": on_a.float().mean().item(), "share_b": 1 - on_a.float().mean().item(),
+                "two_modes": float(best_a >= solved and best_b >= solved)}
+
+    def _eval_outs(self, x: Tensor):
+        """(outs, masks, attns) of every evaluation weight set, (e, b, ...); generators with fixed eval_draws
+        (LatentHyperNet) are run eval_chunk draws at a time to bound memory."""
+        gen = self.hyper_net.param_flow
+        n = getattr(gen, "eval_draws", None)
+        if not n:
+            return self(x, evaluate=True, ret_mean=False)
+        parts = []
+        try:
+            for start in range(0, n, self.eval_chunk):
+                gen.draw_slice = slice(start, min(start + self.eval_chunk, n))
+                parts.append(self(x, evaluate=True, ret_mean=False))
+        finally:
+            gen.draw_slice = None
+        return tuple(torch.cat(t, dim=0) for t in zip(*parts))
+
     def _mode_accs(self, outs: Tensor, y: Tensor):
         # accuracy of each sampled weight set: outs (e, b, c) class probabilities -> (e,)
         return torch.stack([self.criterion.accuracy_from_probs(out, y) for out in outs])
@@ -446,12 +486,16 @@ class HyperNetSpartan(nn.Module):
         return pair.max().item()
 
     def _log_mode_accs(self, folder: str, name: str, mode_acc: Tensor):
+        if len(mode_acc) > 8:   # many draws (LatentHyperNet): the mean and the best draw only
+            self.logger.log_metrics({f"{folder}/acc_{name}_draw_mean": mode_acc.mean().item(),
+                                     f"{folder}/acc_{name}_draw_max": mode_acc.max().item()}, step=self.global_step)
+            return
         for k, acc in enumerate(mode_acc.tolist()):
             self.logger.log_metrics({f"{folder}/acc_{name}_mode{k}": acc}, step=self.global_step)
 
     def test(self, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
-        mode_acc = torch.zeros(self.num_modes, device=self.device)
+        mode_acc = 0.0
         attn_running = torch.zeros((), device=self.device)
         mask_running = torch.zeros((), device=self.device)
         epoch_acc = torch.zeros((), device=self.device)
@@ -461,7 +505,7 @@ class HyperNetSpartan(nn.Module):
             x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
-            outs, masks, attns = self(x, evaluate=True, ret_mean=False)
+            outs, masks, attns = self._eval_outs(x)
             out = outs.mean(dim=0)  # ensemble over the weight sets
             loss = self.criterion.loss_from_probs(out, y)
 
@@ -505,7 +549,7 @@ class HyperNetSpartan(nn.Module):
         for batch_idx, (x, y) in enumerate(anti_dataset):
             x = x.to(self.device)
             y = y.to(self.device)
-            probs, masks, attns = self(x, evaluate=True, ret_mean=False)  # (e, b, c)
+            probs, masks, attns = self._eval_outs(x)  # (e, b, c)
             labels.append(probs)
             true_labels.append(y)
 
@@ -518,7 +562,7 @@ class HyperNetSpartan(nn.Module):
         for half, sl in (("a", slice(None, midpoint)), ("b", slice(midpoint, None))):
             mode_acc = [acc(out[sl], trues[sl]).item() for out in preds]
             mode_conf = [self.criterion.confidence(out[sl]).item() for out in preds]
-            best = max(range(self.num_modes), key=lambda k: (mode_acc[k], mode_conf[k]))
+            best = max(range(len(mode_acc)), key=lambda k: (mode_acc[k], mode_conf[k]))
             results[f"acc_{half}"] = mode_acc[best]
             results[f"conf_{half}"] = mode_conf[best]
             results[f"mode_{half}"] = best
@@ -535,7 +579,7 @@ class HyperNetSpartan(nn.Module):
     @torch.inference_mode()
     def optimal_test(self, name: str, dataloader: DataLoader, folder: str = 'test'):
         self.eval()
-        mode_acc = torch.zeros(self.num_modes, device=self.device)
+        mode_acc = 0.0
         attn_running = torch.zeros((), device=self.device)
         mask_running = torch.zeros((), device=self.device)
         epoch_acc = torch.zeros((), device=self.device)
@@ -545,7 +589,7 @@ class HyperNetSpartan(nn.Module):
             x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
-            outs, masks, attns = self(x, evaluate=True, ret_mean=False)
+            outs, masks, attns = self._eval_outs(x)
             loss = torch.stack([self.criterion.loss_from_probs(out, y) for out in outs]).min()
             batch_mode_acc = self._mode_accs(outs, y)
             acc = batch_mode_acc.max()

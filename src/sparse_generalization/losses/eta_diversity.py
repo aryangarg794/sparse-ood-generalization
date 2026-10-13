@@ -18,13 +18,19 @@ def overlap_abs(m1: Tensor, m2: Tensor, mass: float) -> Tensor:
 def overlap_product(m1: Tensor, m2: Tensor, mass: float) -> Tensor:
     return (m1 * m2).sum(-1)
 
+def overlap_cos2(m1: Tensor, m2: Tensor, mass: float, eps: float = 1e-8) -> Tensor:
+    # the notebook's div_cos2: squared |cosine similarity| of the two eta vectors (scale-free, so mass is unused)
+    return torch.nn.functional.cosine_similarity(m1, m2, dim=-1, eps=eps).abs().pow(2)
+
+
 def overlap_jsd(m1: Tensor, m2: Tensor, mass: float, eps: float = 1e-8) -> Tensor:
     p, q = m1 / mass + eps, m2 / mass + eps
     return 1 - jensen_shannon_divergence(p, q, reduction="none") / math.log(2)
 
 
 class EtaDiversity(nn.Module):
-    OVERLAPS = {"neg_l1": overlap_neg_l1, "abs": overlap_abs, "product": overlap_product, "jsd": overlap_jsd}
+    OVERLAPS = {"neg_l1": overlap_neg_l1, "abs": overlap_abs, "product": overlap_product, "jsd": overlap_jsd,
+                "cos2": overlap_cos2}
     FLOORS = ("squared", "hard", "abs", None)
 
     def __init__(self, kind: str = "neg_l1", target: float | None = None, floor: str | None = "squared", mass: float = 1.0):

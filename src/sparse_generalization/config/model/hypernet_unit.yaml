@@ -1,0 +1,73 @@
+# The unit latent model of the notebook's latent section (basic_multimodality.ipynb): z ~ N(0, I) -> MLP -> the
+# attention weights (Wq, Wk, Wv of every attention layer + the aggregation layer), one fresh z per weight set, cos2
+# diversity on eta between all pairs of weight sets, sharp attention at init (qkscale 4.04). Defaults = the setup
+# that separated 12/12 in results/sweeps/x5_followup (E3 qk). Same architecture as hypernet_eta.yaml.
+# The notebook ran 3x3 grids, 10k training examples, batch 512:
+#   uv run train model=hypernet_unit data.data_func.grid_size=3 \
+#     data.data_func.size=10000 data.batch_size=512 model.seq_len=9 model.num_embeddings=9
+_target_: sparse_generalization.models.hypernet.HyperNetSpartan
+_partial_: true
+
+inp_dim: 25
+out_dim: 1
+loss_type: bce
+seq_len: 25
+num_embeddings: 25
+embedding_inp: true
+pe_type: sin
+model_dim: 32
+num_heads: 1
+num_mha_layers: 1
+include_agg_layer: true
+agg_head: eta
+hyper_type: mha  # generated Wq, Wk, Wv per layer (qkscale scales the Wq / Wk rows)
+use_proj: false
+bern_mask: false
+layernorm: true
+residual: true
+dropout: 0.0
+separate_mask: false
+use_mask: false
+
+weight_gen:
+  _partial_: true
+  _target_: sparse_generalization.layers.latent_hypernet.LatentHyperNet
+  z_dim: 4
+  hidden_features: [128, 256]  # the notebook's 4 * dim, 8 * dim at model_dim 32
+  eval_draws: 128  # fixed Sobol draws for validation / test (the notebook's mode report); null = num_modes random draws
+  latent_flow: false  # z -> MAF -> u -> MLP; KL on the flow output (the notebook's latent_flow)
+  lf_transforms: 3
+  lf_hidden: 32
+  lf_init: random  # random | identity (T = id at init)
+  kl_sched: bbb  # bbb (Bayes-by-backprop per-batch weights) | const; the KL is multiplied by beta
+hyper_bias_init: false
+qkscale: 4.04  # Wq / Wk rows of the generator's last layer x qkscale at init; null = the plain unit model
+eval_chunk: 16  # draws per forward pass when evaluating the eval draws
+
+num_modes: 2  # weight sets (z draws) per training step; diversity on all pairs
+mode_reduction: sum
+prior_type: none
+beta: 1.0  # multiplies the latent flow's KL (no effect without the flow)
+
+eta_div_coef: 1.0
+eta_div_type: cos2
+eta_div_target: 0.15
+eta_div_floor: squared
+
+div_coeff: 0.0
+include_sparsity: false
+alpha: 0.1
+sparse_anneal: false
+sparse_start_coef: 1.0
+sparse_end_coef: 1.0
+sparse_start_decay: 0.0
+sparse_end_decay: 1.0
+use_optimal_test: false
+
+lr: 3e-5
+lr_decay: none
+lr_warmup: false
+grad_clip: 100000.0
+beta1: 0.9
+beta2: 0.999
+val_freq: 10

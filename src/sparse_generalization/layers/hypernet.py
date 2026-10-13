@@ -153,6 +153,9 @@ class HyperNet(nn.Module):
         )
 
         self.num_modes = num_modes  # weight sets sampled per forward pass, in training and at eval
+        # weight sets in the current forward pass: num_modes, except for generators with variable_draws (the unit
+        # latent model draws num_modes sets in training and its fixed evaluation draws at eval)
+        self.num_draws = num_modes
 
         self.ln1s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(self.total_num_layers)])
         self.ln2s = nn.ModuleList([nn.LayerNorm(embed_size) for _ in range(self.total_num_layers)])
@@ -191,6 +194,25 @@ class HyperNet(nn.Module):
         else:
             self.mlps.append(nn.Sequential(nn.Linear(embed_size, out_dim)))
 
+    @torch.no_grad()
+    def scale_qk_init(self, factor: float):
+        """Multiply the generator's last-layer rows (weights and bias) that output Wq and Wk, in every attention layer
+        incl. the aggregation layer, by factor, once at init: every attention score starts factor^2 larger (4.04 ->
+        x16.3, sharp attention at init; the qk init of the notebook's latent section). Needs a generator with a
+        last_layer (LatentHyperNet)."""
+        mats = {"mha": 3, "mhao": 4, "qk": 2}.get(self.hyper_type)
+        if mats is None:
+            raise ValueError("qkscale needs generated Wq / Wk: hyper_type 'mha', 'mhao' or 'qk'")
+        last = getattr(self.param_flow, "last_layer", None)
+        if last is None:
+            raise ValueError("qkscale needs a weight generator with a last_layer (e.g. LatentHyperNet)")
+        d2 = self.embed_size ** 2
+        for layer in range(self.total_num_layers):
+            for m in (0, 1):                                      # Wq, Wk: the first two matrices of every layer
+                rows = slice((layer * mats + m) * d2, (layer * mats + m + 1) * d2)
+                last.weight[rows] *= factor
+                last.bias[rows] *= factor
+
     def _split_heads(self, x: Tensor):
         batch_size, seq_len, _ = x.size()
         return (
@@ -221,7 +243,7 @@ class HyperNet(nn.Module):
         query = self.queries if agg else None
         shape = 1 if agg else self.seq_len
         common = dict(agg=agg, avg_heads=avg_heads)
-        view_w = lambda w: w.view(self.num_modes, self.embed_size, self.embed_size)
+        view_w = lambda w: w.view(self.num_draws, self.embed_size, self.embed_size)
 
         if self.hyper_type == "mask":
             return partial(
@@ -268,6 +290,7 @@ class HyperNet(nn.Module):
         prior = 0
         div = torch.zeros((), device=x.device)
         flow_out, ladj = self.param_flow(x)
+        self.num_draws = flow_out.size(0) if getattr(self.param_flow, "variable_draws", False) else self.num_modes
         if self.prior_type == "uniform":
             bounded = self.bound_transform(flow_out)
             if self.training:
@@ -277,15 +300,15 @@ class HyperNet(nn.Module):
 
         attn_maps = []
         # layers return per-sample (e * b) masks when heads are averaged, per-head (e * b * h) otherwise
-        mask_batch = self.num_modes * batch_size * (1 if avg_heads else self.num_heads)
+        mask_batch = self.num_draws * batch_size * (1 if avg_heads else self.num_heads)
         eye = torch.eye(self.seq_len, device=self.device)
         path_matrix = eye.expand(mask_batch, seq_len, seq_len).clone()
         attn_matrix = path_matrix.clone()
         # eta: soft attention flow from each input position, head-averaged, always per sample (e * b)
-        eta_matrix = eye.expand(self.num_modes * batch_size, seq_len, seq_len).clone()
+        eta_matrix = eye.expand(self.num_draws * batch_size, seq_len, seq_len).clone()
 
         # (b, l, d) -> (e * b, l, d): one copy of the input per sampled weight set
-        x = x.expand(self.num_modes, -1, -1, -1).reshape(-1, seq_len, dim)
+        x = x.expand(self.num_draws, -1, -1, -1).reshape(-1, seq_len, dim)
 
         for i in range(self.total_num_layers):
             agg_layer = i >= self.num_mha_layers
@@ -303,8 +326,8 @@ class HyperNet(nn.Module):
 
         if self.training:
             if self.prior_type == "laplace":
-                num_paths = path_matrix.sum(dim=(-2, -1)).view(self.num_modes, batch_size, -1).sum(dim=-1)
-                if ladj.size(0) == self.num_modes:
+                num_paths = path_matrix.sum(dim=(-2, -1)).view(self.num_draws, batch_size, -1).sum(dim=-1)
+                if ladj.size(0) == self.num_draws:
                     num_paths = num_paths.mean(dim=1)
                 prior = self.prior().log_prob(num_paths.reshape(-1))
             elif self.prior_type == "normal":
@@ -316,7 +339,7 @@ class HyperNet(nn.Module):
         if compute_div:
             match self.div_loss:
                 case CosineRepDiv() | L2DistanceDiv():
-                    div = self.div_loss(out.reshape(self.num_modes, batch_size, out.size(-2), -1))
+                    div = self.div_loss(out.reshape(self.num_draws, batch_size, out.size(-2), -1))
 
         if self.include_agg_layer:
             out = out.squeeze(dim=1)
@@ -331,9 +354,9 @@ class HyperNet(nn.Module):
     def evaluate(self, x: Tensor, ret_mean: bool = True):
         batch_size, seq_len, _ = x.shape
         outs, masks, _, _, attns, _ = self(x)
-        outs = self.criterion.probs(outs).view(self.num_modes, batch_size, -1)  # (e, b, c) class probabilities
-        masks = masks.view(self.num_modes, batch_size, -1, seq_len)
-        attns = attns.view(self.num_modes, batch_size, -1, seq_len)
+        outs = self.criterion.probs(outs).view(self.num_draws, batch_size, -1)  # (e, b, c) class probabilities
+        masks = masks.view(self.num_draws, batch_size, -1, seq_len)
+        attns = attns.view(self.num_draws, batch_size, -1, seq_len)
 
         if ret_mean:
             return outs.mean(dim=0), masks, attns
@@ -341,7 +364,7 @@ class HyperNet(nn.Module):
 
     def matmul(self, x: Tensor, W: Tensor):
         _, seq_len, dim = x.shape
-        return (x.view(self.num_modes, -1, seq_len, dim) @ W.unsqueeze(1)).view(-1, seq_len, dim)
+        return (x.view(self.num_draws, -1, seq_len, dim) @ W.unsqueeze(1)).view(-1, seq_len, dim)
 
     def _run_block(self, x: Tensor, ln1: nn.Module, ln2: nn.Module, mlp: nn.Module, mha_func, agg: bool = False):
         ln1, ln2 = (ln1, ln2) if self.layernorm else (nn.Identity(), nn.Identity())
