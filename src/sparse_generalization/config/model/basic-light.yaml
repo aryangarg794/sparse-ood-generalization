@@ -5,7 +5,7 @@ inp_dim: 25
 out_dim: 2   
 loss_type: ce  # ce | bce
 hidden_dims: [32, 40]
-embedding_inp: false
+embedding_inp: true
 model_dim: 32
 inp_size: 5
 dropout: 0.0

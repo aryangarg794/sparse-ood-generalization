@@ -395,7 +395,8 @@ class HyperNetSpartan(nn.Module):
             # kept short so the bar fits on one terminal line; everything is also in wandb
             fmt = lambda accs: "/".join(f"{acc:.2f}" for acc in accs)
             postfix = {"loss": f"{epoch_loss:.3f}", "acc": f"{epoch_acc:.2f}"}
-            if val_accs:
+            has_modes = "a" in mode_accs and "b" in mode_accs and len(mode_accs["a"]) > 4
+            if val_accs and not has_modes:
                 postfix["ens" if self.use_optimal_test else "val"] = fmt(val_accs.values())
             if "a" in mode_accs and "b" in mode_accs and len(mode_accs["a"]) <= 4:
                 postfix["A"] = fmt(mode_accs["a"])
@@ -411,13 +412,13 @@ class HyperNetSpartan(nn.Module):
                 postfix["eta"] = f"{epoch_eta:.2f}"
             if self.div_coeff:
                 postfix["div"] = f"{epoch_div:.2f}"
-            if self.beta:
+            if self.beta and epoch_gen:
                 postfix["gen"] = f"{epoch_gen:.2f}"
             if self.include_sparsity:
                 postfix["sp"] = f"{epoch_sparse:.3f}"
             if self.use_mask:
                 postfix["mask"] = f"{mask_running:.2f}"
-            if split is not None:
+            if split is not None and not has_modes:
                 postfix["split"] = f"{split:.2f}"
 
             pbar.set_postfix(postfix)

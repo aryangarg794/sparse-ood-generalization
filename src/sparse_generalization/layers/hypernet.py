@@ -167,7 +167,7 @@ class HyperNet(nn.Module):
         # final layer: either an aggregation block or a plain linear head over max-pooled tokens
         if self.include_agg_layer and agg_head == "eta":
             # as in the eta model: attention output -> MLP back to embed_size (no LayerNorm before it)
-            # -> separate classifier with a small orthogonal init on its last layer
+            # -> separate classifier
             self.mlps.append(
                 nn.Sequential(
                     nn.Linear(embed_size, 2 * embed_size),
@@ -176,10 +176,7 @@ class HyperNet(nn.Module):
                     nn.Linear(2 * embed_size, embed_size),
                 )
             )
-            last = nn.Linear(256, out_dim)
-            nn.init.orthogonal_(last.weight, 0.01)
-            nn.init.zeros_(last.bias)
-            self.out_net = nn.Sequential(nn.Linear(embed_size, 256), nn.ReLU(), last)
+            self.out_net = nn.Sequential(nn.Linear(embed_size, 256), nn.ReLU(), nn.Linear(256, out_dim))
         elif self.include_agg_layer:
             self.mlps.append(
                 nn.Sequential(

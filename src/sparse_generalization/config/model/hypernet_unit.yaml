@@ -34,17 +34,17 @@ weight_gen:
   lf_init: random
   kl_sched: bbb
 hyper_bias_init: false
-qkscale: 4.04
+qkscale: 1
 eval_chunk: 16
 
 num_modes: 2
 mode_reduction: sum
 prior_type: none
-beta: 1.0
+beta: 0.0
 
 eta_div_coef: 1.0
 eta_div_type: cos2
-eta_div_target: 0.15
+eta_div_target: 0.25
 eta_div_floor: squared
 
 div_coeff: 0.0
@@ -54,10 +54,10 @@ alpha_min: null
 sparse_coef: 1.0
 use_optimal_test: false
 
-lr: 3e-5
+lr: 5e-5
 lr_decay: none
 lr_warmup: false
-grad_clip: null
+grad_clip: 10000.0
 beta1: 0.9
 beta2: 0.999
-val_freq: 10
+val_freq: 50

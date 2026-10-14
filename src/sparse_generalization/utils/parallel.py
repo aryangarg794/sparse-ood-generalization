@@ -1,6 +1,7 @@
 import io
 import logging
 import multiprocessing as mp
+import os
 import queue
 import sys
 from concurrent.futures import FIRST_EXCEPTION, ProcessPoolExecutor, wait
@@ -114,9 +115,36 @@ def lightning_progress_callbacks() -> list:
     return [_SeedProgressBar(process_position=_worker_slot)]
 
 
+def _kill_process_trees(pids: Iterable[int], include_roots: bool = True):
+    try:
+        import psutil
+    except ImportError:
+        return
+    victims = []
+    for pid in pids:
+        try:
+            root = psutil.Process(pid)
+            victims += root.children(recursive=True) + ([root] if include_roots else [])
+        except psutil.Error:
+            pass
+    for proc in victims:
+        try:
+            proc.kill()
+        except psutil.Error:
+            pass
+    psutil.wait_procs(victims, timeout=5)
+
+
+def _run_and_clean(fn: Callable, args: tuple) -> Any:
+    try:
+        return fn(*args)
+    finally:
+        _kill_process_trees([os.getpid()], include_roots=False)
+
+
 def run_seeds(fn: Callable, args_list: Sequence[tuple], num_concurrent: int = 1) -> List[Any]:
     if num_concurrent <= 1:
-        return [fn(*args) for args in args_list]
+        return [_run_and_clean(fn, args) for args in args_list]
 
     ctx = mp.get_context("spawn")
     slot_queue = ctx.Queue()
@@ -130,7 +158,7 @@ def run_seeds(fn: Callable, args_list: Sequence[tuple], num_concurrent: int = 1)
         initializer=_init_worker,
         initargs=(slot_queue, console_lock, message_queue),
     )
-    futures = [pool.submit(fn, *args) for args in args_list]
+    futures = [pool.submit(_run_and_clean, fn, args) for args in args_list]
     try:
         pending = set(futures)
         while pending:
@@ -141,6 +169,7 @@ def run_seeds(fn: Callable, args_list: Sequence[tuple], num_concurrent: int = 1)
     except BaseException:
         workers = list((pool._processes or {}).values())
         pool.shutdown(wait=False, cancel_futures=True)
+        _kill_process_trees(worker.pid for worker in workers)
         for worker in workers:
             worker.terminate()
         raise
