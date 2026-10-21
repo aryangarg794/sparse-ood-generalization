@@ -139,6 +139,11 @@ def _run_and_clean(fn: Callable, args: tuple) -> Any:
     try:
         return fn(*args)
     finally:
+        try:
+            import wandb
+            wandb.teardown()
+        except Exception:
+            pass
         _kill_process_trees([os.getpid()], include_roots=False)
 
 

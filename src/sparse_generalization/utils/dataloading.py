@@ -91,10 +91,21 @@ def get_shapes_datasets(
         X_train_modeA = X_train_pos[:mode_size]
         X_train_modeB = X_train_pos[mode_size:]
         X_train = torch.cat([X_train_modeA[:half_half_size], X_train_modeB[:half_half_size], X_train_neg[:half_size]], dim=0)
+    elif half_size > 20000:
+        extra_path = to_absolute_path(os.path.join(data_dir, f"shapes_train_extra_size{grid_size}.pl"))
+        with open(extra_path, "rb") as file:
+            extra = dill.load(file)
+        extra_mid = extra["X_train"].size(0) // 2
+        num_extra = half_size - 20000
+        assert num_extra <= extra_mid, f"only {20000 + extra_mid} samples per class available"
+        X_train = torch.cat([X_train_pos[:20000], extra["X_train"][:num_extra], X_train_neg[:20000], extra["X_train"][extra_mid:extra_mid + num_extra]], dim=0)
     else:
         X_train = torch.cat([X_train_pos[:half_size], X_train_neg[:half_size]], dim=0)
 
-    Y_train = torch.cat([Y_train_pos[:half_size], Y_train_neg[:half_size]], dim=0)
+    if half_size > 20000 and not explicit:
+        Y_train = torch.cat([Y_train_pos[:20000], extra["Y_train"][:num_extra], Y_train_neg[:20000], extra["Y_train"][extra_mid:extra_mid + num_extra]], dim=0)
+    else:
+        Y_train = torch.cat([Y_train_pos[:half_size], Y_train_neg[:half_size]], dim=0)
     X_val = torch.cat([X_train_pos[20000:20500], X_train_neg[20000:20500]], dim=0)
     Y_val = torch.cat([Y_train_pos[20000:20500], Y_train_neg[20000:20500]], dim=0)
 

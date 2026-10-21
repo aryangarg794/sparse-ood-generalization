@@ -81,7 +81,9 @@ def run_seed(config_dict: dict, seed: int, timestamp: str, group_name: str, data
     model.num_val_batches = len(val_loaders[0])
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loaders)
     if cfg.save:
-        trainer.save_checkpoint(f"checkpoints/{cfg.run_name}_{timestamp}.ckpt")
+        run_dir = os.path.join("checkpoints", cfg.run_name)
+        os.makedirs(run_dir, exist_ok=True)
+        trainer.save_checkpoint(os.path.join(run_dir, f"seed{seed}.ckpt"))
 
     for i, name in enumerate(cfg.data.val_to_name.values()):
         model.test_name = name
