@@ -95,11 +95,17 @@ def get_shapes_datasets(
         X_train = torch.cat([X_train_pos[:half_size], X_train_neg[:half_size]], dim=0)
 
     Y_train = torch.cat([Y_train_pos[:half_size], Y_train_neg[:half_size]], dim=0)
-    X_val = torch.cat([X_train_pos[20000:20500], X_train_neg[20000:20500]], dim=0)
-    Y_val = torch.cat([Y_train_pos[20000:20500], Y_train_neg[20000:20500]], dim=0)
 
-    X_test = torch.cat([X_train_pos[20500:], X_train_neg[20500:]], dim=0)
-    Y_test = torch.cat([Y_train_pos[20500:], Y_train_neg[20500:]], dim=0)
+    # val / test are the last 3000 grids of each half (500 val + 2500 test), so files of any size work (46k file:
+    # 20000:20500 / 20500:, as before; 206k file: 100000:100500 / 100500:) and train can use everything before them
+    val_start = midpoint - 3000
+    test_start = midpoint - 2500
+    assert half_size <= val_start, f"size {size} overlaps val / test (max {2 * val_start})"
+    X_val = torch.cat([X_train_pos[val_start:test_start], X_train_neg[val_start:test_start]], dim=0)
+    Y_val = torch.cat([Y_train_pos[val_start:test_start], Y_train_neg[val_start:test_start]], dim=0)
+
+    X_test = torch.cat([X_train_pos[test_start:], X_train_neg[test_start:]], dim=0)
+    Y_test = torch.cat([Y_train_pos[test_start:], Y_train_neg[test_start:]], dim=0)
 
     assert X_train.size(0) == size
     assert X_val.size(0) == 1000
