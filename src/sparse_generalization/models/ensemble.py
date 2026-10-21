@@ -246,9 +246,14 @@ class Ensemble(nn.Module):
         alpha_min: float | None = None,
         sparse_coef: float = 1.0,
         beta2: float = 0.999,
-        *args, 
+        *args,
         **kwargs
     ):
+        self.hyper_params = locals()
+
+        for key in ["self", "__class__", "args", "kwargs"]:
+            del self.hyper_params[key]
+
         if lr_decay not in ("none", "linear"):
             raise ValueError(f"lr_decay must be 'none' or 'linear', got {lr_decay!r}")
 
@@ -401,7 +406,7 @@ class Ensemble(nn.Module):
 
                 epoch_loss += rec_loss.detach()
                 with torch.no_grad():
-                    acc = self.criterion.accuracy_from_probs(self.predict(x)[0], y)
+                    acc = self.criterion.accuracy_from_probs(self.criterion.probs(out).mean(dim=1), y)
                     epoch_acc += acc
 
                     threshold = 1 / (x.size(1) * x.size(2))
@@ -446,7 +451,7 @@ class Ensemble(nn.Module):
 
             if not self.use_optimal_test and step % self.val_freq == 0:
                 for loader, name in zip(testloaders, self.val_to_name.values()):
-                    test_metrics = self.test(self, name, loader, folder="val")
+                    test_metrics = self.test(name, loader, folder="val")
 
                     # NOTE: hardcoded
                     if "id" in name:
@@ -513,18 +518,20 @@ class Ensemble(nn.Module):
         )
 
     @torch.no_grad()
-    def test(self, model, name: str, dataloader: DataLoader, folder: str = "test"):
+    def test(self, name: str, dataloader: DataLoader, folder: str = "test"):
         self.eval()
         attn_running = torch.zeros((), device=self.device)
         mask_running = torch.zeros((), device=self.device)
         epoch_acc = torch.zeros((), device=self.device)
         epoch_loss = torch.zeros((), device=self.device)
+        mode_acc = torch.zeros(self.num_models, device=self.device)
 
         for batch_idx, batch in enumerate(dataloader):
             x, y = batch
             x = x.to(self.device)
             y = y.to(self.device)
-            out, mask, mask_attn, attn = model.predict(x)
+            logits, mask, mask_attn, attn = self.predict(x, ret_mean=False)
+            out = self.criterion.probs(logits).mean(dim=1)
 
             loss = self.criterion.loss_from_probs(out, y)
             epoch_loss += loss
@@ -532,6 +539,7 @@ class Ensemble(nn.Module):
             with torch.no_grad():
                 acc = self.criterion.accuracy_from_probs(out, y)
                 epoch_acc += acc
+                mode_acc += torch.stack([self.criterion.accuracy(logits[:, m], y) for m in range(self.num_models)])
 
                 threshold = 1 / (x.size(1) * x.size(2))
                 attn_running += compute_attn_mean_ens(mask_attn, threshold=threshold, device=self.device, residual=self.residual, agg_pool=self.agg_pool)
@@ -565,6 +573,7 @@ class Ensemble(nn.Module):
             "acc": epoch_acc,
             "attn": attn_running,
             "mask": mask_running,
+            "mode_accs": (mode_acc / len(dataloader)).tolist(),
         }
 
     @torch.no_grad()

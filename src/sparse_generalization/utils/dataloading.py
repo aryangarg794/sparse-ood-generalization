@@ -85,22 +85,33 @@ def get_shapes_datasets(
 
     half_size = size // 2
 
+    # val / test are the last 3000 grids of each half (500 val + 2500 test), so files of any size work (46k file:
+    # 20000:20500 / 20500:, as before; 206k file: 100000:100500 / 100500:) and train can use everything before them
+    val_start = midpoint - 3000
+    test_start = midpoint - 2500
+
     if explicit:
         mode_size = X_train_pos.size(0) // 2
         half_half_size = half_size // 2
         X_train_modeA = X_train_pos[:mode_size]
         X_train_modeB = X_train_pos[mode_size:]
         X_train = torch.cat([X_train_modeA[:half_half_size], X_train_modeB[:half_half_size], X_train_neg[:half_size]], dim=0)
+    elif half_size > val_start:           # more than the file holds before val / test: top up from the extra file
+        extra_path = to_absolute_path(os.path.join(data_dir, f"shapes_train_extra_size{grid_size}.pl"))
+        with open(extra_path, "rb") as file:
+            extra = dill.load(file)
+        extra_mid = extra["X_train"].size(0) // 2
+        num_extra = half_size - val_start
+        assert num_extra <= extra_mid, f"only {val_start + extra_mid} samples per class available"
+        X_train = torch.cat([X_train_pos[:val_start], extra["X_train"][:num_extra], X_train_neg[:val_start], extra["X_train"][extra_mid:extra_mid + num_extra]], dim=0)
     else:
         X_train = torch.cat([X_train_pos[:half_size], X_train_neg[:half_size]], dim=0)
 
-    Y_train = torch.cat([Y_train_pos[:half_size], Y_train_neg[:half_size]], dim=0)
+    if half_size > val_start and not explicit:
+        Y_train = torch.cat([Y_train_pos[:val_start], extra["Y_train"][:num_extra], Y_train_neg[:val_start], extra["Y_train"][extra_mid:extra_mid + num_extra]], dim=0)
+    else:
+        Y_train = torch.cat([Y_train_pos[:half_size], Y_train_neg[:half_size]], dim=0)
 
-    # val / test are the last 3000 grids of each half (500 val + 2500 test), so files of any size work (46k file:
-    # 20000:20500 / 20500:, as before; 206k file: 100000:100500 / 100500:) and train can use everything before them
-    val_start = midpoint - 3000
-    test_start = midpoint - 2500
-    assert half_size <= val_start, f"size {size} overlaps val / test (max {2 * val_start})"
     X_val = torch.cat([X_train_pos[val_start:test_start], X_train_neg[val_start:test_start]], dim=0)
     Y_val = torch.cat([Y_train_pos[val_start:test_start], Y_train_neg[val_start:test_start]], dim=0)
 

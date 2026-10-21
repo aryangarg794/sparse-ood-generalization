@@ -25,17 +25,17 @@ use_mask: false
 weight_gen:
   _partial_: true
   _target_: sparse_generalization.layers.latent_hypernet.LatentHyperNet
-  z_dim: 4
+  z_dim: 2
   hidden_features: [128, 256]
-  eval_draws: 128
+  eval_draws: 64
   latent_flow: false
   lf_transforms: 3
   lf_hidden: 32
   lf_init: random
   kl_sched: bbb
 hyper_bias_init: false
-qkscale: 1
-eval_chunk: 16
+qkscale: 5
+eval_chunk: 4
 
 num_modes: 2
 mode_reduction: sum
@@ -44,7 +44,7 @@ beta: 0.0
 
 eta_div_coef: 1.0
 eta_div_type: cos2
-eta_div_target: 0.25
+eta_div_target: 0.05
 eta_div_floor: squared
 
 div_coeff: 0.0
@@ -54,10 +54,10 @@ alpha_min: null
 sparse_coef: 1.0
 use_optimal_test: false
 
-lr: 5e-5
+lr: 3e-5
 lr_decay: none
 lr_warmup: false
 grad_clip: 10000.0
 beta1: 0.9
 beta2: 0.999
-val_freq: 50
+val_freq: 500

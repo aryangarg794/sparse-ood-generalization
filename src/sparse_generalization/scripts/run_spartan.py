@@ -116,9 +116,11 @@ def run_seed(config_dict: dict, seed: int, timestamp: str, group_name: str, flow
         )
 
     if cfg.save:
+        run_dir = os.path.join("checkpoints", cfg.run_name)
+        os.makedirs(run_dir, exist_ok=True)
         torch.save(
             {"model": model.state_dict(), "hparams": model.hyper_params},
-            f"checkpoints/{cfg.run_name}_seed{seed}_{timestamp}.pt",
+            os.path.join(run_dir, f"seed{seed}.pt"),
         )
 
     hparams = model.hyper_params
