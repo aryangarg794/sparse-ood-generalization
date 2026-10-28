@@ -33,6 +33,7 @@ weight_gen:
   lf_hidden: 32
   lf_init: random
   kl_sched: bbb
+  zero_last_bias: false
 hyper_bias_init: false
 qkscale: 5
 eval_chunk: 4

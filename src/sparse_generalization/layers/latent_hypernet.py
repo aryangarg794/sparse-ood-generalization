@@ -25,6 +25,7 @@ class LatentHyperNet(nn.Module):
         lf_hidden: int = 32,
         lf_init: str = "random",
         kl_sched: str = "const",
+        zero_last_bias: bool = False,
         device: str | None = None,
         **kwargs,
     ):
@@ -47,6 +48,8 @@ class LatentHyperNet(nn.Module):
             layers += [nn.Linear(in_dim, out_dim), act()]
         layers.append(nn.Linear(dims[-1], output_dim))
         self.net = nn.Sequential(*layers)
+        if zero_last_bias:
+            nn.init.zeros_(self.net[-1].bias)
 
         self.lflow = None
         if latent_flow:

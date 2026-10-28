@@ -13,7 +13,7 @@ include_sparsity: true
 alpha: 0.1
 alpha_min: 0.05
 sparse_coef: 100.0  
-lr: 5e-4
+lr: 1e-3
 lr_decay: linear  # none | linear
 lr_warmup: false
 grad_clip: 1.0  # max grad norm | null 
